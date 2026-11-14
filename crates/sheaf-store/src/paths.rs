@@ -251,3 +251,21 @@ pub fn publish(src: &Path, dir: &Path, name: &str) -> Result<PathBuf> {
     let _ = fs::remove_file(&tmp);
     Err(AppError::limit("too many files with the same name"))
 }
+
+/// Turn `\\?\C:\dir` back into `C:\dir` when that is safe. `canonicalize`
+/// produces the verbatim form on Windows, which Rust and PDFium accept but
+/// which many programs (Tesseract among them) do not take as a working
+/// directory or file argument. Anything else is returned unchanged.
+pub fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    let Some(s) = path.to_str() else { return path };
+    let Some(rest) = s.strip_prefix(r"\\?\") else {
+        return path;
+    };
+    let b = rest.as_bytes();
+    let plain_drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+    if plain_drive && rest.len() < 240 && check_windows_path_rules(rest).is_ok() {
+        PathBuf::from(rest)
+    } else {
+        path
+    }
+}

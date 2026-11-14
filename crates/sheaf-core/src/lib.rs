@@ -6,6 +6,7 @@ pub mod consts;
 pub mod error;
 pub mod job;
 pub mod model;
+pub mod ocr;
 pub mod op;
 pub mod proto;
 pub mod workspace;
@@ -17,5 +18,6 @@ pub use model::{
     ColorMode, Deskew, Filter, NormRect, OcrState, Page, PageContent, PageId, Rot, Source,
     SourceId, SourceKind, Threshold,
 };
+pub use ocr::{OcrResult, Script, Word};
 pub use op::{NewPage, Op};
 pub use workspace::Workspace;

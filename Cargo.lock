@@ -274,7 +274,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sheaf-core",
+ "sheaf-image",
  "sheaf-jobs",
+ "sheaf-ocr",
+ "sheaf-pdf",
  "sheaf-store",
 ]
 
@@ -659,6 +662,9 @@ dependencies = [
 name = "sheaf-ocr"
 version = "0.0.0"
 dependencies = [
+ "fixture-gen",
+ "serde",
+ "serde_json",
  "sheaf-core",
  "sheaf-image",
  "sheaf-store",

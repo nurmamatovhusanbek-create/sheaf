@@ -20,3 +20,9 @@ sheaf-jobs = { path = "../../crates/sheaf-jobs" }
 fixture-gen = { path = "../fixture-gen" }
 serde_json.workspace = true
 serde.workspace = true
+sheaf-ocr = { path = "../../crates/sheaf-ocr" }
+
+[dev-dependencies]
+# Tests only: synthesizing text pages for the OCR fixtures.
+sheaf-pdf = { path = "../../crates/sheaf-pdf" }
+sheaf-image = { path = "../../crates/sheaf-image" }

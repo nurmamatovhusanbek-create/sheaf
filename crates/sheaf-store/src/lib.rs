@@ -68,3 +68,16 @@ pub fn hash_file(path: &Path) -> Result<[u8; 32]> {
     }
     Ok(hasher.finalize().into())
 }
+
+/// SHA-256 of a byte string.
+pub fn hash_bytes(parts: &[&[u8]]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    hasher.finalize().into()
+}
+
+pub fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}

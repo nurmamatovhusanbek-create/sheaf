@@ -102,14 +102,16 @@ fn build_copies_reorders_and_rotates(engine: &Engine) {
     );
 
     let mut builder = engine.builder().expect("builder");
-    builder.copy_page(&a, 4, Rot::R0).expect("copy");
-    builder.copy_page(&b, 0, Rot::R90).expect("copy"); // 90 already + 90 more
-    builder.copy_page(&a, 0, Rot::R270).expect("copy");
+    builder.copy_page(&a, 4, Rot::R0, None).expect("copy");
+    builder.copy_page(&b, 0, Rot::R90, None).expect("copy"); // 90 already + 90 more
+    builder.copy_page(&a, 0, Rot::R270, None).expect("copy");
     builder.blank_page(300.0, 400.0, Rot::R0).expect("blank");
-    builder.copy_page(&a, 0, Rot::R0).expect("same page twice");
+    builder
+        .copy_page(&a, 0, Rot::R0, None)
+        .expect("same page twice");
     assert_eq!(
         builder
-            .copy_page(&a, 5, Rot::R0)
+            .copy_page(&a, 5, Rot::R0, None)
             .expect_err("past the end")
             .code,
         ErrorCode::InvalidArg
@@ -159,8 +161,12 @@ fn image_pages_get_their_size_from_the_dpi(engine: &Engine) {
         }
     }
     let mut builder = engine.builder().expect("builder");
-    builder.image_page(&img, 300, Rot::R0).expect("image page");
-    builder.image_page(&img, 150, Rot::R90).expect("image page");
+    builder
+        .image_page(&img, 300, Rot::R0, None)
+        .expect("image page");
+    builder
+        .image_page(&img, 150, Rot::R90, None)
+        .expect("image page");
     let out = dir.path().join("scan.pdf");
     let stats = builder.save(&out).expect("save");
     assert_eq!((stats.pages, stats.copied, stats.rasterized), (2, 0, 2));

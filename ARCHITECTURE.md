@@ -186,11 +186,11 @@ A page is a pointer into a source plus edits ([`ADR-NONDESTRUCTIVE`](#adr-nondes
 
 ### <a id="data-cachekey"></a>OCR cache key
 
-`blake3(pixels_sent_to_engine) ‖ engine_id ‖ engine_version ‖ langs ‖ params`. Results live at `<session>/cache/<key>/{result.tsv, page.pdf, meta.json}` ([`OCR-CACHE`](#ocr-cache)).
+`sha256(image size ‖ engine_id ‖ engine_version ‖ langs ‖ params ‖ pixels_sent_to_engine)` as hex (SHA-256 because the store already carries it; hashing is a small fraction of recognition time). `langs` is the setting, `auto` or the fixed list, so automatic and fixed-language runs are separate entries. Results live at `<session>/cache/<key>/{result.tsv, page.pdf, meta.json}` ([`OCR-CACHE`](#ocr-cache)).
 
 ### <a id="data-ocrresult"></a>OcrResult
 
-`words: Vec<{text, bbox, conf}>`, `orientation_deg`, `script`, `langs_used`, `mean_conf`. Parsed from Tesseract TSV ([`OCR-TESS-CLI`](#ocr-tess-cli)).
+`words: Vec<{text, bbox, conf, line}>`, `orientation_deg`, `script`, `langs_used`, `mean_conf`. Parsed from Tesseract TSV ([`OCR-TESS-CLI`](#ocr-tess-cli)).
 
 ### <a id="data-scanprofile"></a>ScanProfile
 
@@ -336,7 +336,7 @@ Request handlers speaking [`DATA-WORKERPROTO`](#data-workerproto).
 | `build` | assemble output PDF from page list, apply overlays | [`MOD-PDF`](#mod-pdf) |
 | `tool` | run a TOOL by id | [`MOD-PDF`](#mod-pdf), [`MOD-IMAGE`](#mod-image) |
 
-Depends on: [`MOD-CORE`](#mod-core) (protocol types), [`MOD-PDF`](#mod-pdf), [`MOD-IMAGE`](#mod-image), [`MOD-OCR`](#mod-ocr), [`MOD-STORE`](#mod-store). Started as `sheaf-worker --session <dir> --pdfium <dir>`; it refuses to start outside a session dir and loads PDFium on the first job that needs it. `ocr_page` arrives in [`PH-2`](#ph-2), `tool` in [`PH-3`](#ph-3).
+Depends on: [`MOD-CORE`](#mod-core) (protocol types), [`MOD-PDF`](#mod-pdf), [`MOD-IMAGE`](#mod-image), [`MOD-OCR`](#mod-ocr), [`MOD-STORE`](#mod-store). Started as `sheaf-worker --session <dir> --pdfium <dir> [--tesseract <exe> --tessdata <dir>]`; it refuses to start outside a session dir and loads PDFium on the first job that needs it. A further op, `page_text`, extracts the text of a page (optionally of a region of it); `tool` arrives in [`PH-3`](#ph-3).
 
 ### <a id="mod-cli"></a>MOD-CLI (`sheaf-cli`)
 
@@ -433,7 +433,7 @@ Later versions: [`TOOL-SIGN-VISUAL`](#tool-sign-visual), [`TOOL-REDACT`](#tool-r
 
 **[`TOOL-PDF2IMG`](#tool-pdf2img).** PNG or JPG at chosen dpi, page range, one file per page into a new folder; alternative mode extracts embedded images unchanged.
 
-**[`TOOL-WATERMARK`](#tool-watermark) / [`TOOL-PAGENUM`](#tool-pagenum).** Both use `overlay_text` ([`MOD-PDF`](#mod-pdf)). Text, size, opacity, rotation, position, page range; page numbers support `{n}`, `{N}`, start offset, skip first. Fonts: bundled Noto Sans (SIL OFL; VERIFY exact files and license text shipped) so Cyrillic and Uzbek letters (ў қ ғ ҳ) render. Image watermark: PNG with alpha.
+**[`TOOL-WATERMARK`](#tool-watermark) / [`TOOL-PAGENUM`](#tool-pagenum).** Both use `overlay_text` ([`MOD-PDF`](#mod-pdf)). Text, size, opacity, rotation, position, page range; page numbers support `{n}`, `{N}`, start offset, skip first. Fonts: bundled Noto Sans (SIL OFL; `NotoSans-Regular.ttf` v2.015 and its `OFL.txt` are vendored and hash-pinned) so Cyrillic and Uzbek letters (ў қ ғ ҳ) render. Image watermark: PNG with alpha.
 
 **[`TOOL-PROTECT`](#tool-protect) / [`TOOL-UNLOCK`](#tool-unlock).** Protect: user and owner passwords, permission flags (print, copy, edit); target AES-256 ([`RISK-LOPDF-ENC`](#risk-lopdf-enc)). Passwords are held in `zeroize`-d buffers, never logged, never written to settings or presets ([`SEC-SECRETS`](#sec-secrets)). Unlock: requires the correct password ([`NG-CRACK`](#ng-crack)), or removes owner-only restrictions from a file that opens with an empty user password.
 
@@ -554,7 +554,7 @@ Every error has a code and an i18n key ([`EVT-ERROR`](#evt-error)); no file cont
 1. **Has text?** `has_text_layer` ([`MOD-PDF`](#mod-pdf)). Skip unless mode is redo ([`FLOW-OCR-MANUAL`](#flow-ocr-manual)).
 2. **Render and clean:** render at 300 dpi (or the scan's dpi), apply [`DATA-FILTER`](#data-filter) ([`MOD-IMAGE`](#mod-image)); this cleaned image is what the engine sees and what the cache key hashes ([`DATA-CACHEKEY`](#data-cachekey)).
 3. **Cache check** ([`OCR-CACHE`](#ocr-cache)). Hit means done.
-4. **Detect:** orientation and script via Tesseract OSD ([`OCR-TESS-CLI`](#ocr-tess-cli)). Rotate if needed (records a rotation in the Page, which is an [`DATA-OP`](#data-op)).
+4. **Detect:** orientation and script via Tesseract OSD ([`OCR-TESS-CLI`](#ocr-tess-cli)). If the page is sideways or upside down, the image is turned before recognition and the main process records the same turn on the Page as a Rotate [`DATA-OP`](#data-op), which can be undone. Skipped when languages are fixed.
 5. **Choose languages** ([`OCR-LANGS`](#ocr-langs)).
 6. **Recognize:** TSV (words, boxes, confidence).
 7. **Store:** cache entry; set [`DATA-OCRSTATE`](#data-ocrstate) `Done`; [`EVT-PAGE-READY`](#evt-page-ready).
@@ -562,17 +562,18 @@ Every error has a code and an i18n key ([`EVT-ERROR`](#evt-error)); no file cont
 
 ### <a id="ocr-langs"></a>OCR-LANGS
 
-Bundled models: `eng`, `rus`, `uzb` (Latin), `uzb_cyrl`, `osd`. Default chooser: script Latin → `uzb+eng`; Cyrillic → `rus+uzb_cyrl`; uncertain → all four (slower). Preset or setting can fix languages and skip detection (faster, [`PERF-BUDGETS`](#perf-budgets)). The mapping is a hypothesis to validate on real documents ([`TEST-OCR`](#test-ocr)). Quality `Fast` uses `tessdata_fast`; `Accurate` uses `tessdata_best` if installed (optional download at build time only, [`ADR-OFFLINE-ASSETS`](#adr-offline-assets)).
+Bundled models: `eng`, `rus`, `uzb` (Latin), `uzb_cyrl`, `osd`. Default chooser: script Latin → `uzb+eng`; Cyrillic → `uzb_cyrl+rus`; uncertain → all four (slower). Order matters: with `rus` first, Tesseract flattened the Uzbek letters on the synthetic fixtures (ў→у, қ→к; 5.2% character error), while `uzb_cyrl+rus` read Uzbek Cyrillic at 0% and Russian at 0.7%. Preset or setting can fix languages and skip detection (faster, [`PERF-BUDGETS`](#perf-budgets)). The mapping is a hypothesis to validate on real documents ([`TEST-OCR`](#test-ocr)). Quality `Fast` uses `tessdata_fast`; `Accurate` uses `tessdata_best` if installed (optional download at build time only, [`ADR-OFFLINE-ASSETS`](#adr-offline-assets)).
 
 ### <a id="ocr-tess-cli"></a>OCR-TESS-CLI
 
 ```
-tesseract <img> stdout --psm 0 --tessdata-dir <dir>                   # OSD: orientation, script
-tesseract <img> <out>  -l eng+rus --oem 1 --psm 3 --dpi 300 tsv       # words, boxes, conf
-tesseract <img> <out>  -l eng+rus --oem 1 --psm 3 --dpi 300 pdf       # fallback text-layer PDF
+tesseract <img> stdout --tessdata-dir <dir> --psm 0 -l osd            # OSD: orientation, script
+tesseract <img> <out>  --tessdata-dir <dir> -l uzb+eng --oem 1 --psm 3 --dpi 300 \
+          -c tessedit_create_tsv=1 -c tessedit_create_pdf=1 -c textonly_pdf=1
+                                                                      # one run: words, boxes, conf + text-only PDF
 ```
 
-Always invoked with an argument array (never a shell string), a timeout, a working dir inside the session dir, and `OMP_THREAD_LIMIT=1` so parallelism comes from [`MOD-JOBS`](#mod-jobs), not inside Tesseract (VERIFY best setting by benchmark, [`PERF-BUDGETS`](#perf-budgets)).
+The input image is an uncompressed PPM, and file arguments are relative to the working directory, so the engine never sees a Windows verbatim path. An OSD failure (too little text) means "unknown", not an error; orientation and script are acted on only above a confidence floor. Always invoked with an argument array (never a shell string), a timeout, a working dir inside the session dir, and `OMP_THREAD_LIMIT=1` so parallelism comes from [`MOD-JOBS`](#mod-jobs), not inside Tesseract (VERIFY best setting by benchmark, [`PERF-BUDGETS`](#perf-budgets)).
 
 ### <a id="ocr-cache"></a>OCR-CACHE
 
@@ -582,8 +583,9 @@ Keyed by [`DATA-CACHEKEY`](#data-cachekey); survives edits that do not change pi
 
 Goal: invisible, selectable, searchable text aligned with each word, overlaid on the original page so the scan stays lossless.
 
-- Preferred: add a content stream per page using invisible render mode (`3 Tr`) with a glyphless Type0/Identity-H font and a `ToUnicode` CMap so Cyrillic and Uzbek text copy correctly. Implemented in [`MOD-PDF`](#mod-pdf) `overlay_text` via lopdf ([`RISK-OVERLAY-FONT`](#risk-overlay-font)).
-- Fallback v1: use Tesseract's own `pdf` output for the page (re-embeds the image) and import it. Larger and re-encoded, but simple.
+- Implemented: Tesseract writes a text-only PDF of the page (`textonly_pdf=1`: invisible text in render mode 3, its glyphless font and `ToUnicode` map, no image). At export, [`MOD-PDF`](#mod-pdf) imports that page as a form XObject with PDFium and places it over the original page, with a transform that accounts for the page's own `/Rotate` and for the orientation fix applied before recognition. The original page is copied untouched, so scans stay lossless, and Cyrillic and Uzbek text extract correctly ([`RISK-OVERLAY-FONT`](#risk-overlay-font)). Tested by extracting text from regions of the exported page.
+- "Redo all" on a page that already has text rasterizes that page, so the old text layer does not survive under the new one.
+- Not needed so far: the fallback of importing Tesseract's full `pdf` output (which re-embeds the image).
 
 ### <a id="ocr-engines"></a>OCR-ENGINES
 
@@ -698,7 +700,7 @@ Born-digital PDF with text; scanned PDF without text (Uzbek Latin, Uzbek Cyrilli
 | <a id="test-ops"></a> | Each [`DATA-OP`](#data-op) applied to random workspaces keeps invariants (unique ids, valid indices) |
 | <a id="test-undo"></a> | `apply(op); undo()` equals original; redo equals applied; depth cap respected |
 | <a id="test-image"></a> | Deskew within tolerance on rotated fixtures, blank detection precision/recall, EXIF orientation |
-| <a id="test-ocr"></a> | Character error rate per fixture group stays under agreed thresholds; skip logic; cache hit rate; language chooser on mixed fixtures; compare engines before changing defaults ([`OCR-ENGINES`](#ocr-engines)); accuracy risk [`RISK-OCR-ACCURACY`](#risk-ocr-accuracy) |
+| <a id="test-ocr"></a> | Character error rate per fixture group stays under agreed thresholds (provisional: 2% English and Russian, 4% Uzbek, on synthetic 300 dpi pages; measured 0 to 0.7%); skip logic; cache hit rate; language chooser on mixed fixtures; compare engines before changing defaults ([`OCR-ENGINES`](#ocr-engines)); accuracy risk [`RISK-OCR-ACCURACY`](#risk-ocr-accuracy) |
 | <a id="test-jobs"></a> | Worker crash, hang, and memory-limit recovery; cancellation; priority ordering |
 | <a id="test-sec"></a> | No listening ports; non-local requests blocked; IPC fuzzing (bad ids, huge ranges); path traversal, device names, ADS; oversized inputs rejected; session dir removed on exit |
 | <a id="test-merge"></a> | Page count and order; untouched pages byte-identical objects where possible; forms behavior documented |
@@ -716,7 +718,7 @@ Born-digital PDF with text; scanned PDF without text (Uzbek Latin, Uzbek Cyrilli
 
 ## <a id="doc-build"></a>18. Build, packaging, CI
 
-- Pinned so far: PDFium build 8125 from pdfium-binaries (the newest the `pdfium-render` 0.9.5 binding supports) and `tessdata_fast` 4.1.0. Still to pin: the Tesseract Windows build and the Noto fonts.
+- Pinned: PDFium build 8125 from pdfium-binaries (the newest the `pdfium-render` 0.9.5 binding supports), `tessdata_fast` 4.1.0 plus `pdf.ttf`, Tesseract 5.5.0 for Windows (the UB Mannheim installer, unpacked with 7-Zip at build time), Noto Sans Regular 2.015 with its licence. Linux CI tests against the distribution's Tesseract (5.3.4 on Ubuntu 24.04).
 - Rust stable, Cargo workspace ([`DOC-LAYOUT`](#doc-layout)); `clippy -D warnings`, `rustfmt`, `cargo-deny`, `cargo-audit` ([`SEC-SUPPLY`](#sec-supply)).
 - CI vendoring step: `tools/fetch-vendor` downloads pinned releases (pdfium binaries, Tesseract Windows build, tessdata, Noto fonts), verifies SHA-256 against `vendor/SHA256SUMS`, fails on mismatch ([`ADR-OFFLINE-ASSETS`](#adr-offline-assets)). Licenses of everything bundled go into `THIRD_PARTY_LICENSES` (VERIFY each).
 - Tauri bundler produces an NSIS or MSI installer; installer writes Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`CLI-GRAMMAR`](#cli-grammar)) per user; WebView2 runtime handling is a decision ([`RISK-WEBVIEW2`](#risk-webview2)).
@@ -732,7 +734,7 @@ Each phase ends with its definition of done. An agent completes phases in order 
 |---|---|---|---|---|
 | <a id="ph-0"></a> | Scaffold | Workspace, CI, vendoring, link-check tool, empty crates | CI green on both runners; this spec's link check passes | yes |
 | <a id="ph-1"></a> | Core | [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`MOD-IMAGE`](#mod-image), [`MOD-PDF`](#mod-pdf) basics (open, render, build), [`MOD-WORKER`](#mod-worker) + [`MOD-JOBS`](#mod-jobs); page ops [`TOOL-REMOVE`](#tool-remove), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-ROTATE`](#tool-rotate); a headless CLI harness | [`TEST-OPS`](#test-ops), [`TEST-UNDO`](#test-undo), [`TEST-IMAGE`](#test-image), [`TEST-JOBS`](#test-jobs) pass; 100-page open and export within [`PERF-BUDGETS`](#perf-budgets) (`sheaf-harness bench --enforce`, run in CI) | yes |
-| <a id="ph-2"></a> | OCR | [`MOD-OCR`](#mod-ocr), [`OCR-PIPELINE`](#ocr-pipeline), cache, text layer (fallback first, overlay if feasible), [`TOOL-OCR`](#tool-ocr), [`FLOW-OCR-MANUAL`](#flow-ocr-manual) headless | [`TEST-OCR`](#test-ocr) passes on fixtures; searchable PDF verified by text extraction | yes |
+| <a id="ph-2"></a> | OCR | [`MOD-OCR`](#mod-ocr), [`OCR-PIPELINE`](#ocr-pipeline), cache, text layer (fallback first, overlay if feasible), [`TOOL-OCR`](#tool-ocr), [`FLOW-OCR-MANUAL`](#flow-ocr-manual) headless | [`TEST-OCR`](#test-ocr) passes on fixtures; searchable PDF verified by text extraction (whole page and by region) | yes |
 | <a id="ph-3"></a> | Tools | [`TOOL-MERGE`](#tool-merge), [`TOOL-SPLIT`](#tool-split), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-CROP`](#tool-crop), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-WATERMARK`](#tool-watermark), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PROTECT`](#tool-protect), [`TOOL-UNLOCK`](#tool-unlock) | all their TEST groups pass; [`RISK-LOPDF-ENC`](#risk-lopdf-enc) resolved or fallback chosen | yes |
 | <a id="ph-4"></a> | Shell and UI | [`MOD-SHELL`](#mod-shell), [`MOD-UI`](#mod-ui), all of [`DOC-IPC`](#doc-ipc), [`DOC-UI`](#doc-ui), i18n ([`ADR-I18N`](#adr-i18n)), thumbnails protocol | WebDriver smoke test; [`TEST-SEC`](#test-sec) network and IPC checks pass | partly |
 | <a id="ph-5"></a> | Scan | [`MOD-SCAN`](#mod-scan) (`FakeBackend` first, then `WiaBackend`), [`FLOW-SCAN-LIVE`](#flow-scan-live) | [`TEST-SCAN`](#test-scan) passes; manual scan on the real device ([`RISK-WIA`](#risk-wia)) | fake only |
@@ -747,7 +749,7 @@ Suggested spike order inside phases: the WIA spike (first half of [`PH-5`](#ph-5
 |---|---|---|---|
 | <a id="risk-wia"></a> | WIA from Rust (COM, driver variance, feeder behavior) is unproven here and cannot be tested in the sandbox | Scanning delayed | Early spike with the real scanner ([`PH-5`](#ph-5)); fall back to .NET helper process if blocked ([`ADR-TAURI`](#adr-tauri)) |
 | <a id="risk-lopdf-enc"></a> | lopdf encryption: examples exist, but docs warn some algorithms are not fully supported; AES-256 output and compatibility with common readers unproven | [`TOOL-PROTECT`](#tool-protect), [`TOOL-UNLOCK`](#tool-unlock) | Test against several readers in [`TEST-PROTECT`](#test-protect); fallback: bundled qpdf as a sidecar (VERIFY license and size) |
-| <a id="risk-overlay-font"></a> | Glyphless font + ToUnicode for Cyrillic/Uzbek text layers is fiddly | [`OCR-TEXTLAYER`](#ocr-textlayer) quality | Ship the Tesseract-PDF fallback first; overlay as an improvement |
+| <a id="risk-overlay-font"></a> | Glyphless font + ToUnicode for Cyrillic/Uzbek text layers is fiddly | [`OCR-TEXTLAYER`](#ocr-textlayer) quality | Sidestepped: the glyphless font and ToUnicode map are Tesseract's own (text-only PDF), overlaid with PDFium. Verified on synthetic Russian, Uzbek Latin and Uzbek Cyrillic pages; still to confirm in third-party readers |
 | <a id="risk-compress"></a> | Image re-encoding cannot match dedicated optimizers on every file | [`TOOL-COMPRESS`](#tool-compress) expectations | Honest before/after reporting; never grow the file |
 | <a id="risk-pdfium-threads"></a> | PDFium is not thread-safe. Confirmed in the `pdfium-render` 0.9.5 documentation; in practice, loading or dropping the library on one thread while another uses it crashes, so each process holds exactly one engine | [`PERF-PARALLEL`](#perf-parallel) | Worker processes ([`ADR-WORKER-PROCS`](#adr-worker-procs)) |
 | <a id="risk-forms-merge"></a> | Page import may drop AcroForm fields | [`TOOL-MERGE`](#tool-merge) | Document; offer flatten; test |
@@ -937,7 +939,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`PERF-PARALLEL`](#perf-parallel) | PERF | [`PERF-BUDGETS`](#perf-budgets), [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads) |
 | [`PH-0`](#ph-0) | PH | [`DOC-AGENT-RULES`](#doc-agent-rules) |
 | [`PH-1`](#ph-1) | PH | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-TRACE`](#doc-trace), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate) |
-| [`PH-2`](#ph-2) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-WORKER`](#mod-worker), [`TOOL-OCR`](#tool-ocr) |
+| [`PH-2`](#ph-2) | PH | [`DOC-TRACE`](#doc-trace), [`TOOL-OCR`](#tool-ocr) |
 | [`PH-3`](#ph-3) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-WORKER`](#mod-worker), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-PROTECT`](#tool-protect), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark) |
 | [`PH-4`](#ph-4) | PH | [`PH-PLAN`](#ph-plan) |
 | [`PH-5`](#ph-5) | PH | [`DOC-TRACE`](#doc-trace), [`PH-PLAN`](#ph-plan), [`RISK-WIA`](#risk-wia), [`TOOL-SCAN`](#tool-scan) |
@@ -1044,7 +1046,6 @@ Each is a claim not yet proven. Resolve by testing, edit the text, remove the ma
 | Where | Item |
 |---|---|
 | [`TOOL-HTML2PDF`](#tool-html2pdf) | VERIFY availability through Tauri |
-| [`DOC-TOOLS`](#doc-tools) | SIL OFL; VERIFY exact files and license text shipped |
 | [`OCR-TESS-CLI`](#ocr-tess-cli) | VERIFY best setting by benchmark, PERF-BUDGETS |
 | [`SCAN-WIA`](#scan-wia) | document handling: feeder/flatbed/duplex, x/y resolution, data type, page size; exact property IDs from `wiadef.h`, VERIFY on target driver |
 | [`SEC-NONET`](#sec-nonet) | VERIFY the hook is reachable through Tauri/wry; CSP plus a navigation lock are the baseline either way |

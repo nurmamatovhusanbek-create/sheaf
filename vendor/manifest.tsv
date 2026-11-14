@@ -7,3 +7,7 @@ tessdata/uzb.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdat
 tessdata/uzb_cyrl.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/uzb_cyrl.traineddata
 dl/pdfium-linux-x64.tgz	https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/pdfium-linux-x64.tgz
 dl/pdfium-win-x64.tgz	https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/pdfium-win-x64.tgz
+fonts/NotoSans-Regular.ttf	https://raw.githubusercontent.com/notofonts/notofonts.github.io/1daf901bd023a3811498e0b7e7284694ae06307e/fonts/NotoSans/hinted/ttf/NotoSans-Regular.ttf
+fonts/OFL.txt	https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/NotoSans-v2.015/OFL.txt
+tessdata/pdf.ttf	https://raw.githubusercontent.com/tesseract-ocr/tesseract/5.5.0/tessdata/pdf.ttf
+dl/tesseract-w64-setup-5.5.0.20241111.exe	https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe

@@ -117,3 +117,18 @@ pub fn encode_jpeg(img: &RgbaImage, quality: u8) -> Result<Vec<u8>> {
     rgb.write_with_encoder(encoder).map_err(map_err)?;
     Ok(out)
 }
+
+/// Binary PPM (P6): uncompressed, so writing a full-page bitmap costs almost
+/// nothing. Used for the image handed to the OCR engine. Alpha is flattened
+/// onto white.
+pub fn encode_ppm(img: &RgbaImage) -> Vec<u8> {
+    let mut out = format!("P6\n{} {}\n255\n", img.width(), img.height()).into_bytes();
+    out.reserve(img.width() as usize * img.height() as usize * 3);
+    for p in img.pixels() {
+        let a = u32::from(p[3]);
+        for c in 0..3 {
+            out.push(((u32::from(p[c]) * a + 255 * (255 - a)) / 255) as u8);
+        }
+    }
+    out
+}

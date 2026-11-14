@@ -2,10 +2,10 @@
 //! writes responses on stdout. This is the only process that opens documents
 //! (SEC-ISOLATE); it writes nothing outside the session dir (SEC-PATHS).
 //!
-//! `sheaf-worker --session <dir> --pdfium <dir>`
+//! `sheaf-worker --session <dir> --pdfium <dir> [--tesseract <exe> --tessdata <dir>]`
 //!
-//! PH-1 ops: `ping`, `import_probe`, `thumb`, `render`, `build`.
-//! `ocr_page` arrives in PH-2, `tool` in PH-3.
+//! Ops: `ping`, `import_probe`, `thumb`, `render`, `build`, `ocr_page`,
+//! `page_text`. `tool` arrives in PH-3.
 
 mod handlers;
 
@@ -24,25 +24,32 @@ fn say(resp: &Response) {
     }
 }
 
+const USAGE: &str =
+    "usage: sheaf-worker --session <dir> --pdfium <dir> [--tesseract <exe> --tessdata <dir>]";
+
 fn main() -> ExitCode {
     let mut session = None;
     let mut pdfium = None;
+    let mut tesseract = None;
+    let mut tessdata = None;
     let mut args = std::env::args_os().skip(1);
     while let Some(flag) = args.next() {
         match (flag.to_str(), args.next()) {
             (Some("--session"), Some(v)) => session = Some(PathBuf::from(v)),
             (Some("--pdfium"), Some(v)) => pdfium = Some(PathBuf::from(v)),
+            (Some("--tesseract"), Some(v)) => tesseract = Some(PathBuf::from(v)),
+            (Some("--tessdata"), Some(v)) => tessdata = Some(PathBuf::from(v)),
             _ => {
-                eprintln!("usage: sheaf-worker --session <dir> --pdfium <dir>");
+                eprintln!("{USAGE}");
                 return ExitCode::from(2);
             }
         }
     }
     let (Some(session), Some(pdfium)) = (session, pdfium) else {
-        eprintln!("usage: sheaf-worker --session <dir> --pdfium <dir>");
+        eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
-    let mut worker = match Worker::new(&session, pdfium) {
+    let mut worker = match Worker::new(&session, pdfium, tesseract.zip(tessdata)) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("sheaf-worker: {e}");

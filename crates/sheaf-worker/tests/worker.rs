@@ -286,7 +286,7 @@ fn build_assembles_a_mixed_document() {
     let r = w.ok("build", json!({"pages": pages, "out": "results/out.pdf"}));
     assert_eq!(
         r,
-        json!({"out": "results/out.pdf", "page_count": 5, "copied": 2, "rasterized": 2})
+        json!({"out": "results/out.pdf", "page_count": 5, "copied": 2, "rasterized": 2, "text_layers": 0})
     );
     let out = w.session.join("results/out.pdf");
     assert!(
@@ -344,6 +344,39 @@ fn build_assembles_a_mixed_document() {
         ),
         "PathRejected"
     );
+    // A text-layer key is a hash and nothing else; an unknown one is an error, not a silent skip.
+    let zeros = "0".repeat(64);
+    for (key, code) in [
+        ("../../secrets", "InvalidArg"),
+        ("ABC", "InvalidArg"),
+        (zeros.as_str(), "NotFound"),
+    ] {
+        let mut page = pdf_page(&a, 0);
+        page["text_layer"] = json!(key);
+        assert_eq!(
+            w.err("build", json!({"pages": [page], "out": "results/bad.pdf"})),
+            code,
+            "{key}"
+        );
+    }
+    // Without a configured engine, OCR is refused; a page that has text is still reported as such.
+    let scan_page = json!({"source": {"path": scan, "kind": "Image"}});
+    assert_eq!(
+        w.err("ocr_page", json!({"page": scan_page})),
+        "EngineMissing"
+    );
+    assert_eq!(
+        w.ok("ocr_page", json!({"page": pdf_page(&a, 0)}))["skipped_has_text"],
+        json!(true)
+    );
+    assert_eq!(
+        w.err("ocr_page", json!({"page": scan_page, "langs": ["../x"]})),
+        "InvalidArg"
+    );
+    let text = w.ok("page_text", json!({"path": a, "index": 1}))["text"]
+        .as_str()
+        .map(str::to_string);
+    assert!(text.is_some_and(|t| t.contains("Page 2")));
     let left: Vec<String> = std::fs::read_dir(w.session.join("results"))
         .expect("list results")
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())

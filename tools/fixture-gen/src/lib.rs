@@ -199,3 +199,70 @@ impl Drop for Scratch {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+
+/// The Tesseract executable to test with: the vendored build on Windows, the
+/// system one elsewhere (CI installs the distribution package).
+pub fn tesseract_exe() -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../vendor/tesseract/win-x64/tesseract.exe")
+    } else {
+        PathBuf::from("tesseract")
+    }
+}
+
+/// Vendored language models (`eng`, `rus`, `uzb`, `uzb_cyrl`, `osd`) and `pdf.ttf`.
+pub fn tessdata_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/tessdata")
+}
+
+/// Vendored Noto Sans Regular: covers Latin, Cyrillic and the Uzbek letters.
+pub fn noto_font() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/fonts/NotoSans-Regular.ttf")
+}
+
+/// Text as compared for OCR accuracy: whitespace runs collapsed, the
+/// apostrophe variants used for Uzbek oʻ/gʻ unified.
+pub fn normalize_text(s: &str) -> String {
+    let unified: String = s
+        .chars()
+        .map(|c| if "ʻʼ’‘`´".contains(c) { '\'' } else { c })
+        .collect();
+    unified.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Character error rate: edit distance between the normalized texts, divided
+/// by the length of the reference.
+pub fn char_error_rate(reference: &str, recognized: &str) -> f64 {
+    let a: Vec<char> = normalize_text(reference).chars().collect();
+    let b: Vec<char> = normalize_text(recognized).chars().collect();
+    if a.is_empty() {
+        return if b.is_empty() { 0.0 } else { 1.0 };
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut row = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let substitute = prev[j] + usize::from(ca != cb);
+            row.push(substitute.min(prev[j + 1] + 1).min(row[j] + 1));
+        }
+        prev = row;
+    }
+    prev[b.len()] as f64 / a.len() as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cer_counts_edits_against_the_reference() {
+        assert_eq!(char_error_rate("abcd", "abcd"), 0.0);
+        assert_eq!(char_error_rate("abcd", "abxd"), 0.25);
+        assert_eq!(char_error_rate("abcd", "abd"), 0.25);
+        assert_eq!(char_error_rate("abcd", ""), 1.0);
+        assert_eq!(char_error_rate("a  b\n c", "a b c"), 0.0);
+        assert_eq!(char_error_rate("oʻzbek", "o'zbek"), 0.0);
+        assert_eq!(char_error_rate("", ""), 0.0);
+    }
+}

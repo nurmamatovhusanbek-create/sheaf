@@ -9,16 +9,46 @@
 use serde_json::Value;
 use sheaf_core::consts::THUMB_PX;
 use sheaf_core::proto::{
-    ops, BuildArgs, BuildResult, PageSpec, ProbeArgs, ProbeResult, RenderArgs, RenderResult,
-    SourceRef,
+    ops, BuildArgs, BuildResult, OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult,
+    ProbeArgs, ProbeResult, RenderArgs, RenderResult, SourceRef,
 };
 use sheaf_core::{
-    AppError, ErrorCode, NewPage, Op, Page, PageContent, PageId, Priority, Result, Source,
-    SourceId, Workspace,
+    AppError, ErrorCode, NewPage, NormRect, OcrResult, OcrState, Op, Page, PageContent, PageId,
+    Priority, Result, Rot, Source, SourceId, SourceKind, Workspace,
 };
 use sheaf_jobs::{JobSpec, Pool, PoolConfig};
+use sheaf_ocr::{CacheEntry, Hit, SearchIndex};
 use sheaf_store::Session;
 use std::path::{Path, PathBuf};
+
+/// Where the bundled engines live.
+#[derive(Debug, Clone)]
+pub struct Engines {
+    pub worker: PathBuf,
+    pub pdfium_dir: PathBuf,
+    /// Tesseract executable and tessdata dir; without them OCR jobs fail with `EngineMissing`.
+    pub tesseract: Option<(PathBuf, PathBuf)>,
+}
+
+impl Engines {
+    /// The vendored engines of a development checkout, with the worker
+    /// binary that sits beside the running executable.
+    pub fn vendored() -> Result<Engines> {
+        Ok(Engines {
+            worker: sibling_worker()?,
+            pdfium_dir: fixture_gen::vendored_pdfium_dir(),
+            tesseract: Some((fixture_gen::tesseract_exe(), fixture_gen::tessdata_dir())),
+        })
+    }
+}
+
+/// How OCR went for one page (FLOW-OCR-MANUAL).
+#[derive(Debug, Clone, PartialEq)]
+pub enum OcrOutcome {
+    Done(OcrPageResult),
+    SkippedHasText,
+    Failed(AppError),
+}
 
 pub struct App {
     pub ws: Workspace,
@@ -26,6 +56,7 @@ pub struct App {
     pool: Pool,
     session: Session,
     counter: u64,
+    index: SearchIndex,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -71,18 +102,27 @@ pub fn sibling_worker() -> Result<PathBuf> {
 impl App {
     /// FLOW-LIFECYCLE startup: sweep stale sessions, create ours, set up the
     /// pool. Workers start lazily, on the first job.
-    pub fn start(worker_exe: &Path, pdfium_dir: &Path, base: &Path, workers: usize) -> Result<App> {
+    pub fn start(engines: &Engines, base: &Path, workers: usize) -> Result<App> {
         std::fs::create_dir_all(base).map_err(|e| AppError::io("create base dir", &e))?;
         sheaf_store::sweep_stale(base);
         let session = Session::create(base)?;
+        let mut args: Vec<std::ffi::OsString> = vec![
+            "--session".into(),
+            session.dir().into(),
+            "--pdfium".into(),
+            (&engines.pdfium_dir).into(),
+        ];
+        if let Some((exe, tessdata)) = &engines.tesseract {
+            args.extend([
+                "--tesseract".into(),
+                exe.into(),
+                "--tessdata".into(),
+                tessdata.into(),
+            ]);
+        }
         let cfg = PoolConfig {
-            program: worker_exe.to_path_buf(),
-            args: vec![
-                "--session".into(),
-                session.dir().into(),
-                "--pdfium".into(),
-                pdfium_dir.into(),
-            ],
+            program: engines.worker.clone(),
+            args,
             workers,
         };
         Ok(App {
@@ -90,6 +130,7 @@ impl App {
             pool: Pool::new(cfg, |_| {}),
             session,
             counter: 0,
+            index: SearchIndex::new(),
         })
     }
 
@@ -177,6 +218,14 @@ impl App {
                 height_pt,
             } => (None, 0, Some((width_pt, height_pt))),
         };
+        // A page whose text was recognized carries its text layer along. If it
+        // also had text of its own, that text was replaced: rasterize, so the
+        // old layer does not survive under the new one.
+        let text_layer = match &page.ocr {
+            OcrState::Done { key, .. } => Some(key.clone()),
+            _ => None,
+        };
+        let rasterize = text_layer.is_some() && page.has_text == Some(true);
         Ok(PageSpec {
             source,
             index,
@@ -184,6 +233,8 @@ impl App {
             rot: page.rot,
             crop: page.crop,
             filter: page.filter,
+            text_layer,
+            rasterize,
         })
     }
 
@@ -229,6 +280,167 @@ impl App {
                 self.session.resolve(&done.out)
             })
             .collect()
+    }
+
+    /// FLOW-OCR-AUTO / FLOW-OCR-MANUAL: recognize `ids` across the worker
+    /// pool. `langs: None` detects script and orientation per page; `force`
+    /// recognizes pages that already have text ("redo all"). One page failing
+    /// does not stop the others.
+    pub fn ocr(
+        &mut self,
+        ids: &[PageId],
+        langs: Option<Vec<String>>,
+        force: bool,
+    ) -> Result<Vec<(PageId, OcrOutcome)>> {
+        let mut jobs = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let page = self
+                .ws
+                .find(id)
+                .ok_or_else(|| AppError::not_found("page"))?;
+            let mut spec = self.page_spec(page)?;
+            // Recognition looks at the pixels alone.
+            spec.text_layer = None;
+            spec.rasterize = false;
+            let args = encode(&OcrArgs {
+                page: spec,
+                langs: langs.clone(),
+                force,
+            })?;
+            jobs.push(JobSpec::new(ops::OCR_PAGE, args, Priority::Selection));
+            self.ws.set_ocr_state(id, OcrState::Queued)?;
+        }
+        let results: Vec<Result<Value>> = std::thread::scope(|scope| {
+            let pool = &self.pool;
+            let handles: Vec<_> = jobs
+                .iter()
+                .map(|spec| scope.spawn(move || pool.run(spec.clone())))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(AppError::internal("OCR thread panicked")))
+                })
+                .collect()
+        });
+        let mut outcomes = Vec::with_capacity(ids.len());
+        for (&id, result) in ids.iter().zip(results) {
+            let outcome = match result.and_then(decode::<OcrPageResult>) {
+                Ok(r) if r.skipped_has_text => {
+                    self.ws.set_ocr_state(id, OcrState::SkippedHasText)?;
+                    OcrOutcome::SkippedHasText
+                }
+                Ok(r) => match self.record_ocr(id, &r) {
+                    Ok(()) => OcrOutcome::Done(r),
+                    Err(e) => OcrOutcome::Failed(e),
+                },
+                Err(e) => OcrOutcome::Failed(e),
+            };
+            if let OcrOutcome::Failed(e) = &outcome {
+                self.ws.set_ocr_state(
+                    id,
+                    OcrState::Failed {
+                        reason: format!("{:?}", e.code),
+                    },
+                )?;
+            }
+            outcomes.push((id, outcome));
+        }
+        Ok(outcomes)
+    }
+
+    /// OCR-PIPELINE steps 7 and 8 on the main side: page state, the
+    /// orientation fix as an op, the search index.
+    fn record_ocr(&mut self, id: PageId, r: &OcrPageResult) -> Result<()> {
+        let key = r
+            .key
+            .clone()
+            .ok_or_else(|| AppError::internal("OCR result without a key"))?;
+        let words = CacheEntry::at(&self.session, &key)?.result()?;
+        let turn = Rot::from_degrees(i32::from(r.rotate))?;
+        let already = matches!(self.ws.find(id).map(|p| &p.ocr), Some(OcrState::Done { key: k, .. }) if *k == key);
+        if turn != Rot::R0 && !already {
+            self.ws.apply(Op::Rotate {
+                ids: vec![id],
+                delta: turn,
+            })?;
+        }
+        self.ws.set_ocr_state(
+            id,
+            OcrState::Done {
+                engine: r.engine.clone(),
+                langs: r.langs.clone(),
+                key,
+            },
+        )?;
+        self.index.set_page(id, &words);
+        Ok(())
+    }
+
+    /// CMD-OCR-RESULT: words and confidences of a recognized page.
+    pub fn ocr_result(&self, id: PageId) -> Result<OcrResult> {
+        match self.ws.find(id).map(|p| &p.ocr) {
+            Some(OcrState::Done { key, .. }) => CacheEntry::at(&self.session, key)?.result(),
+            Some(_) => Err(AppError::not_found("OCR result")),
+            None => Err(AppError::not_found("page")),
+        }
+    }
+
+    /// CMD-SEARCH over recognized pages.
+    pub fn search(&self, query: &str) -> Vec<Hit> {
+        self.index.search(query, 200)
+    }
+
+    /// Text of one page of a PDF file, optionally only inside a region of the
+    /// page as displayed. Extraction happens in a worker.
+    pub fn file_text(&self, path: &Path, index: u32, within: Option<NormRect>) -> Result<String> {
+        let allowed = sheaf_store::allow_input(path)?;
+        let path = allowed
+            .path
+            .to_str()
+            .ok_or_else(|| AppError::new(ErrorCode::PathRejected, "path is not valid Unicode"))?;
+        let args = encode(&PageTextArgs {
+            path: path.to_string(),
+            index,
+            within,
+        })?;
+        let done: PageTextResult = decode(self.pool.run(JobSpec::new(
+            ops::PAGE_TEXT,
+            args,
+            Priority::Selection,
+        ))?)?;
+        Ok(done.text)
+    }
+
+    /// "Extract text only": the text of every page, recognized or already
+    /// present, as a `.txt` file. The documents themselves are untouched.
+    pub fn export_text(&mut self, out_dir: &Path, name: &str) -> Result<PathBuf> {
+        let mut text = String::new();
+        for page in self.ws.all_pages() {
+            let page_text = match (&page.ocr, page.content) {
+                (OcrState::Done { key, .. }, _) => {
+                    CacheEntry::at(&self.session, key)?.result()?.text()
+                }
+                (_, PageContent::Source { src, index }) => match self.ws.source(src) {
+                    Some(s) if s.kind == SourceKind::Pdf && page.has_text == Some(true) => {
+                        self.file_text(&s.path, index, None)?
+                    }
+                    _ => String::new(),
+                },
+                _ => String::new(),
+            };
+            text.push_str(page_text.trim_end());
+            text.push_str("\n\u{c}\n"); // form feed between pages
+        }
+        self.counter += 1;
+        let staged = self
+            .session
+            .resolve(&format!("results/text-{}.txt", self.counter))?;
+        sheaf_store::write_atomic(&staged, text.as_bytes())?;
+        let published = sheaf_store::publish(&staged, out_dir, name);
+        let _ = std::fs::remove_file(&staged);
+        published
     }
 
     /// FLOW-EXPORT, PDF only for now: build in a worker inside the session

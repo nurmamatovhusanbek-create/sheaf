@@ -39,6 +39,10 @@ impl Session {
     /// Create `<base>/session-<pid>-<rand>/`, private to the current user.
     pub fn create(base: &Path) -> Result<Session> {
         fs::create_dir_all(base).map_err(|e| AppError::io("create session base", &e))?;
+        let base = base
+            .canonicalize()
+            .map_err(|e| AppError::io("resolve session base", &e))?;
+        let base = crate::paths::simplify_verbatim(base);
         let dir = base.join(format!("{PREFIX}{}-{}", std::process::id(), token()));
         create_private_dir(&dir)?;
         let lock = File::create(dir.join(LOCK_FILE))

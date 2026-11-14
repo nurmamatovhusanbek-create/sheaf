@@ -3,11 +3,13 @@
 //! ```text
 //! sheaf-harness probe  FILE...
 //! sheaf-harness export --out DIR [--name NAME] [--rotate DEG] [--reverse] [--drop 2,5] FILE...
+//! sheaf-harness ocr    --out DIR [--langs eng+rus] [--replace] [--text-only] FILE
 //! sheaf-harness bench  [--pages N] [--enforce]
 //! ```
-//! Exit code 0 ok, 1 failed, 2 usage. Flags `--pdfium DIR` and `--workers N` apply to all.
+//! Exit code 0 ok, 2 partial (some pages failed), 1 failed, 64 usage.
+//! Flag `--workers N` applies to all.
 
-use harness::App;
+use harness::{App, Engines, OcrOutcome};
 use sheaf_core::{AppError, Op, PageId, Result, Rot};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -23,8 +25,10 @@ struct Args {
     drop: Vec<usize>,
     pages: u32,
     enforce: bool,
-    pdfium: PathBuf,
     workers: usize,
+    langs: Option<Vec<String>>,
+    replace: bool,
+    text_only: bool,
 }
 
 fn parse() -> std::result::Result<Args, String> {
@@ -43,11 +47,17 @@ fn parse() -> std::result::Result<Args, String> {
         drop: vec![],
         pages: 100,
         enforce: false,
-        pdfium: fixture_gen::vendored_pdfium_dir(),
         workers: auto,
+        langs: None,
+        replace: false,
+        text_only: false,
     };
     while let Some(arg) = it.next() {
-        let mut value = |flag: &str| it.next().ok_or(format!("{flag} needs a value"));
+        let mut value = |flag: &str| {
+            it.next()
+                .filter(|v| !v.starts_with("--"))
+                .ok_or(format!("{flag} needs a value"))
+        };
         match arg.as_str() {
             "--out" => a.out = Some(value("--out")?.into()),
             "--name" => a.name = value("--name")?,
@@ -72,7 +82,12 @@ fn parse() -> std::result::Result<Args, String> {
                     .map_err(|_| "--pages needs a number")?
             }
             "--enforce" => a.enforce = true,
-            "--pdfium" => a.pdfium = value("--pdfium")?.into(),
+            "--langs" => {
+                let v = value("--langs")?;
+                a.langs = (v != "auto").then(|| v.split('+').map(str::to_string).collect());
+            }
+            "--replace" => a.replace = true,
+            "--text-only" => a.text_only = true,
             "--workers" => {
                 a.workers = value("--workers")?
                     .parse()
@@ -87,7 +102,7 @@ fn parse() -> std::result::Result<Args, String> {
 
 fn start(a: &Args) -> Result<App> {
     let base = std::env::temp_dir().join("sheaf-harness");
-    App::start(&harness::sibling_worker()?, &a.pdfium, &base, a.workers)
+    App::start(&Engines::vendored()?, &base, a.workers)
 }
 
 fn probe(a: &Args) -> Result<()> {
@@ -170,6 +185,53 @@ fn export(a: &Args) -> Result<()> {
     app.close()
 }
 
+/// FLOW-OCR-MANUAL, headless: add missing text (default), redo all
+/// (`--replace`), or extract text only (`--text-only`). Writes `name.ocr.pdf`
+/// or `name.ocr.txt` and never touches the input (ADR-NO-OVERWRITE).
+fn ocr(a: &Args) -> Result<ExitCode> {
+    let out = a
+        .out
+        .as_ref()
+        .ok_or_else(|| AppError::invalid("--out DIR is required"))?;
+    let [file] = a.files.as_slice() else {
+        return Err(AppError::invalid("ocr takes exactly one file"));
+    };
+    let mut app = start(a)?;
+    let report = app.import(file)?;
+    if report.encrypted {
+        return Err(AppError::new(
+            sheaf_core::ErrorCode::NeedsPassword,
+            "the input file is locked",
+        ));
+    }
+    let outcomes = app.ocr(&report.pages, a.langs.clone(), a.replace)?;
+    let (mut done, mut skipped, mut failed) = (0, 0, 0);
+    for (_, outcome) in &outcomes {
+        match outcome {
+            OcrOutcome::Done(_) => done += 1,
+            OcrOutcome::SkippedHasText => skipped += 1,
+            OcrOutcome::Failed(_) => failed += 1,
+        }
+    }
+    let stem = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "document".into());
+    let path = if a.text_only {
+        app.export_text(out, &format!("{stem}.ocr.txt"))?
+    } else {
+        app.export(out, &format!("{stem}.ocr.pdf"))?.0
+    };
+    println!("{}", path.display());
+    eprintln!("{done} pages recognized, {skipped} already had text, {failed} failed");
+    app.close()?;
+    Ok(if failed > 0 {
+        ExitCode::from(2)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
 /// PERF-BUDGETS, the part PH-1 can measure: opening a 100-page PDF, its
 /// first 20 thumbnails, and a lossless export.
 fn bench(a: &Args) -> Result<()> {
@@ -226,22 +288,23 @@ fn main() -> ExitCode {
         Ok(a) => a,
         Err(e) => {
             eprintln!(
-                "sheaf-harness: {e}\nusage: sheaf-harness probe|export|bench [flags] [FILE...]"
+                "sheaf-harness: {e}\nusage: sheaf-harness probe|export|ocr|bench [flags] [FILE...]"
             );
-            return ExitCode::from(2);
+            return ExitCode::from(64);
         }
     };
     let result = match args.cmd.as_str() {
-        "probe" => probe(&args),
-        "export" => export(&args),
-        "bench" => bench(&args),
+        "probe" => probe(&args).map(|()| ExitCode::SUCCESS),
+        "export" => export(&args).map(|()| ExitCode::SUCCESS),
+        "ocr" => ocr(&args),
+        "bench" => bench(&args).map(|()| ExitCode::SUCCESS),
         other => {
             eprintln!("sheaf-harness: unknown command {other}");
-            return ExitCode::from(2);
+            return ExitCode::from(64);
         }
     };
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(e) => {
             eprintln!("sheaf-harness: {e}");
             ExitCode::FAILURE

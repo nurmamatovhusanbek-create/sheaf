@@ -207,6 +207,32 @@ fn oversized_input_is_rejected_before_anything_reads_it() {
 }
 
 #[test]
+fn verbatim_paths_are_simplified_only_when_safe() {
+    use sheaf_store::paths::simplify_verbatim as simplify;
+    let p = |s: &str| PathBuf::from(s);
+    assert_eq!(
+        simplify(p(r"\\?\C:\Users\me\AppData\Local\Sheaf")),
+        p(r"C:\Users\me\AppData\Local\Sheaf")
+    );
+    for unchanged in [
+        r"C:\plain",
+        r"\\?\UNC\server\share\x",
+        r"\\?\GLOBALROOT\Device\x",
+        r"\\?\C:\dir\NUL",
+        "/unix/path",
+        r"\\?\C:",
+    ] {
+        assert_eq!(simplify(p(unchanged)), p(unchanged), "{unchanged}");
+    }
+    let long = format!(r"\\?\C:\{}", "d".repeat(300));
+    assert_eq!(
+        simplify(p(&long)),
+        p(&long),
+        "long paths keep the prefix that makes them work"
+    );
+}
+
+#[test]
 fn file_names_are_sanitized() {
     assert_eq!(sanitize_file_name("report.pdf"), "report.pdf");
     assert_eq!(sanitize_file_name("../../etc/passwd"), "_.._etc_passwd");

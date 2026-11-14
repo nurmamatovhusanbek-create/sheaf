@@ -87,6 +87,8 @@ pub mod ops {
     pub const THUMB: &str = "thumb";
     pub const RENDER: &str = "render";
     pub const BUILD: &str = "build";
+    pub const OCR_PAGE: &str = "ocr_page";
+    pub const PAGE_TEXT: &str = "page_text";
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,6 +129,13 @@ pub struct PageSpec {
     pub crop: Option<NormRect>,
     #[serde(default)]
     pub filter: Filter,
+    /// OCR cache key whose text layer is laid over the page at build time (OCR-TEXTLAYER).
+    #[serde(default)]
+    pub text_layer: Option<String>,
+    /// Rasterize even an untouched PDF page. Used when existing text is
+    /// replaced: the old text layer must not survive under the new one.
+    #[serde(default)]
+    pub rasterize: bool,
 }
 
 /// `thumb` and `render`: draw one page into a PNG inside the session dir.
@@ -161,4 +170,50 @@ pub struct BuildResult {
     pub copied: u32,
     /// Pages that had to be rasterized.
     pub rasterized: u32,
+    /// Pages that received an OCR text layer.
+    #[serde(default)]
+    pub text_layers: u32,
+}
+
+/// `ocr_page`: OCR-PIPELINE for one page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OcrArgs {
+    pub page: PageSpec,
+    /// `None` detects script and picks languages (OCR-LANGS); a fixed list skips detection.
+    #[serde(default)]
+    pub langs: Option<Vec<String>>,
+    /// Recognize even if the page already has a text layer ("redo all").
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OcrPageResult {
+    /// The page already has text and `force` was off: nothing was done.
+    pub skipped_has_text: bool,
+    /// Cache key (DATA-CACHEKEY); `None` when skipped.
+    pub key: Option<String>,
+    /// The result came from the cache; the engine did not run.
+    pub cached: bool,
+    pub engine: String,
+    pub langs: Vec<String>,
+    pub mean_conf: f32,
+    pub words: u32,
+    /// Clockwise degrees the page should be turned to read upright; the main
+    /// process records it as a Rotate op (OCR-PIPELINE step 4).
+    pub rotate: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageTextArgs {
+    pub path: String,
+    pub index: u32,
+    /// Only text inside this part of the page, as displayed.
+    #[serde(default)]
+    pub within: Option<NormRect>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PageTextResult {
+    pub text: String,
 }

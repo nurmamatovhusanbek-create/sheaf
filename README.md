@@ -5,9 +5,10 @@ Local, offline PDF and scan toolkit for Windows (Rust + Tauri 2). No network at 
 The design and the phase-by-phase build plan are in [ARCHITECTURE.md](ARCHITECTURE.md);
 start with its reading guide and the rules for whoever writes code.
 
-**Status:** PH-1 (core) is done: workspace model with undo, session store and path policy,
-image cleanup, PDF probe/render/build, the worker process and the job pool. There is no
-window yet (PH-4); a headless harness drives the core.
+**Status:** PH-2 (OCR) is done on top of the PH-1 core: pages without text are recognized
+with Tesseract (English, Russian, Uzbek Latin and Cyrillic), results are cached by pixel
+content, and export lays an invisible text layer over the untouched page. There is no window
+yet (PH-4); a headless harness drives the core.
 
 ## Working on it
 
@@ -16,7 +17,11 @@ bash tools/fetch-vendor                 # download and verify pinned third-party
 ```
 
 ```bash
-cargo test --workspace                  # all tests; needs the vendored PDFium
+cargo build --workspace                 # the tests drive the real worker binary
+```
+
+```bash
+cargo test --workspace                  # needs the vendored PDFium and a `tesseract` on PATH (Linux)
 ```
 
 ```bash
@@ -39,6 +44,10 @@ cargo build --workspace --release
 
 ```bash
 ./target/release/sheaf-harness export --out . --name merged.pdf --drop 2 --rotate 90 a.pdf b.pdf
+```
+
+```bash
+./target/release/sheaf-harness ocr --out . scan.pdf            # writes scan.ocr.pdf; --text-only for .txt
 ```
 
 ```bash

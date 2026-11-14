@@ -9,15 +9,9 @@ use harness::App;
 use sheaf_core::{ErrorCode, Op, PageId, Rot};
 
 fn app(base: &Scratch) -> App {
-    let worker =
-        harness::sibling_worker().expect("sheaf-worker is built (run `cargo build --workspace`)");
-    App::start(
-        &worker,
-        &fixture_gen::vendored_pdfium_dir(),
-        &base.path().join("sessions"),
-        2,
-    )
-    .expect("app starts")
+    let engines = harness::Engines::vendored()
+        .expect("sheaf-worker is built (run `cargo build --workspace`)");
+    App::start(&engines, &base.path().join("sessions"), 2).expect("app starts")
 }
 
 /// Pages told apart by width: page `i` is `300 + 10 * i` points wide.

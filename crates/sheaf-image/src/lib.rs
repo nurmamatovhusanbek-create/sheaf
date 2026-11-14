@@ -11,7 +11,9 @@ mod codec;
 mod transform;
 
 pub use analyze::{binarize_sauvola, estimate_skew, ink_coverage, is_blank, otsu_threshold};
-pub use codec::{check_dimensions, decode_bytes, decode_file, dimensions, encode_jpeg, encode_png};
+pub use codec::{
+    check_dimensions, decode_bytes, decode_file, dimensions, encode_jpeg, encode_png, encode_ppm,
+};
 pub use transform::{
     apply_filter, crop_norm, despeckle, downsample, fit_within, rotate_quarter, rotate_small, white,
 };

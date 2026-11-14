@@ -45,10 +45,13 @@ while IFS=$'\t' read -r dest url; do
 done < "$vendor/manifest.tsv"
 
 # Extract pinned members from the verified archives, then verify the results.
-while IFS=$'\t' read -r archive member dest; do
-  archive="${archive%$'\r'}"; member="${member%$'\r'}"; dest="${dest%$'\r'}"
+# A fourth column of "windows" marks files only a Windows build needs.
+case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) on_windows=1 ;; *) on_windows=0 ;; esac
+while IFS=$'\t' read -r archive member dest only; do
+  archive="${archive%$'\r'}"; member="${member%$'\r'}"; dest="${dest%$'\r'}"; only="${only%$'\r'}"
   case "$archive" in ''|'#'*) continue ;; esac
   case "$dest$member" in /*|*..*) echo "fetch-vendor: unsafe extract path: $member -> $dest" >&2; exit 1 ;; esac
+  if [ "$only" = "windows" ] && [ "$on_windows" = 0 ]; then continue; fi
   want="$(awk -v p="$dest" '$2 == p { print $1 }' "$vendor/SHA256SUMS")"
   if [ -z "$want" ]; then
     echo "fetch-vendor: no SHA-256 pinned for $dest" >&2; fail=1; continue
@@ -58,8 +61,17 @@ while IFS=$'\t' read -r archive member dest; do
       echo "fetch-vendor: missing $dest (archive $archive not present)" >&2; fail=1; continue
     fi
     mkdir -p "$(dirname "$vendor/$dest")"
-    # Archive is piped in so tar never has to interpret a Windows drive path.
-    tar -xzO -f - "$member" < "$vendor/$archive" > "$vendor/$dest.part"
+    case "$archive" in
+      *.exe)
+        # NSIS installer: unpack once with 7-Zip, then pick files out of it.
+        if [ ! -d "$vendor/$archive.x" ]; then
+          (cd "$vendor" && 7z x -y -bd -o"$archive.x" "$archive" > /dev/null)
+        fi
+        cp "$vendor/$archive.x/$member" "$vendor/$dest.part" ;;
+      *)
+        # Archive is piped in so tar never has to interpret a Windows drive path.
+        tar -xzO -f - "$member" < "$vendor/$archive" > "$vendor/$dest.part" ;;
+    esac
     mv "$vendor/$dest.part" "$vendor/$dest"
   fi
   got="$(sha256sum "$vendor/$dest" | cut -d' ' -f1)"

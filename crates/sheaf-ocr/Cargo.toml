@@ -13,3 +13,8 @@ workspace = true
 sheaf-core = { path = "../sheaf-core" }
 sheaf-image = { path = "../sheaf-image" }
 sheaf-store = { path = "../sheaf-store" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+fixture-gen = { path = "../../tools/fixture-gen" }

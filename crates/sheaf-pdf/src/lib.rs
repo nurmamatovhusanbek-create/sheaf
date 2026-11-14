@@ -1,13 +1,14 @@
 //! MOD-PDF: PDFium operations. Runs only inside PROC-WORKER (SEC-ISOLATE).
 //!
-//! PH-1 scope: open, probe, render, build. lopdf-based operations
-//! (encryption, metadata, overlays) arrive in PH-2 and PH-3.
+//! Scope so far: open, probe, render, build, text extraction and the OCR
+//! text-layer overlay. lopdf-based operations (encryption, metadata,
+//! stamps) arrive in PH-3.
 //! See `ARCHITECTURE.md`, anchor `mod-pdf`.
 
 use pdfium_render::prelude::*;
 use sheaf_core::consts::{MAX_PAGE_PIXELS, MAX_PAGE_SIDE, MAX_SOURCE_PAGES, RASTER_DPI};
 use sheaf_core::proto::ProbeResult;
-use sheaf_core::{AppError, ErrorCode, Result, Rot, SourceKind};
+use sheaf_core::{AppError, ErrorCode, NormRect, Result, Rot, SourceKind};
 use sheaf_image::RgbaImage;
 use std::path::{Path, PathBuf};
 
@@ -166,6 +167,56 @@ impl Engine {
         Ok(bitmap.as_image().map_err(map_err)?.into_rgba8())
     }
 
+    /// OCR-PIPELINE step 1 for one page.
+    pub fn page_has_text(&self, path: &Path, index: u32) -> Result<bool> {
+        let doc = self.open(path)?;
+        let page = doc.pages().get(index as i32).map_err(map_err)?;
+        Ok(has_text_layer(&page))
+    }
+
+    /// Text on a page, in the order PDFium reports it. Invisible OCR text is
+    /// included: this is what "searchable" means. With `within`, only text
+    /// inside that part of the page as displayed.
+    pub fn page_text(&self, path: &Path, index: u32, within: Option<NormRect>) -> Result<String> {
+        let doc = self.open(path)?;
+        let page = doc.pages().get(index as i32).map_err(map_err)?;
+        let text = page.text().map_err(map_err)?;
+        let clean = |s: String| s.chars().filter(|c| *c != '\u{0}').collect::<String>();
+        let Some(rect) = within else {
+            return Ok(clean(
+                text.chars()
+                    .iter()
+                    .filter_map(|c| c.unicode_char())
+                    .collect(),
+            ));
+        };
+        let in_range = [rect.x0, rect.y0, rect.x1, rect.y1]
+            .iter()
+            .all(|v| (0.0..=1.0).contains(v));
+        if !(in_range && rect.x0 < rect.x1 && rect.y0 < rect.y1) {
+            return Err(AppError::invalid("text region out of range"));
+        }
+        // Displayed frame (top-left origin, fractions) to PDF user space.
+        let own = from_rotation(page.rotation().map_err(map_err)?);
+        let shown = (page.width().value, page.height().value);
+        let media = swap_if_turned(own, shown);
+        let [a, b, c, d, e, f] = unrotate(own, media.0, media.1);
+        let corner = |nx: f32, ny: f32| {
+            let (x, y) = (nx * shown.0, (1.0 - ny) * shown.1);
+            (a * x + c * y + e, b * x + d * y + f)
+        };
+        let (p, q) = (corner(rect.x0, rect.y0), corner(rect.x1, rect.y1));
+        let area = PdfRect::new_from_values(p.1.min(q.1), p.0.min(q.0), p.1.max(q.1), p.0.max(q.0));
+        Ok(clean(text.inside_rect(area)))
+    }
+
+    /// Width and height of a page in points, as displayed.
+    pub fn page_size_pt(&self, path: &Path, index: u32) -> Result<(f32, f32)> {
+        let doc = self.open(path)?;
+        let page = doc.pages().get(index as i32).map_err(map_err)?;
+        Ok((page.width().value, page.height().value))
+    }
+
     /// Start assembling an output PDF.
     pub fn builder(&self) -> Result<Builder<'_>> {
         Ok(Builder {
@@ -177,12 +228,58 @@ impl Engine {
     }
 }
 
+/// An invisible text layer for one page (OCR-TEXTLAYER): a PDF whose single
+/// page holds only invisible text, as large as the image the OCR engine saw.
+#[derive(Debug, Clone, Copy)]
+pub struct TextLayer<'p> {
+    pub pdf: &'p Path,
+    /// Clockwise turn applied to the page image before recognition.
+    pub rotate: Rot,
+}
+
+/// Affine map `[a b c d e f]`: `x' = a·x + c·y + e`, `y' = b·x + d·y + f`.
+type Affine = [f32; 6];
+
+fn compose(outer: Affine, inner: Affine) -> Affine {
+    let [a1, b1, c1, d1, e1, f1] = outer;
+    let [a2, b2, c2, d2, e2, f2] = inner;
+    [
+        a1 * a2 + c1 * b2,
+        b1 * a2 + d1 * b2,
+        a1 * c2 + c1 * d2,
+        b1 * c2 + d1 * d2,
+        a1 * e2 + c1 * f2 + e1,
+        b1 * e2 + d1 * f2 + f1,
+    ]
+}
+
+/// Take a point in the frame you get by turning a `w`×`h` box clockwise by
+/// `rot` back to the box's own coordinates (PDF axes: origin bottom-left).
+fn unrotate(rot: Rot, w: f32, h: f32) -> Affine {
+    match rot {
+        Rot::R0 => [1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        Rot::R90 => [0.0, 1.0, -1.0, 0.0, w, 0.0],
+        Rot::R180 => [-1.0, 0.0, 0.0, -1.0, w, h],
+        Rot::R270 => [0.0, -1.0, 1.0, 0.0, 0.0, h],
+    }
+}
+
+fn swap_if_turned(rot: Rot, (w, h): (f32, f32)) -> (f32, f32) {
+    if matches!(rot, Rot::R90 | Rot::R270) {
+        (h, w)
+    } else {
+        (w, h)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BuildStats {
     pub pages: u32,
     /// Imported from their source without re-encoding (PERF-LOSSLESS).
     pub copied: u32,
     pub rasterized: u32,
+    /// Pages that received an OCR text layer.
+    pub text_layers: u32,
 }
 
 /// Assembles a PDF page by page, so a long document never has to hold all of
@@ -205,6 +302,42 @@ impl<'e> Builder<'e> {
         Ok(self.sources.len() - 1)
     }
 
+    /// Lay `layer` over the last page. Must run before any extra rotation is
+    /// added, while the page still shows as its source displays it.
+    fn overlay_last(&mut self, layer: Option<TextLayer>) -> Result<()> {
+        let Some(layer) = layer else { return Ok(()) };
+        let text_doc = self.engine.open(layer.pdf)?;
+        let mut text_page = text_doc.pages().get(0).map_err(map_err)?;
+        let text_size = (text_page.width().value, text_page.height().value);
+        if !(text_size.0 >= 1.0 && text_size.1 >= 1.0) {
+            return Err(AppError::new(
+                ErrorCode::ParseError,
+                "text layer has no area",
+            ));
+        }
+        // `objects_mut` is the accessor whose lifetime matches the destination document.
+        let mut object = text_page
+            .objects_mut()
+            .copy_into_x_object_form_object(&mut self.doc)
+            .map_err(map_err)?;
+
+        let mut page = self.doc.pages().last().map_err(map_err)?;
+        let own = from_rotation(page.rotation().map_err(map_err)?);
+        // As displayed (own /Rotate applied), and the unrotated media size under it.
+        let shown = (page.width().value, page.height().value);
+        let media = swap_if_turned(own, shown);
+        // The OCR image is the displayed page, turned once more by `layer.rotate`.
+        let ocr = swap_if_turned(layer.rotate, shown);
+        let scale: Affine = [ocr.0 / text_size.0, 0.0, 0.0, ocr.1 / text_size.1, 0.0, 0.0];
+        let to_shown = unrotate(layer.rotate, shown.0, shown.1);
+        let to_media = unrotate(own, media.0, media.1);
+        let [a, b, c, d, e, f] = compose(to_media, compose(to_shown, scale));
+        object.transform(a, b, c, d, e, f).map_err(map_err)?;
+        page.objects_mut().add_object(object).map_err(map_err)?;
+        self.stats.text_layers += 1;
+        Ok(())
+    }
+
     fn rotate_last(&mut self, extra: Rot) -> Result<()> {
         if extra == Rot::R0 {
             return Ok(());
@@ -216,7 +349,13 @@ impl<'e> Builder<'e> {
     }
 
     /// Import a page untouched and add `rot` to its `/Rotate` (TOOL-ROTATE).
-    pub fn copy_page(&mut self, path: &Path, index: u32, rot: Rot) -> Result<()> {
+    pub fn copy_page(
+        &mut self,
+        path: &Path,
+        index: u32,
+        rot: Rot,
+        text: Option<TextLayer>,
+    ) -> Result<()> {
         let slot = self.source_slot(path)?;
         let dest = self.doc.pages().len();
         let source = &self.sources[slot].1;
@@ -227,6 +366,7 @@ impl<'e> Builder<'e> {
             .pages_mut()
             .copy_page_from_document(source, index as i32, dest)
             .map_err(map_err)?;
+        self.overlay_last(text)?;
         self.rotate_last(rot)?;
         self.stats.pages += 1;
         self.stats.copied += 1;
@@ -234,7 +374,13 @@ impl<'e> Builder<'e> {
     }
 
     /// Add a page that shows `img` edge to edge. `dpi` fixes the page size.
-    pub fn image_page(&mut self, img: &RgbaImage, dpi: u32, rot: Rot) -> Result<()> {
+    pub fn image_page(
+        &mut self,
+        img: &RgbaImage,
+        dpi: u32,
+        rot: Rot,
+        text: Option<TextLayer>,
+    ) -> Result<()> {
         let dpi = dpi.clamp(36, 2400) as f32;
         let (w_pt, h_pt) = (
             img.width() as f32 * 72.0 / dpi,
@@ -265,9 +411,45 @@ impl<'e> Builder<'e> {
             .add_image_object(object)
             .map_err(map_err)?;
         drop(page);
+        self.overlay_last(text)?;
         self.rotate_last(rot)?;
         self.stats.pages += 1;
         self.stats.rasterized += 1;
+        Ok(())
+    }
+
+    /// Add an A4 page of visible text set in the TrueType font at `font`,
+    /// one entry of `lines` per line. Groundwork for TOOL-WATERMARK and
+    /// TOOL-PAGENUM; today it produces the synthetic OCR fixtures.
+    pub fn text_page(&mut self, lines: &[&str], font: &Path, size_pt: f32) -> Result<()> {
+        let font = self
+            .doc
+            .fonts_mut()
+            .load_true_type_from_file(font, true)
+            .map_err(map_err)?;
+        let (w, h, margin) = (595.0f32, 842.0f32, 56.0f32);
+        let size = PdfPagePaperSize::Custom(PdfPoints::new(w), PdfPoints::new(h));
+        let mut page = self
+            .doc
+            .pages_mut()
+            .create_page_at_end(size)
+            .map_err(map_err)?;
+        for (i, line) in lines.iter().enumerate() {
+            let y = h - margin - size_pt * 1.6 * (i as f32 + 1.0);
+            if y < margin {
+                return Err(AppError::invalid("too many lines for one page"));
+            }
+            let mut object =
+                PdfPageTextObject::new(&self.doc, *line, font, PdfPoints::new(size_pt))
+                    .map_err(map_err)?;
+            object
+                .translate(PdfPoints::new(margin), PdfPoints::new(y))
+                .map_err(map_err)?;
+            page.objects_mut()
+                .add_text_object(object)
+                .map_err(map_err)?;
+        }
+        self.stats.pages += 1;
         Ok(())
     }
 
