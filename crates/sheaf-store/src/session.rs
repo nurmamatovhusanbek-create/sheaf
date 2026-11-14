@@ -114,14 +114,17 @@ impl Drop for Session {
 }
 
 fn create_private_dir(dir: &Path) -> Result<()> {
-    let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = fs::DirBuilder::new();
         builder.mode(0o700);
-    }
+        builder
+    };
     // On Windows the directory inherits the ACL of %LOCALAPPDATA%, which
     // already grants access to the owning user, SYSTEM and administrators only.
+    #[cfg(not(unix))]
+    let builder = fs::DirBuilder::new();
     builder
         .create(dir)
         .map_err(|e| AppError::io("create session dir", &e))
