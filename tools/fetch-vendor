@@ -44,11 +44,40 @@ while IFS=$'\t' read -r dest url; do
   fi
 done < "$vendor/manifest.tsv"
 
-# A pinned hash with no manifest entry means the two files drifted apart.
+# Extract pinned members from the verified archives, then verify the results.
+while IFS=$'\t' read -r archive member dest; do
+  archive="${archive%$'\r'}"; member="${member%$'\r'}"; dest="${dest%$'\r'}"
+  case "$archive" in ''|'#'*) continue ;; esac
+  case "$dest$member" in /*|*..*) echo "fetch-vendor: unsafe extract path: $member -> $dest" >&2; exit 1 ;; esac
+  want="$(awk -v p="$dest" '$2 == p { print $1 }' "$vendor/SHA256SUMS")"
+  if [ -z "$want" ]; then
+    echo "fetch-vendor: no SHA-256 pinned for $dest" >&2; fail=1; continue
+  fi
+  if [ ! -f "$vendor/$dest" ]; then
+    if [ ! -f "$vendor/$archive" ]; then
+      echo "fetch-vendor: missing $dest (archive $archive not present)" >&2; fail=1; continue
+    fi
+    mkdir -p "$(dirname "$vendor/$dest")"
+    # Archive is piped in so tar never has to interpret a Windows drive path.
+    tar -xzO -f - "$member" < "$vendor/$archive" > "$vendor/$dest.part"
+    mv "$vendor/$dest.part" "$vendor/$dest"
+  fi
+  got="$(sha256sum "$vendor/$dest" | cut -d' ' -f1)"
+  if [ "$got" != "$want" ]; then
+    echo "fetch-vendor: SHA-256 mismatch for $dest" >&2
+    rm -f "$vendor/$dest"
+    fail=1
+  else
+    echo "fetch-vendor: ok $dest"
+  fi
+done < "$vendor/extract.tsv"
+
+# A pinned hash with no manifest or extract entry means the files drifted apart.
+known="$(cut -f1 "$vendor/manifest.tsv"; cut -f3 "$vendor/extract.tsv")"
 while read -r _ path; do
   [ -z "${path:-}" ] && continue
-  if ! cut -f1 "$vendor/manifest.tsv" | grep -qxF "$path"; then
-    echo "fetch-vendor: $path is in SHA256SUMS but not in manifest.tsv" >&2; fail=1
+  if ! grep -qxF "$path" <<< "$known"; then
+    echo "fetch-vendor: $path is in SHA256SUMS but not in manifest.tsv or extract.tsv" >&2; fail=1
   fi
 done < "$vendor/SHA256SUMS"
 

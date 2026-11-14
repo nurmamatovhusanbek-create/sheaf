@@ -14,3 +14,10 @@ sheaf-pdf = { path = "../sheaf-pdf" }
 sheaf-image = { path = "../sheaf-image" }
 sheaf-ocr = { path = "../sheaf-ocr" }
 sheaf-store = { path = "../sheaf-store" }
+serde.workspace = true
+serde_json.workspace = true
+sheaf-core = { path = "../sheaf-core" }
+
+[dev-dependencies]
+fixture-gen = { path = "../../tools/fixture-gen" }
+image.workspace = true

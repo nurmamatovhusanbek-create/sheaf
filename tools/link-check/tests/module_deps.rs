@@ -17,7 +17,13 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("sheaf-jobs", &["sheaf-core", "sheaf-store"]),
     (
         "sheaf-worker",
-        &["sheaf-pdf", "sheaf-image", "sheaf-ocr", "sheaf-store"],
+        &[
+            "sheaf-core",
+            "sheaf-pdf",
+            "sheaf-image",
+            "sheaf-ocr",
+            "sheaf-store",
+        ],
     ),
     ("sheaf-cli", &[]),
 ];

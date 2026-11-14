@@ -1,8 +1,87 @@
-//! MOD-WORKER: worker binary: job handlers
+//! MOD-WORKER: the worker binary. Reads DATA-WORKERPROTO requests on stdin,
+//! writes responses on stdout. This is the only process that opens documents
+//! (SEC-ISOLATE); it writes nothing outside the session dir (SEC-PATHS).
 //!
-//! Scaffold only (PH-0). See `ARCHITECTURE.md`, anchor `mod-worker`.
+//! `sheaf-worker --session <dir> --pdfium <dir>`
+//!
+//! PH-1 ops: `ping`, `import_probe`, `thumb`, `render`, `build`.
+//! `ocr_page` arrives in PH-2, `tool` in PH-3.
 
-fn main() {
-    eprintln!("sheaf-worker: not implemented yet (PH-1)");
-    std::process::exit(1);
+mod handlers;
+
+use handlers::Worker;
+use sheaf_core::proto::{Request, Response};
+use sheaf_core::AppError;
+use std::io::{BufRead, Write};
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+fn say(resp: &Response) {
+    let mut out = std::io::stdout().lock();
+    if let Ok(line) = serde_json::to_string(resp) {
+        let _ = writeln!(out, "{line}");
+        let _ = out.flush();
+    }
+}
+
+fn main() -> ExitCode {
+    let mut session = None;
+    let mut pdfium = None;
+    let mut args = std::env::args_os().skip(1);
+    while let Some(flag) = args.next() {
+        match (flag.to_str(), args.next()) {
+            (Some("--session"), Some(v)) => session = Some(PathBuf::from(v)),
+            (Some("--pdfium"), Some(v)) => pdfium = Some(PathBuf::from(v)),
+            _ => {
+                eprintln!("usage: sheaf-worker --session <dir> --pdfium <dir>");
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let (Some(session), Some(pdfium)) = (session, pdfium) else {
+        eprintln!("usage: sheaf-worker --session <dir> --pdfium <dir>");
+        return ExitCode::from(2);
+    };
+    let mut worker = match Worker::new(&session, pdfium) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("sheaf-worker: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    for line in std::io::stdin().lock().lines() {
+        let Ok(line) = line else { break };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let req: Request = match serde_json::from_str(&line) {
+            Ok(req) => req,
+            Err(_) => {
+                say(&Response::failed(
+                    0,
+                    AppError::invalid("request is not valid JSON"),
+                ));
+                continue;
+            }
+        };
+        let id = req.id;
+        // No panic crosses the process boundary as a dead pipe if we can help it.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            worker.handle(&req, &mut |p| say(&Response::progress(id, p)))
+        }));
+        match outcome {
+            Ok(Ok(result)) => say(&Response::done(id, result)),
+            Ok(Err(e)) => say(&Response::failed(id, e)),
+            Err(_) => {
+                say(&Response::failed(
+                    id,
+                    AppError::internal("handler panicked"),
+                ));
+                // State after a panic is unknown: exit and let the pool start a fresh worker.
+                return ExitCode::from(3);
+            }
+        }
+    }
+    ExitCode::SUCCESS
 }

@@ -12,3 +12,12 @@ workspace = true
 [dependencies]
 sheaf-core = { path = "../sheaf-core" }
 sheaf-store = { path = "../sheaf-store" }
+serde.workspace = true
+serde_json.workspace = true
+
+# Protocol test double for TEST-JOBS (crash, hang, memory, priority). Never bundled.
+[[bin]]
+name = "sheaf-fake-worker"
+path = "src/bin/fake_worker.rs"
+test = false
+doc = false

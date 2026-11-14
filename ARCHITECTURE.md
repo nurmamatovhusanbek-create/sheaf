@@ -94,7 +94,7 @@
 | <a id="adr-tess-sidecar"></a> | Bundled `tesseract.exe` called per job; `OcrEngine` trait | Avoids C++/Leptonica build on Windows, isolates crashes | libtesseract bindings | per-page spawn cost shows up in [`PERF-BUDGETS`](#perf-budgets) |
 | <a id="adr-no-vlm-default"></a> | Unlimited-OCR (3B VLM) is not the default engine | GPU-oriented, needs `trust_remote_code`, weak on Uzbek Cyrillic in one third-party benchmark, hallucination risk | VLM as default | a CPU-viable build passes [`TEST-OCR`](#test-ocr) on real documents ([`OCR-ENGINES`](#ocr-engines)) |
 | <a id="adr-wia"></a> | Scanner support via WIA first; TWAIN and ESCL later | Native on Windows, no vendor SDK | TWAIN first | [`RISK-WIA`](#risk-wia) |
-| <a id="adr-worker-procs"></a> | Heavy PDF and image work runs in separate worker processes ([`PROC-WORKER`](#proc-worker)) | PDFium is not thread-safe (VERIFY), crash and hang containment, memory caps | Thread pool in main process | never |
+| <a id="adr-worker-procs"></a> | Heavy PDF and image work runs in separate worker processes ([`PROC-WORKER`](#proc-worker)) | PDFium is not thread-safe (the `pdfium-render` documentation says to assume so, and that the PDFium authors recommend parallel processes over threads), crash and hang containment, memory caps | Thread pool in main process | never |
 | <a id="adr-no-overwrite"></a> | Outputs never overwrite inputs; `name.suffix.pdf` next to the source or in the output folder | Safety | In-place save | never |
 | <a id="adr-explorer-verbs"></a> | Explorer integration is per-user registry verbs that launch the exe with arguments ([`CLI-GRAMMAR`](#cli-grammar)) | No admin, no shell-extension DLL | COM IExplorerCommand package | Windows 11 top-level menu is required |
 | <a id="adr-i18n"></a> | Key-based strings: English, Uzbek (Latin), Russian | Target user base | Hard-coded text | never |
@@ -148,7 +148,7 @@ sheaf/
   ui/               MOD-UI       index.html, js/*.mjs, css/, i18n/{en,uz,ru}.json
   vendor/           pdfium.dll, tesseract/, tessdata/, fonts/, SHA256SUMS (CI-fetched)
   fixtures/         test documents (TEST-FIXTURES)
-  tools/            link-check, fixture generators, bench harness
+  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench)
   .github/workflows/ build + test + package (DOC-BUILD)
 ```
 
@@ -161,11 +161,12 @@ All types live in [`MOD-CORE`](#mod-core) unless noted. Serialization is `serde`
 ```rust
 struct Source { id: SourceId, path: PathBuf, kind: SourceKind /*Pdf|Image*/, sha256: [u8;32],
                 page_count: u32, encrypted: bool, unlocked: bool }
-struct Page   { id: PageId, src: SourceId, src_index: u32, rot: Rot /*0|90|180|270*/,
+struct Page   { id: PageId, content: PageContent /*Source{src, index} | Blank{width_pt, height_pt}*/,
+                rot: Rot /*0|90|180|270*/,
                 crop: Option<NormRect>, filter: Filter, ocr: OcrState, has_text: Option<bool> }
 ```
 
-A page is a pointer into a source plus edits ([`ADR-NONDESTRUCTIVE`](#adr-nondestructive)). Scanned pages become image Sources written to the session dir ([`MOD-STORE`](#mod-store)) the moment they arrive ([`FLOW-SCAN-LIVE`](#flow-scan-live)).
+A page is a pointer into a source plus edits ([`ADR-NONDESTRUCTIVE`](#adr-nondestructive)); a blank page has a size instead of a source. `rot` is added to the source page's own rotation. `crop` is a rectangle in fractions of the page, in the page's frame before `rot`, so rotating a page never changes its crop. Page ids are never reused, not even after undo. Scanned pages become image Sources written to the session dir ([`MOD-STORE`](#mod-store)) the moment they arrive ([`FLOW-SCAN-LIVE`](#flow-scan-live)).
 
 ### <a id="data-filter"></a>Filter
 
@@ -177,7 +178,7 @@ A page is a pointer into a source plus edits ([`ADR-NONDESTRUCTIVE`](#adr-nondes
 
 ### <a id="data-workspace"></a>Workspace
 
-`pages: Vec<Page>` in a persistent (structure-sharing) vector so each undo snapshot is cheap (crate choice VERIFY: `im`/`imbl`); `rev: u64` increments on every change; undo and redo stacks capped at 100. Selection lives in the UI ([`UI-TRAY`](#ui-tray)) and is passed to commands by `PageId`.
+`pages: Vec<Page>` in a persistent (structure-sharing) vector so each undo snapshot is cheap (the `imbl` crate, the maintained fork of `im`); `rev: u64` increments on every change; undo and redo stacks capped at 100. OCR state and the text-layer flag are recorded on pages outside the undo history: they describe the pixels, they are not edits. Selection lives in the UI ([`UI-TRAY`](#ui-tray)) and is passed to commands by `PageId`.
 
 ### <a id="data-op"></a>Op (the only way to change a workspace)
 
@@ -230,7 +231,7 @@ Newline-delimited JSON over the worker's stdin/stdout.
 {"id":17,"ok":false,"error":{"code":"ParseError","msg":"..."}}
 ```
 
-Rules: no binary on the pipe, large results are files under the session dir, and every path in a request must resolve inside the session dir or be an explicitly allowed input ([`SEC-PATHS`](#sec-paths)). Worker ops are listed per module in [`MOD-WORKER`](#mod-worker).
+Rules: no binary on the pipe, large results are files under the session dir, and every path in a request must resolve inside the session dir or be an explicitly allowed input ([`SEC-PATHS`](#sec-paths)). Paths a worker writes are session-relative; the main process then publishes a finished file to the user's folder. The pool does not trust worker output either: lines are capped at 1 MiB, a malformed line counts as a crash, and a worker cannot claim a timeout, cancellation or limit on its own behalf. Worker ops are listed per module in [`MOD-WORKER`](#mod-worker).
 
 ## <a id="doc-modules"></a>6. Modules
 
@@ -278,7 +279,7 @@ Depends on: [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image). Used by: [`MOD-W
 
 ### <a id="mod-image"></a>MOD-IMAGE (`sheaf-image`)
 
-Pure image functions: decode (JPEG, PNG, TIFF incl. multipage, BMP, WebP), EXIF orientation, crop, deskew (projection-profile search, small-angle range), binarize (Otsu, Sauvola for uneven lighting), despeckle, blank-page detection (ink coverage under threshold), downsample, encode (PNG, JPEG; CCITT G4 for bilevel is a later option).
+Pure image functions: decode (JPEG, PNG, TIFF incl. multipage, BMP, WebP), EXIF orientation, crop, deskew (projection-profile search, small-angle range), binarize (Otsu, Sauvola for uneven lighting), despeckle, blank-page detection (ink coverage under threshold), downsample, encode (PNG, JPEG; CCITT G4 for bilevel is a later option). Multipage TIFF decodes its first page only until [`TOOL-IMG2PDF`](#tool-img2pdf) lands.
 
 ```rust
 fn apply_filter(img:RgbaImage, f:&Filter) -> RgbaImage; fn is_blank(img:&RgbaImage, sens:f32)->bool;
@@ -296,7 +297,7 @@ trait OcrEngine { fn id(&self)->&str; fn version(&self)->String; fn detect(&self
 
 Contains: Tesseract driver ([`OCR-TESS-CLI`](#ocr-tess-cli)), language chooser ([`OCR-LANGS`](#ocr-langs)), cache lookup ([`OCR-CACHE`](#ocr-cache)), TSV parser, text-layer builder ([`OCR-TEXTLAYER`](#ocr-textlayer)), and a small in-memory full-text index for [`CMD-SEARCH`](#cmd-search).
 
-Depends on: [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-STORE`](#mod-store). Used by: [`MOD-WORKER`](#mod-worker) (recognition), [`MOD-JOBS`](#mod-jobs) (queue policy), [`MOD-SHELL`](#mod-shell) (search). Tests: [`TEST-OCR`](#test-ocr).
+Depends on: [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-STORE`](#mod-store). Used by: [`MOD-WORKER`](#mod-worker) (recognition), [`MOD-SHELL`](#mod-shell) (search, queue policy). Tests: [`TEST-OCR`](#test-ocr).
 
 ### <a id="mod-scan"></a>MOD-SCAN (`sheaf-scan`)
 
@@ -314,8 +315,11 @@ Depends on: [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image). Used by: [`MOD-S
 Priority scheduler (visible page first, then selection, then background), worker pool lifecycle (spawn, health-check, restart on crash), cancellation, limits (timeout, RSS cap via Windows Job Object), progress aggregation, backpressure.
 
 ```rust
-fn submit(job:Job)->JobId; fn cancel(id:JobId); fn on_event(cb:impl Fn(JobEvent));
+Pool::new(cfg, on_event: impl Fn(JobEvent)) -> Pool;
+fn submit(&self, job:JobSpec)->JobId; fn run(&self, job:JobSpec)->Result<Value>; fn cancel(&self, id:JobId);
 ```
+
+Cancelling a running job kills its worker; so do a timeout, a crash, a protocol violation and exceeding the memory cap. The next job gets a fresh process. The memory cap is enforced by polling the worker's resident size, implemented for Linux so far; the Windows Job Object (hard cap, kill-on-close) is [`PH-7`](#ph-7) work.
 
 Depends on: [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store). Spawns: [`PROC-WORKER`](#proc-worker). Used by: [`MOD-SHELL`](#mod-shell). Tests: [`TEST-JOBS`](#test-jobs).
 
@@ -332,7 +336,7 @@ Request handlers speaking [`DATA-WORKERPROTO`](#data-workerproto).
 | `build` | assemble output PDF from page list, apply overlays | [`MOD-PDF`](#mod-pdf) |
 | `tool` | run a TOOL by id | [`MOD-PDF`](#mod-pdf), [`MOD-IMAGE`](#mod-image) |
 
-Depends on: [`MOD-PDF`](#mod-pdf), [`MOD-IMAGE`](#mod-image), [`MOD-OCR`](#mod-ocr), [`MOD-STORE`](#mod-store).
+Depends on: [`MOD-CORE`](#mod-core) (protocol types), [`MOD-PDF`](#mod-pdf), [`MOD-IMAGE`](#mod-image), [`MOD-OCR`](#mod-ocr), [`MOD-STORE`](#mod-store). Started as `sheaf-worker --session <dir> --pdfium <dir>`; it refuses to start outside a session dir and loads PDFium on the first job that needs it. `ocr_page` arrives in [`PH-2`](#ph-2), `tool` in [`PH-3`](#ph-3).
 
 ### <a id="mod-cli"></a>MOD-CLI (`sheaf-cli`)
 
@@ -634,7 +638,7 @@ Budgets are targets to be measured, not claims. Each has a benchmark in `tools/b
 | ID | Budget (target) | Technique |
 |---|---|---|
 | <a id="perf-budgets"></a> | Window visible in under 1 s cold; first 20 thumbnails within 500 ms of opening a 100-page PDF; UI thread never blocked over 50 ms; idle memory under 150 MB; 1000-page tray scrolls smoothly; OCR keeps pace with a feeder at the target dpi on a mid-range CPU (measure; scan rate and OCR per-page time decide) | [`PERF-LOSSLESS`](#perf-lossless), [`PERF-LAZY`](#perf-lazy), [`PERF-PARALLEL`](#perf-parallel), [`PERF-OCR`](#perf-ocr), [`PERF-IO`](#perf-io) |
-| <a id="perf-lossless"></a> | Untouched pages are copied, not re-encoded: merge or split of 100 pages in a few seconds | PDFium page import (exact `pdfium-render` call VERIFY, [`ADR-PDFIUM-LOPDF`](#adr-pdfium-lopdf)); re-render only pages with pixel edits |
+| <a id="perf-lossless"></a> | Untouched pages are copied, not re-encoded: merge or split of 100 pages in a few seconds | PDFium page import (`PdfPages::copy_page_from_document`, [`ADR-PDFIUM-LOPDF`](#adr-pdfium-lopdf)); re-render only pages with pixel edits. Measured in PH-1: 100 pages export in about 20 ms, 1000 pages in about 160 ms (`sheaf-harness bench`, synthetic text pages) |
 | <a id="perf-lazy"></a> | Render only what is visible | virtualized tray ([`UI-TRAY`](#ui-tray)), thumbnails requested by viewport, disk cache ([`MOD-STORE`](#mod-store)), LRU memory cache |
 | <a id="perf-parallel"></a> | Use the cores without stalling the UI | N worker processes (default cores minus 1, [`DATA-SETTINGS`](#data-settings)), because PDFium is not thread-safe ([`ADR-WORKER-PROCS`](#adr-worker-procs), [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads)); priority queue ([`MOD-JOBS`](#mod-jobs)) |
 | <a id="perf-ocr"></a> | OCR cost control | cache ([`OCR-CACHE`](#ocr-cache)), skip pages with text, fixed-language presets skip detection, Fast model default, one Tesseract thread per job, measure process-start cost before considering library binding ([`ADR-TESS-SIDECAR`](#adr-tess-sidecar)) |
@@ -712,6 +716,7 @@ Born-digital PDF with text; scanned PDF without text (Uzbek Latin, Uzbek Cyrilli
 
 ## <a id="doc-build"></a>18. Build, packaging, CI
 
+- Pinned so far: PDFium build 8125 from pdfium-binaries (the newest the `pdfium-render` 0.9.5 binding supports) and `tessdata_fast` 4.1.0. Still to pin: the Tesseract Windows build and the Noto fonts.
 - Rust stable, Cargo workspace ([`DOC-LAYOUT`](#doc-layout)); `clippy -D warnings`, `rustfmt`, `cargo-deny`, `cargo-audit` ([`SEC-SUPPLY`](#sec-supply)).
 - CI vendoring step: `tools/fetch-vendor` downloads pinned releases (pdfium binaries, Tesseract Windows build, tessdata, Noto fonts), verifies SHA-256 against `vendor/SHA256SUMS`, fails on mismatch ([`ADR-OFFLINE-ASSETS`](#adr-offline-assets)). Licenses of everything bundled go into `THIRD_PARTY_LICENSES` (VERIFY each).
 - Tauri bundler produces an NSIS or MSI installer; installer writes Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`CLI-GRAMMAR`](#cli-grammar)) per user; WebView2 runtime handling is a decision ([`RISK-WEBVIEW2`](#risk-webview2)).
@@ -726,7 +731,7 @@ Each phase ends with its definition of done. An agent completes phases in order 
 | ID | Phase | Delivers | Done when | Testable on Linux |
 |---|---|---|---|---|
 | <a id="ph-0"></a> | Scaffold | Workspace, CI, vendoring, link-check tool, empty crates | CI green on both runners; this spec's link check passes | yes |
-| <a id="ph-1"></a> | Core | [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`MOD-IMAGE`](#mod-image), [`MOD-PDF`](#mod-pdf) basics (open, render, build), [`MOD-WORKER`](#mod-worker) + [`MOD-JOBS`](#mod-jobs); page ops [`TOOL-REMOVE`](#tool-remove), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-ROTATE`](#tool-rotate); a headless CLI harness | [`TEST-OPS`](#test-ops), [`TEST-UNDO`](#test-undo), [`TEST-IMAGE`](#test-image), [`TEST-JOBS`](#test-jobs) pass; 100-page open and export within [`PERF-BUDGETS`](#perf-budgets) | yes |
+| <a id="ph-1"></a> | Core | [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`MOD-IMAGE`](#mod-image), [`MOD-PDF`](#mod-pdf) basics (open, render, build), [`MOD-WORKER`](#mod-worker) + [`MOD-JOBS`](#mod-jobs); page ops [`TOOL-REMOVE`](#tool-remove), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-ROTATE`](#tool-rotate); a headless CLI harness | [`TEST-OPS`](#test-ops), [`TEST-UNDO`](#test-undo), [`TEST-IMAGE`](#test-image), [`TEST-JOBS`](#test-jobs) pass; 100-page open and export within [`PERF-BUDGETS`](#perf-budgets) (`sheaf-harness bench --enforce`, run in CI) | yes |
 | <a id="ph-2"></a> | OCR | [`MOD-OCR`](#mod-ocr), [`OCR-PIPELINE`](#ocr-pipeline), cache, text layer (fallback first, overlay if feasible), [`TOOL-OCR`](#tool-ocr), [`FLOW-OCR-MANUAL`](#flow-ocr-manual) headless | [`TEST-OCR`](#test-ocr) passes on fixtures; searchable PDF verified by text extraction | yes |
 | <a id="ph-3"></a> | Tools | [`TOOL-MERGE`](#tool-merge), [`TOOL-SPLIT`](#tool-split), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-CROP`](#tool-crop), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-WATERMARK`](#tool-watermark), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PROTECT`](#tool-protect), [`TOOL-UNLOCK`](#tool-unlock) | all their TEST groups pass; [`RISK-LOPDF-ENC`](#risk-lopdf-enc) resolved or fallback chosen | yes |
 | <a id="ph-4"></a> | Shell and UI | [`MOD-SHELL`](#mod-shell), [`MOD-UI`](#mod-ui), all of [`DOC-IPC`](#doc-ipc), [`DOC-UI`](#doc-ui), i18n ([`ADR-I18N`](#adr-i18n)), thumbnails protocol | WebDriver smoke test; [`TEST-SEC`](#test-sec) network and IPC checks pass | partly |
@@ -744,7 +749,7 @@ Suggested spike order inside phases: the WIA spike (first half of [`PH-5`](#ph-5
 | <a id="risk-lopdf-enc"></a> | lopdf encryption: examples exist, but docs warn some algorithms are not fully supported; AES-256 output and compatibility with common readers unproven | [`TOOL-PROTECT`](#tool-protect), [`TOOL-UNLOCK`](#tool-unlock) | Test against several readers in [`TEST-PROTECT`](#test-protect); fallback: bundled qpdf as a sidecar (VERIFY license and size) |
 | <a id="risk-overlay-font"></a> | Glyphless font + ToUnicode for Cyrillic/Uzbek text layers is fiddly | [`OCR-TEXTLAYER`](#ocr-textlayer) quality | Ship the Tesseract-PDF fallback first; overlay as an improvement |
 | <a id="risk-compress"></a> | Image re-encoding cannot match dedicated optimizers on every file | [`TOOL-COMPRESS`](#tool-compress) expectations | Honest before/after reporting; never grow the file |
-| <a id="risk-pdfium-threads"></a> | PDFium is not thread-safe (VERIFY against the binding's thread-safety docs) | [`PERF-PARALLEL`](#perf-parallel) | Worker processes ([`ADR-WORKER-PROCS`](#adr-worker-procs)) |
+| <a id="risk-pdfium-threads"></a> | PDFium is not thread-safe. Confirmed in the `pdfium-render` 0.9.5 documentation; in practice, loading or dropping the library on one thread while another uses it crashes, so each process holds exactly one engine | [`PERF-PARALLEL`](#perf-parallel) | Worker processes ([`ADR-WORKER-PROCS`](#adr-worker-procs)) |
 | <a id="risk-forms-merge"></a> | Page import may drop AcroForm fields | [`TOOL-MERGE`](#tool-merge) | Document; offer flatten; test |
 | <a id="risk-smartscreen"></a> | Unsigned exes trigger warnings | Adoption | Obtain a code-signing certificate ([`SEC-SIGN`](#sec-sign)) |
 | <a id="risk-webview2"></a> | Older Windows 10 may lack the WebView2 runtime; bootstrapper needs network at install time, fixed-version runtime adds size | Install experience | Decide per target machines; document |
@@ -901,9 +906,9 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`GOAL-ONCMD-OCR`](#goal-oncmd-ocr) | GOAL | [`DOC-TRACE`](#doc-trace) |
 | [`GOAL-SECURE`](#goal-secure) | GOAL | [`DOC-TRACE`](#doc-trace), [`NG-CLOUD`](#ng-cloud) |
 | [`MOD-CLI`](#mod-cli) | MOD | [`CLI-GRAMMAR`](#cli-grammar), [`DOC-LAYOUT`](#doc-layout), [`DOC-TRACE`](#doc-trace), [`FLOW-EXPLORER`](#flow-explorer), [`MOD-SHELL`](#mod-shell), [`PH-6`](#ph-6), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi) |
-| [`MOD-CORE`](#mod-core) | MOD | (preamble), [`CMD-APPLY`](#cmd-apply), [`CMD-IMPORT`](#cmd-import), [`CMD-PAGES`](#cmd-pages), [`CMD-UNDO`](#cmd-undo), [`DOC-DATA`](#doc-data), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-EDIT`](#flow-edit), [`FLOW-IMPORT`](#flow-import), [`MOD-IMAGE`](#mod-image), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-SCAN`](#mod-scan), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-CROP`](#tool-crop), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate) |
+| [`MOD-CORE`](#mod-core) | MOD | (preamble), [`CMD-APPLY`](#cmd-apply), [`CMD-IMPORT`](#cmd-import), [`CMD-PAGES`](#cmd-pages), [`CMD-UNDO`](#cmd-undo), [`DOC-DATA`](#doc-data), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-EDIT`](#flow-edit), [`FLOW-IMPORT`](#flow-import), [`MOD-IMAGE`](#mod-image), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-SCAN`](#mod-scan), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`MOD-WORKER`](#mod-worker), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-CROP`](#tool-crop), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate) |
 | [`MOD-IMAGE`](#mod-image) | MOD | [`DATA-FILTER`](#data-filter), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-SCAN`](#mod-scan), [`MOD-WORKER`](#mod-worker), [`OCR-PIPELINE`](#ocr-pipeline), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-SPLIT`](#tool-split) |
-| [`MOD-JOBS`](#mod-jobs) | MOD | [`CMD-EXPORT`](#cmd-export), [`CMD-IMPORT`](#cmd-import), [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-OCR-RUN`](#cmd-ocr-run), [`CMD-PRESETS`](#cmd-presets), [`CMD-RENDER`](#cmd-render), [`CMD-SCAN-START`](#cmd-scan-start), [`CMD-THUMB`](#cmd-thumb), [`CMD-TOOL-RUN`](#cmd-tool-run), [`CMD-UNLOCK-PW`](#cmd-unlock-pw), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-IMPORT`](#flow-import), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-CORE`](#mod-core), [`MOD-OCR`](#mod-ocr), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`OCR-TESS-CLI`](#ocr-tess-cli), [`PERF-PARALLEL`](#perf-parallel), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix) |
+| [`MOD-JOBS`](#mod-jobs) | MOD | [`CMD-EXPORT`](#cmd-export), [`CMD-IMPORT`](#cmd-import), [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-OCR-RUN`](#cmd-ocr-run), [`CMD-PRESETS`](#cmd-presets), [`CMD-RENDER`](#cmd-render), [`CMD-SCAN-START`](#cmd-scan-start), [`CMD-THUMB`](#cmd-thumb), [`CMD-TOOL-RUN`](#cmd-tool-run), [`CMD-UNLOCK-PW`](#cmd-unlock-pw), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-IMPORT`](#flow-import), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-CORE`](#mod-core), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`OCR-TESS-CLI`](#ocr-tess-cli), [`PERF-PARALLEL`](#perf-parallel), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix) |
 | [`MOD-OCR`](#mod-ocr) | MOD | [`CMD-OCR-RESULT`](#cmd-ocr-result), [`CMD-SEARCH`](#cmd-search), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`MOD-WORKER`](#mod-worker), [`PH-2`](#ph-2), [`TEST-MATRIX`](#test-matrix), [`TOOL-OCR`](#tool-ocr), [`TOOL-SPLIT`](#tool-split) |
 | [`MOD-PDF`](#mod-pdf) | MOD | [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-WORKER`](#mod-worker), [`OCR-PIPELINE`](#ocr-pipeline), [`OCR-TEXTLAYER`](#ocr-textlayer), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-METADATA`](#tool-metadata), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-PROTECT`](#tool-protect), [`TOOL-REDACT`](#tool-redact), [`TOOL-REPAIR`](#tool-repair), [`TOOL-ROTATE`](#tool-rotate), [`TOOL-SIGN-VISUAL`](#tool-sign-visual), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark) |
 | [`MOD-SCAN`](#mod-scan) | MOD | [`CMD-SCAN-CANCEL`](#cmd-scan-cancel), [`CMD-SCAN-DEVICES`](#cmd-scan-devices), [`CMD-SCAN-START`](#cmd-scan-start), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`MOD-SHELL`](#mod-shell), [`PH-5`](#ph-5), [`SCAN-BACKEND`](#scan-backend), [`SCAN-THREADING`](#scan-threading), [`TEST-MATRIX`](#test-matrix), [`TOOL-SCAN`](#tool-scan) |
@@ -932,12 +937,12 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`PERF-PARALLEL`](#perf-parallel) | PERF | [`PERF-BUDGETS`](#perf-budgets), [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads) |
 | [`PH-0`](#ph-0) | PH | [`DOC-AGENT-RULES`](#doc-agent-rules) |
 | [`PH-1`](#ph-1) | PH | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-TRACE`](#doc-trace), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate) |
-| [`PH-2`](#ph-2) | PH | [`DOC-TRACE`](#doc-trace), [`TOOL-OCR`](#tool-ocr) |
-| [`PH-3`](#ph-3) | PH | [`DOC-TRACE`](#doc-trace), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-PROTECT`](#tool-protect), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark) |
+| [`PH-2`](#ph-2) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-WORKER`](#mod-worker), [`TOOL-OCR`](#tool-ocr) |
+| [`PH-3`](#ph-3) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-WORKER`](#mod-worker), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-PROTECT`](#tool-protect), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark) |
 | [`PH-4`](#ph-4) | PH | [`PH-PLAN`](#ph-plan) |
 | [`PH-5`](#ph-5) | PH | [`DOC-TRACE`](#doc-trace), [`PH-PLAN`](#ph-plan), [`RISK-WIA`](#risk-wia), [`TOOL-SCAN`](#tool-scan) |
 | [`PH-6`](#ph-6) | PH | [`DOC-TRACE`](#doc-trace) |
-| [`PH-7`](#ph-7) | PH | [`DOC-TRACE`](#doc-trace), [`TOOL-METADATA`](#tool-metadata), [`TOOL-REPAIR`](#tool-repair) |
+| [`PH-7`](#ph-7) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-JOBS`](#mod-jobs), [`TOOL-METADATA`](#tool-metadata), [`TOOL-REPAIR`](#tool-repair) |
 | [`PH-PLAN`](#ph-plan) | PH | [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-AGENT`](#goal-agent) |
 | [`PRESET-FORMAT`](#preset-format) | PRESET | [`DATA-SPLITRULE`](#data-splitrule), [`PH-6`](#ph-6) |
 | [`PROC-MAIN`](#proc-main) | PROC | [`DOC-SHAPE`](#doc-shape) |
@@ -1000,7 +1005,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`TOOL-CROP`](#tool-crop) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-PDF`](#mod-pdf), [`PH-3`](#ph-3), [`SEC-HONESTY`](#sec-honesty) |
 | [`TOOL-EXTRACT`](#tool-extract) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`PH-3`](#ph-3) |
 | [`TOOL-HTML2PDF`](#tool-html2pdf) | TOOL | [`DOC-TOOLS`](#doc-tools) |
-| [`TOOL-IMG2PDF`](#tool-img2pdf) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-PDF`](#mod-pdf), [`PH-3`](#ph-3) |
+| [`TOOL-IMG2PDF`](#tool-img2pdf) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-IMAGE`](#mod-image), [`MOD-PDF`](#mod-pdf), [`PH-3`](#ph-3) |
 | [`TOOL-MERGE`](#tool-merge) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`PH-3`](#ph-3), [`RISK-FORMS-MERGE`](#risk-forms-merge) |
 | [`TOOL-METADATA`](#tool-metadata) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`PH-7`](#ph-7) |
 | [`TOOL-OCR`](#tool-ocr) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`PH-2`](#ph-2) |
@@ -1038,16 +1043,12 @@ Each is a claim not yet proven. Resolve by testing, edit the text, remove the ma
 <!-- BEGIN GENERATED appendix-b -->
 | Where | Item |
 |---|---|
-| [`ADR-WORKER-PROCS`](#adr-worker-procs) | VERIFY |
-| [`DATA-WORKSPACE`](#data-workspace) | crate choice VERIFY: `im`/`imbl` |
 | [`TOOL-HTML2PDF`](#tool-html2pdf) | VERIFY availability through Tauri |
 | [`DOC-TOOLS`](#doc-tools) | SIL OFL; VERIFY exact files and license text shipped |
 | [`OCR-TESS-CLI`](#ocr-tess-cli) | VERIFY best setting by benchmark, PERF-BUDGETS |
 | [`SCAN-WIA`](#scan-wia) | document handling: feeder/flatbed/duplex, x/y resolution, data type, page size; exact property IDs from `wiadef.h`, VERIFY on target driver |
 | [`SEC-NONET`](#sec-nonet) | VERIFY the hook is reachable through Tauri/wry; CSP plus a navigation lock are the baseline either way |
 | [`SEC-PATHS`](#sec-paths) | VERIFY policy with the user |
-| [`PERF-LOSSLESS`](#perf-lossless) | exact `pdfium-render` call VERIFY, ADR-PDFIUM-LOPDF |
 | [`DOC-BUILD`](#doc-build) | VERIFY each |
 | [`RISK-LOPDF-ENC`](#risk-lopdf-enc) | VERIFY license and size |
-| [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads) | VERIFY against the binding's thread-safety docs |
 <!-- END GENERATED appendix-b -->

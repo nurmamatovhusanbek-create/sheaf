@@ -5,3 +5,5 @@ tessdata/osd.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdat
 tessdata/rus.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/rus.traineddata
 tessdata/uzb.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/uzb.traineddata
 tessdata/uzb_cyrl.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/uzb_cyrl.traineddata
+dl/pdfium-linux-x64.tgz	https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/pdfium-linux-x64.tgz
+dl/pdfium-win-x64.tgz	https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F8125/pdfium-win-x64.tgz

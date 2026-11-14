@@ -11,3 +11,4 @@ workspace = true
 
 [dependencies]
 sheaf-core = { path = "../sheaf-core" }
+image.workspace = true

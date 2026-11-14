@@ -1,0 +1,22 @@
+[package]
+name = "harness"
+description = "Headless harness for PH-1: import, page ops, thumbnails, export and the perf bench, without the Tauri shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sheaf-harness"
+path = "src/main.rs"
+
+[dependencies]
+sheaf-core = { path = "../../crates/sheaf-core" }
+sheaf-store = { path = "../../crates/sheaf-store" }
+sheaf-jobs = { path = "../../crates/sheaf-jobs" }
+fixture-gen = { path = "../fixture-gen" }
+serde_json.workspace = true
+serde.workspace = true

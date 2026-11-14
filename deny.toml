@@ -9,7 +9,14 @@ yanked = "deny"
 
 [licenses]
 # Extend deliberately, one license at a time, as dependencies arrive.
-allow = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-3-Clause", "Unicode-3.0"]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "ISC",      # libloading (via pdfium-render)
+    "MPL-2.0",  # imbl: file-level copyleft, used unmodified
+]
 
 [licenses.private]
 ignore = true # the workspace's own unpublished crates

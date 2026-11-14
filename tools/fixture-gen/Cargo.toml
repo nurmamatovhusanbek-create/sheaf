@@ -1,0 +1,10 @@
+[package]
+name = "fixture-gen"
+description = "Synthetic test documents (TEST-FIXTURES): real documents are never committed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true

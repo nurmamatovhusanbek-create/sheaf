@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "tools/link-check"]
+members = ["crates/*", "tools/*"]
 # src-tauri (MOD-SHELL) joins the workspace in PH-4.
 
 [workspace.package]
@@ -13,3 +13,11 @@ unsafe_code = "deny" # rule 5: lifted only in the PDFium/COM wrapper modules
 
 [workspace.lints.clippy]
 unwrap_used = "warn" # rule 4
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+imbl = "7"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "tiff", "bmp", "webp"] }
+sha2 = "0.10"
+pdfium-render = { version = "0.9.5", default-features = false, features = ["image_025", "pdfium_8125"] }

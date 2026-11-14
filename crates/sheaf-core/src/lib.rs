@@ -1,7 +1,21 @@
-//! MOD-CORE: workspace model, ops, undo, errors, consts (no I/O)
+//! MOD-CORE: workspace model, ops, undo, errors, consts (no I/O).
 //!
-//! Scaffold only (PH-0). See `ARCHITECTURE.md`, anchor `mod-core`.
+//! Pure logic: no file access, no threads. See `ARCHITECTURE.md`, anchor `mod-core`.
 
-/// Product name. "Sheaf" is a placeholder; this is the one place to rename it
-/// (the bundle identifier in MOD-SHELL is the other).
-pub const APP_NAME: &str = "Sheaf";
+pub mod consts;
+pub mod error;
+pub mod job;
+pub mod model;
+pub mod op;
+pub mod proto;
+pub mod workspace;
+
+pub use consts::APP_NAME;
+pub use error::{AppError, ErrorCode, Result};
+pub use job::{JobId, JobState, Limits, Priority};
+pub use model::{
+    ColorMode, Deskew, Filter, NormRect, OcrState, Page, PageContent, PageId, Rot, Source,
+    SourceId, SourceKind, Threshold,
+};
+pub use op::{NewPage, Op};
+pub use workspace::Workspace;

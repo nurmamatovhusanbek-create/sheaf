@@ -1,0 +1,5 @@
+# archive (under vendor/)	member	dest (under vendor/)
+# Extracted files are verified against SHA256SUMS as well.
+dl/pdfium-linux-x64.tgz	lib/libpdfium.so	pdfium/linux-x64/libpdfium.so
+dl/pdfium-linux-x64.tgz	LICENSE	pdfium/LICENSE
+dl/pdfium-win-x64.tgz	bin/pdfium.dll	pdfium/win-x64/pdfium.dll
