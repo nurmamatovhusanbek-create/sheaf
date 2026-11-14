@@ -1,0 +1,6 @@
+/target
+# CI-fetched binaries (ADR-OFFLINE-ASSETS); only the manifest and hashes are tracked
+/vendor/*
+!/vendor/manifest.tsv
+!/vendor/SHA256SUMS
+!/vendor/README.md

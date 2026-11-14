@@ -1,0 +1,13 @@
+[package]
+name = "sheaf-image"
+description = "MOD-IMAGE: decode, deskew, binarize, blank detect, encode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sheaf-core = { path = "../sheaf-core" }

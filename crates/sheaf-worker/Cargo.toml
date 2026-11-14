@@ -1,0 +1,16 @@
+[package]
+name = "sheaf-worker"
+description = "MOD-WORKER: worker binary: job handlers"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sheaf-pdf = { path = "../sheaf-pdf" }
+sheaf-image = { path = "../sheaf-image" }
+sheaf-ocr = { path = "../sheaf-ocr" }
+sheaf-store = { path = "../sheaf-store" }

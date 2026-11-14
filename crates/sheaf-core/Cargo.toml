@@ -1,0 +1,12 @@
+[package]
+name = "sheaf-core"
+description = "MOD-CORE: workspace model, ops, undo, errors, consts (no I/O)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

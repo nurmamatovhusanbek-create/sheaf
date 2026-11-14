@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "tools/link-check"]
+# src-tauri (MOD-SHELL) joins the workspace in PH-4.
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "UNLICENSED"
+
+[workspace.lints.rust]
+unsafe_code = "deny" # rule 5: lifted only in the PDFium/COM wrapper modules
+
+[workspace.lints.clippy]
+unwrap_used = "warn" # rule 4

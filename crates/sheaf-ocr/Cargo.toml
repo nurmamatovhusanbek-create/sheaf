@@ -1,0 +1,15 @@
+[package]
+name = "sheaf-ocr"
+description = "MOD-OCR: engine trait, tesseract driver, langs, text layer, search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sheaf-core = { path = "../sheaf-core" }
+sheaf-image = { path = "../sheaf-image" }
+sheaf-store = { path = "../sheaf-store" }

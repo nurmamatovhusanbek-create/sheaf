@@ -1,0 +1,7 @@
+# dest (under vendor/)	url
+# Every entry must have a line in SHA256SUMS. Add an entry only after hashing a download you inspected.
+tessdata/eng.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/eng.traineddata
+tessdata/osd.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/osd.traineddata
+tessdata/rus.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/rus.traineddata
+tessdata/uzb.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/uzb.traineddata
+tessdata/uzb_cyrl.traineddata	https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/4.1.0/uzb_cyrl.traineddata

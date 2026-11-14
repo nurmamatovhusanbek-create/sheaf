@@ -1,0 +1,13 @@
+[package]
+name = "sheaf-store"
+description = "MOD-STORE: session dir, cache, settings, presets, path policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sheaf-core = { path = "../sheaf-core" }

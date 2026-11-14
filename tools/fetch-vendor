@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Downloads the pinned third-party assets listed in vendor/manifest.tsv and
+# verifies them against vendor/SHA256SUMS (ADR-OFFLINE-ASSETS, SEC-SUPPLY).
+# Build-time only. Fails on any missing hash or mismatch.
+#
+#   bash tools/fetch-vendor           download missing assets, then verify all
+#   bash tools/fetch-vendor --check   verify only, no network
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+vendor="$root/vendor"
+check_only=0
+[ "${1:-}" = "--check" ] && check_only=1
+
+fail=0
+while IFS=$'\t' read -r dest url; do
+  dest="${dest%$'\r'}"; url="${url%$'\r'}"
+  case "$dest" in ''|'#'*) continue ;; esac
+  case "$dest" in /*|*..*) echo "fetch-vendor: unsafe destination: $dest" >&2; exit 1 ;; esac
+  case "$url" in https://*) ;; *) echo "fetch-vendor: not an https URL: $url" >&2; exit 1 ;; esac
+
+  want="$(awk -v p="$dest" '$2 == p { print $1 }' "$vendor/SHA256SUMS")"
+  if [ -z "$want" ]; then
+    echo "fetch-vendor: no SHA-256 pinned for $dest" >&2; fail=1; continue
+  fi
+  if [ ! -f "$vendor/$dest" ]; then
+    if [ "$check_only" = 1 ]; then
+      echo "fetch-vendor: missing $dest" >&2; fail=1; continue
+    fi
+    mkdir -p "$(dirname "$vendor/$dest")"
+    echo "fetch-vendor: downloading $dest"
+    curl -sSfL --retry 3 --max-time 300 -o "$vendor/$dest.part" "$url"
+    mv "$vendor/$dest.part" "$vendor/$dest"
+  fi
+  got="$(sha256sum "$vendor/$dest" | cut -d' ' -f1)"
+  if [ "$got" != "$want" ]; then
+    echo "fetch-vendor: SHA-256 mismatch for $dest" >&2
+    echo "  expected $want" >&2
+    echo "  got      $got" >&2
+    rm -f "$vendor/$dest"
+    fail=1
+  else
+    echo "fetch-vendor: ok $dest"
+  fi
+done < "$vendor/manifest.tsv"
+
+# A pinned hash with no manifest entry means the two files drifted apart.
+while read -r _ path; do
+  [ -z "${path:-}" ] && continue
+  if ! cut -f1 "$vendor/manifest.tsv" | grep -qxF "$path"; then
+    echo "fetch-vendor: $path is in SHA256SUMS but not in manifest.tsv" >&2; fail=1
+  fi
+done < "$vendor/SHA256SUMS"
+
+exit "$fail"
