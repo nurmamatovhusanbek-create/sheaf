@@ -33,6 +33,13 @@ function Check-Output([string]$What, $Output) {
   Write-Host "ok   $first"
 }
 
+# Stop a program and everything it started. The window may be a second copy of itself (the program
+# starts itself again when OpenGL is unusable), and a copy left running would keep its files locked.
+function Stop-Tree([int]$RootId) {
+  & taskkill.exe /PID $RootId /T /F 2>&1 | Out-Null
+  Stop-Process -Id $RootId -Force -ErrorAction SilentlyContinue
+}
+
 function Family([int]$RootId) {
   $family = [System.Collections.Generic.HashSet[int]]::new()
   [void]$family.Add($RootId)
@@ -49,7 +56,7 @@ function Console-Twin-Says() {
   $p = Start-Process -FilePath $Cli -ArgumentList @("open", $Fixture) -PassThru -RedirectStandardError $log -RedirectStandardOutput $out
   Start-Sleep -Seconds 12
   $state = if ($p.HasExited) { "exited with code $($p.ExitCode)" } else { "still running" }
-  Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+  Stop-Tree $p.Id
   Write-Host "console twin $state"
   foreach ($f in @($log, $out)) { if ((Test-Path $f) -and (Get-Item $f).Length -gt 0) { Write-Host "--- $f"; Get-Content $f | Select-Object -First 30 } }
 }
@@ -148,7 +155,7 @@ Step "window with a file open" {
     Write-Host "ok   window up, worker running, no listening TCP sockets"
   }
   finally {
-    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    Stop-Tree $proc.Id
     Get-Process -Name "sheaf-worker" -ErrorAction SilentlyContinue | Stop-Process -Force
   }
 }
@@ -161,7 +168,7 @@ Step "tray helper" {
     Write-Host "ok   tray helper is running"
   }
   finally {
-    Stop-Process -Id $tray.Id -Force -ErrorAction SilentlyContinue
+    Stop-Tree $tray.Id
   }
 }
 

@@ -29,6 +29,11 @@ Write-Host "== the installed program, through the smoke test"
 if ($LASTEXITCODE -ne 0) { throw "the smoke test failed on the installed program" }
 
 Write-Host "== uninstall"
+# Nothing of the installed program may still be running: a running program keeps its files locked.
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path.StartsWith($target, [System.StringComparison]::OrdinalIgnoreCase) } | ForEach-Object {
+  Write-Host "still running from the install folder: $($_.ProcessName) ($($_.Id))"
+  Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+}
 $u = Start-Process -FilePath (Join-Path $target "unins000.exe") -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") -PassThru -Wait
 if ($u.ExitCode -ne 0) { throw "the uninstaller exited with $($u.ExitCode)" }
 # The uninstaller finishes in a helper process; give it a moment to delete itself.
