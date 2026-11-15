@@ -19,8 +19,11 @@ $Fixture = (Resolve-Path $Fixture).Path
 Write-Host "== headless: sheaf run compress"
 $out = & $Cli run compress $Fixture
 if ($LASTEXITCODE -ne 0) { throw "run compress exited with $LASTEXITCODE" }
-if (-not $out -or -not (Test-Path ($out | Select-Object -First 1))) { throw "no output file was written: $out" }
-Write-Host "ok   $out"
+Write-Host "printed: $out"
+$first = $out | Select-Object -First 1
+if ($first -match '^\\\\\?\\') { throw "the printed path is in the verbatim form, which most programs cannot take: $first" }
+if (-not $first -or -not (Test-Path -LiteralPath $first)) { throw "no output file was written: $out" }
+Write-Host "ok   $first"
 
 function Family([int]$RootId) {
   $family = [System.Collections.Generic.HashSet[int]]::new()

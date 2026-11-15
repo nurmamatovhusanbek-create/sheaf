@@ -59,6 +59,7 @@ pub fn run_quick(app: &mut App, request: &QuickRequest, progress: &dyn Fn(f32, &
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."))
             .canonicalize()
+            .map(sheaf_store::paths::simplify_verbatim)
             .map_err(|e| AppError::io("resolve output folder", &e))?,
     };
     let mut report = QuickReport::default();

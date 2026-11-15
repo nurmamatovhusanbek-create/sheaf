@@ -37,7 +37,14 @@ fn pages_of(app: &App, path: &Path) -> u32 {
 }
 
 fn run(app: &mut App, action: QuickAction, files: Vec<PathBuf>) -> sheaf_app::quick::QuickReport {
-    run_quick(app, &QuickRequest::new(action, files), &|_, _| {}).expect("quick run")
+    let report = run_quick(app, &QuickRequest::new(action, files), &|_, _| {}).expect("quick run");
+    // Paths are shown to people and passed to scripts: never in the `\\?\` form.
+    assert!(
+        report.outputs.iter().all(|p| !p.to_string_lossy().starts_with(r"\\?\")),
+        "{:?}",
+        report.outputs
+    );
+    report
 }
 
 #[test]
