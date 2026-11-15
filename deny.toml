@@ -6,11 +6,6 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 yanked = "deny"
-ignore = [
-    # proc-macro-error is a build-time macro helper of the GTK3 bindings that Tauri uses on Linux.
-    # This project ships the shell on Windows only (NG-XPLAT) and never links GTK; revisit when Tauri moves on.
-    { id = "RUSTSEC-2024-0370", reason = "GTK3 bindings on Linux only; the Windows-only shell does not use them" },
-]
 
 [licenses]
 # Extend deliberately, one license at a time, as dependencies arrive.
@@ -21,6 +16,8 @@ allow = [
     "Unicode-3.0",
     "ISC",      # libloading (via pdfium-render)
     "MPL-2.0",  # imbl: file-level copyleft, used unmodified
+    "OFL-1.1",  # fonts embedded by the egui toolkit (and the bundled Noto Sans); embedding is allowed
+    "Ubuntu-font-1.0", # the Ubuntu font embedded by the egui toolkit; embedding is allowed
     "Zlib",     # foldhash (via tauri-utils' HTML handling); permissive
     "Apache-2.0 WITH LLVM-exception", # target-lexicon (via tauri-build's cfg handling); Apache-2.0 plus a linking exception
 ]
@@ -30,6 +27,15 @@ ignore = true # the workspace's own unpublished crates
 
 [bans]
 multiple-versions = "warn"
+# SEC-NONET: no code that can speak over a network is compiled into the app. Any of these
+# showing up in the dependency tree fails CI; adding a network feature is a spec decision first.
+deny = [
+    { crate = "reqwest" }, { crate = "hyper" }, { crate = "ureq" }, { crate = "isahc" }, { crate = "attohttpc" },
+    { crate = "curl" }, { crate = "curl-sys" }, { crate = "h2" }, { crate = "tungstenite" }, { crate = "tokio-tungstenite" },
+    { crate = "openssl" }, { crate = "openssl-sys" }, { crate = "native-tls" }, { crate = "rustls" }, { crate = "tiny_http" },
+    { crate = "axum" }, { crate = "warp" }, { crate = "actix-web" }, { crate = "rouille" }, { crate = "quinn" },
+    { crate = "tokio" }, { crate = "async-std" },
+]
 wildcards = "deny"
 allow-wildcard-paths = true
 

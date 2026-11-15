@@ -19,8 +19,13 @@ const ALLOWED: &[(&str, &[&str])] = &[
         "sheaf-worker",
         &["sheaf-core", "sheaf-pdf", "sheaf-image", "sheaf-ocr", "sheaf-store"],
     ),
-    ("sheaf-cli", &[]),
+    ("sheaf-cli", &["sheaf-core"]),
     ("sheaf-app", &["sheaf-core", "sheaf-store", "sheaf-jobs", "sheaf-ocr"]),
+    ("sheaf-ui", &["sheaf-app", "sheaf-core", "sheaf-store"]),
+    (
+        "sheaf-shell",
+        &["sheaf-app", "sheaf-cli", "sheaf-core", "sheaf-store", "sheaf-ui"],
+    ),
 ];
 
 /// `sheaf-*` keys in every dependency table of a manifest (normal, dev, build, target-specific).

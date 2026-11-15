@@ -7,6 +7,7 @@ use sheaf_core::{AppError, ErrorCode, Result, APP_NAME};
 use std::path::{Path, PathBuf};
 
 pub const MAX_WORKERS: usize = 32;
+pub const DEFAULT_WHEEL_HOTKEY: &str = "ctrl+alt+space";
 const MAX_RECENT_FOLDERS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -25,6 +26,8 @@ pub struct Settings {
     pub ocr_mode: String,
     /// `system`, `light` or `dark`.
     pub theme: String,
+    /// Global hotkey that calls the action wheel, like `ctrl+alt+space`; empty turns it off (ADR-WHEEL).
+    pub wheel_hotkey: String,
     pub recent_folders: Vec<PathBuf>,
 }
 
@@ -38,6 +41,7 @@ impl Default for Settings {
             ocr_quality: "Fast".into(),
             ocr_mode: "Manual".into(),
             theme: "system".into(),
+            wheel_hotkey: DEFAULT_WHEEL_HOTKEY.into(),
             recent_folders: Vec::new(),
         }
     }
@@ -78,6 +82,12 @@ impl Settings {
         if !["system", "light", "dark"].contains(&self.theme.as_str()) {
             self.theme = d.theme;
         }
+        let hotkey_ok =
+            self.wheel_hotkey.len() <= 40 && self.wheel_hotkey.chars().all(|c| c.is_ascii_alphanumeric() || c == '+');
+        if !hotkey_ok {
+            self.wheel_hotkey = d.wheel_hotkey;
+        }
+        self.wheel_hotkey = self.wheel_hotkey.to_ascii_lowercase();
         self.workers = self.workers.map(|w| w.clamp(1, MAX_WORKERS));
         self.recent_folders.truncate(MAX_RECENT_FOLDERS);
         self

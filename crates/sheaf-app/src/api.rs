@@ -211,6 +211,7 @@ pub struct SettingsDto {
     pub ocr_quality: String,
     pub ocr_mode: String,
     pub theme: String,
+    pub wheel_hotkey: String,
 }
 
 impl From<&Settings> for SettingsDto {
@@ -223,6 +224,7 @@ impl From<&Settings> for SettingsDto {
             ocr_quality: s.ocr_quality.clone(),
             ocr_mode: s.ocr_mode.clone(),
             theme: s.theme.clone(),
+            wheel_hotkey: s.wheel_hotkey.clone(),
         }
     }
 }
@@ -468,6 +470,8 @@ pub struct SettingsPatch {
     pub workers: Option<usize>,
     /// Empty string clears it.
     pub default_preset: Option<String>,
+    /// The wheel's global hotkey (`ctrl+alt+space`); empty turns it off. The tray helper reads it at its start.
+    pub wheel_hotkey: Option<String>,
 }
 
 // ---------------------------------------------------------------------
@@ -1448,6 +1452,13 @@ impl Backend {
         }
         if let Some(v) = patch.workers {
             next.workers = (v != 0).then_some(v);
+        }
+        if let Some(v) = patch.wheel_hotkey {
+            let ok = v.len() <= 40 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '+');
+            if !ok {
+                return Err(AppError::invalid("hotkey out of range"));
+            }
+            next.wheel_hotkey = v;
         }
         if let Some(v) = patch.default_preset {
             if v.chars().count() > 100 {

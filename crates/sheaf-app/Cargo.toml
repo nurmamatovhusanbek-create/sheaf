@@ -20,3 +20,4 @@ serde_json.workspace = true
 [dev-dependencies]
 # Tests only: synthetic documents and the vendored engines of a checkout.
 fixture-gen = { path = "../../tools/fixture-gen" }
+image.workspace = true

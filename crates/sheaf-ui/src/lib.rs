@@ -1,0 +1,23 @@
+//! MOD-UI: native egui views (ADR-NATIVE-UI): the main window and the action wheel.
+
+mod app;
+mod dialogs;
+mod jobs;
+mod platform;
+mod preview;
+mod search;
+mod side;
+mod textures;
+mod theme;
+mod tray;
+mod wheel;
+
+pub mod format;
+pub mod geometry;
+pub mod i18n;
+
+pub use app::{run_window, SheafApp, UiConfig};
+pub use wheel::{run_wheel, take_file_list, WheelApp, WheelConfig};
+
+/// What the window and wheel entry points return.
+pub type UiResult = eframe::Result;

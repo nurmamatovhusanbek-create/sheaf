@@ -1,6 +1,6 @@
 # Sheaf: architecture and agent build spec
 
-**Status** draft 0.2 · 2026-11-15 · **Target** Windows 10/11 x64 · **Stack** Rust + Tauri 2, vanilla-JS UI · **Network** none at runtime
+**Status** draft 0.3 · 2026-11-15 · **Target** Windows 10/11 x64 · **Stack** Rust, native egui UI (no web view) · **Network** none at runtime
 
 > "Sheaf" is a placeholder name. Rename in one place: `APP_NAME` in [`MOD-CORE`](#mod-core) and the bundle identifier in [`MOD-SHELL`](#mod-shell).
 
@@ -71,6 +71,7 @@
 | <a id="goal-oncmd-ocr"></a> | OCR on command for any existing PDF or image | [`FLOW-OCR-MANUAL`](#flow-ocr-manual) |
 | <a id="goal-ilovepdf"></a> | iLovePDF-style tool coverage, locally | [`DOC-TOOLS`](#doc-tools) |
 | <a id="goal-agent"></a> | An autonomous agent can build it phase by phase | [`PH-PLAN`](#ph-plan), [`DOC-AGENT-RULES`](#doc-agent-rules) |
+| <a id="goal-wheel"></a> | Work on files from anywhere: an action wheel at the cursor, on the desktop or in Explorer, acting on what is selected | [`ADR-WHEEL`](#adr-wheel), [`FLOW-WHEEL`](#flow-wheel), [`TEST-WHEEL`](#test-wheel) |
 
 ### <a id="doc-nongoals"></a>Non-goals
 
@@ -87,8 +88,8 @@
 
 | ID | Decision | Why | Rejected | Revisit when |
 |---|---|---|---|---|
-| <a id="adr-tauri"></a> | Rust core, Tauri 2 shell, WebView2 UI | Small, permissioned IPC ([`SEC-IPC`](#sec-ipc)), web UI is quick to build | .NET (easier WIA), Python + pywebview (size, AV false positives), Electron (size) | [`RISK-WIA`](#risk-wia) proves unworkable in Rust |
-| <a id="adr-nohttp"></a> | No localhost server; UI talks to core only through Tauri commands | Any local process or browser tab can reach a port | Flask/axum on 127.0.0.1 | never |
+| <a id="adr-tauri"></a> | Rust core and a native Rust UI; no web view. (Superseded the earlier Tauri 2 + WebView2 decision: see [`ADR-NATIVE-UI`](#adr-native-ui).) | One language, one process, small and quick to start, nothing to render HTML with, no IPC boundary inside the app | .NET (easier WIA), Python + pywebview (size, AV false positives), Electron (size), Tauri 2 (a web page in a native frame) | [`RISK-WIA`](#risk-wia) proves unworkable in Rust |
+| <a id="adr-nohttp"></a> | No localhost server and no network code at all; the UI is in-process | Any local process or browser tab can reach a port | Flask/axum on 127.0.0.1 | never |
 | <a id="adr-nondestructive"></a> | Pages are records; edits change data, pixels are written only at export or tool run | Fast, cheap undo, lossless merges ([`DATA-PAGE`](#data-page)) | Rewrite PDF on every edit | never |
 | <a id="adr-pdfium-lopdf"></a> | `pdfium-render` for rendering, text extraction, page import, saving, and for overlays (the OCR text layer, stamps); `lopdf` for encryption, metadata, optimization, embedded-image extraction | PDFium renders reliably and imports pages; lopdf gives object-level control | Single library for everything | [`RISK-LOPDF-ENC`](#risk-lopdf-enc) |
 | <a id="adr-tess-sidecar"></a> | Bundled `tesseract.exe` called per job; `OcrEngine` trait | Avoids C++/Leptonica build on Windows, isolates crashes | libtesseract bindings | per-page spawn cost shows up in [`PERF-BUDGETS`](#perf-budgets) |
@@ -98,20 +99,23 @@
 | <a id="adr-no-overwrite"></a> | Outputs never overwrite inputs; `name.suffix.pdf` next to the source or in the output folder | Safety | In-place save | never |
 | <a id="adr-explorer-verbs"></a> | Explorer integration is per-user registry verbs that launch the exe with arguments ([`CLI-GRAMMAR`](#cli-grammar)) | No admin, no shell-extension DLL | COM IExplorerCommand package | Windows 11 top-level menu is required |
 | <a id="adr-i18n"></a> | Key-based strings: English, Uzbek (Latin), Russian | Target user base | Hard-coded text | never |
-| <a id="adr-vanilla-ui"></a> | Plain HTML/CSS/ES modules, no framework or bundler | Compact, auditable, no supply chain | React/Svelte | UI exceeds maintainable size |
+| <a id="adr-vanilla-ui"></a> | (Superseded by [`ADR-NATIVE-UI`](#adr-native-ui).) The UI had been plain HTML/CSS/ES modules with no framework | Compact, auditable | React/Svelte | n/a |
 | <a id="adr-offline-assets"></a> | pdfium, tesseract, tessdata and fonts are bundled and hash-pinned; fetched only at build time in CI | Zero runtime network ([`SEC-NONET`](#sec-nonet)) | Download on first run | never |
-| <a id="adr-app-crate"></a> | The main-process logic (workspace, jobs, every [`DOC-IPC`](#doc-ipc) command and its validation) lives in a toolkit-free crate, [`MOD-APP`](#mod-app); [`MOD-SHELL`](#mod-shell) only translates | The command layer is tested on any OS against the real worker; the headless harness and the window run the same code; the Windows-only shell stays thin | All logic in `src-tauri` (untestable without the toolkit's system libraries) | a second front end appears |
-| <a id="adr-ui-reorder"></a> | Page reordering uses pointer events, not HTML5 drag and drop | On Windows the toolkit's file-drop handler swallows HTML5 drag events inside the page; file drops from Explorer are needed more | HTML5 `draggable` | the toolkit stops intercepting |
+| <a id="adr-app-crate"></a> | The main-process logic (workspace, jobs, every [`DOC-IPC`](#doc-ipc) command and its validation) lives in a toolkit-free crate, [`MOD-APP`](#mod-app); the window, the wheel, the command line and the harness all call it | The command layer and the quick actions are tested against the real worker with no window; the same code runs in every mode | Logic inside the UI crate (every mode would need the toolkit) | a second front end appears |
+| <a id="adr-ui-reorder"></a> | Page reordering is a pointer drag inside the tray, with edge scrolling and an insertion line | Works the same for one page or a selection | A "move to…" dialog only | users ask for another way |
+| <a id="adr-native-ui"></a> | The window is native Rust UI (egui over OpenGL), embedded in `sheaf.exe`; text is set in the bundled Noto Sans | The product is an app, not a web page: no HTML, JavaScript, browser engine or WebView2 runtime to install, patch or attack; the UI shares the process with [`MOD-APP`](#mod-app) so there is no IPC boundary to defend; one language; software GL makes it testable on any machine | Tauri/WebView2 (the first PH-4 build, replaced), Slint (licence terms), WinUI/Win32 (largest rewrite, untestable off Windows) | the widget set cannot do what a screen needs, or immediate-mode drawing shows up in [`PERF-BUDGETS`](#perf-budgets) |
+| <a id="adr-wheel"></a> | The action wheel is a separate short-lived overlay (`sheaf wheel`) started by a resident tray helper (`sheaf tray`); it reads the selection from Explorer or the desktop through the shell's COM interfaces, runs [`MOD-APP`](#mod-app) quick actions with no main window, and shows the result in the same place | The wheel must appear at the cursor and work on what is selected where the person already is; a helper that only waits in the message loop costs nothing; a fresh overlay process has no stale window state and cannot take the main window down | One long-lived process with a hidden window (hidden windows get no redraws), a shell-extension DLL (installer, admin, crash risk inside Explorer), a global mouse hook | Windows 11 changes how Explorer exposes its selection |
 
 ## <a id="doc-shape"></a>3. System shape
 
 ```
  Explorer verb / app icon ──► sheaf.exe (PROC-MAIN)
-                               │  Tauri IPC (no port)            ┌───────────────────────┐
-   PROC-UI WebView2 ◄──────►│  MOD-SHELL commands/events  │ session dir (temp)    │
-   MOD-UI                  │  MOD-CORE workspace + undo  │ cache, thumbs, results│
-                               │  MOD-JOBS scheduler ◄──────►│ MOD-STORE         │
-                               └──────┬──────────────────────────┴───────────────────────┘
+ tray icon + hotkey ──► sheaf tray (PROC-TRAY) ──► sheaf wheel (PROC-WHEEL) ──► quick action
+                               │ in-process calls (no port, no IPC)   ┌───────────────────────┐
+                               │  MOD-UI egui window and wheel         │ session dir (temp)    │
+                               │  MOD-APP workspace, commands, jobs    │ cache, thumbs, results│
+                               │  MOD-CORE workspace + undo            │ MOD-STORE             │
+                               └──────┬────────────────────────────────┴───────────────────────┘
                                       │ stdio JSON lines (DATA-WORKERPROTO)
                         ┌─────────────┴──────────────┐
                         ▼                            ▼
@@ -124,8 +128,10 @@
 
 | ID | Process | Role | Trust |
 |---|---|---|---|
-| <a id="proc-main"></a> | `sheaf.exe` | Tauri shell, workspace, job scheduling. Never parses untrusted file content. | trusted |
-| <a id="proc-ui"></a> | WebView2 | Renders [`MOD-UI`](#mod-ui). No network, strict CSP, embedded assets only. | untrusted-ish: treat all IPC input as hostile ([`SEC-IPC`](#sec-ipc)) |
+| <a id="proc-main"></a> | `sheaf.exe` | The native window ([`MOD-UI`](#mod-ui)), workspace, job scheduling, all in one process. Never parses untrusted file content. | trusted |
+| <a id="proc-ui"></a> | (in `sheaf.exe`) | The egui views of [`MOD-UI`](#mod-ui). Part of the main process: no web view, no network code. The command layer still validates what the views send, so the same rules serve the command line and the wheel ([`SEC-IPC`](#sec-ipc)). | trusted |
+| <a id="proc-tray"></a> | `sheaf tray` | Resident helper: tray icon, the wheel hotkey, reading the selection of the window in front. Draws nothing; waits in the Windows message loop. Writes the file list to a private file and starts the wheel. | trusted; the paths it reads are untrusted input ([`SEC-PATHS`](#sec-paths)) |
+| <a id="proc-wheel"></a> | `sheaf wheel` | The wheel overlay: a transparent window at the cursor, then a result card; runs the chosen quick action with its own [`MOD-APP`](#mod-app) and workers. Lives seconds. | trusted |
 | <a id="proc-worker"></a> | `sheaf-worker.exe` × N | Opens PDFs and images, renders, cleans, builds output ([`MOD-WORKER`](#mod-worker)). Memory-capped, killed on timeout. | handles hostile files |
 | <a id="proc-tess"></a> | `tesseract.exe` per job | OCR. Fed pre-cleaned PNG, returns TSV/PDF. | handles hostile pixels |
 
@@ -147,11 +153,12 @@ sheaf/
     sheaf-worker/   MOD-WORKER   worker binary: job handlers
     sheaf-cli/      MOD-CLI      argument grammar, single-instance aggregation
     sheaf-app/      MOD-APP      main-process core: workspace, jobs, DOC-IPC commands (no window toolkit)
-  src-tauri/        MOD-SHELL    commands, events, capabilities, CSP, thumb protocol (Windows only)
-  ui/               MOD-UI       index.html, js/*.mjs, css/, i18n/{en,uz,ru}.json
+    sheaf-ui/       MOD-UI       egui views: main window, action wheel, i18n (en/uz/ru JSON embedded)
+    sheaf-shell/    MOD-SHELL    the `sheaf` binary: modes, tray helper, hotkey, Explorer/desktop selection (Windows)
+  tools/smoke/                   GUI and Windows smoke scripts
   vendor/           pdfium.dll, tesseract/, tessdata/, fonts/, SHA256SUMS (CI-fetched)
   fixtures/         test documents (TEST-FIXTURES)
-  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench), ui-test (UI tests)
+  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench)
   .github/workflows/ build + test + package (DOC-BUILD)
 ```
 
@@ -249,7 +256,7 @@ impl Workspace { fn apply(&mut self, op: Op) -> Result<Rev>; fn undo(&mut self)-
                  fn pages(&self, range: Range<usize>) -> &[Page]; fn find(&self, id: PageId) -> Option<&Page>; }
 ```
 
-Owns the types [`DATA-SOURCE`](#data-source), [`DATA-WORKSPACE`](#data-workspace), [`DATA-JOB`](#data-job) and [`DATA-OCRRESULT`](#data-ocrresult) (the last two are produced by [`MOD-JOBS`](#mod-jobs) and [`MOD-OCR`](#mod-ocr) but defined here). Depends on: nothing. Used by: [`MOD-SHELL`](#mod-shell), [`MOD-JOBS`](#mod-jobs), [`MOD-PDF`](#mod-pdf) (types), [`MOD-OCR`](#mod-ocr) (types). Tests: [`TEST-OPS`](#test-ops), [`TEST-UNDO`](#test-undo).
+Also owns `QuickAction`, `QuickRequest` and the file-kind rules the wheel and the command line share ([`ADR-WHEEL`](#adr-wheel)). Owns the types [`DATA-SOURCE`](#data-source), [`DATA-WORKSPACE`](#data-workspace), [`DATA-JOB`](#data-job) and [`DATA-OCRRESULT`](#data-ocrresult) (the last two are produced by [`MOD-JOBS`](#mod-jobs) and [`MOD-OCR`](#mod-ocr) but defined here). Depends on: nothing. Used by: [`MOD-SHELL`](#mod-shell), [`MOD-JOBS`](#mod-jobs), [`MOD-PDF`](#mod-pdf) (types), [`MOD-OCR`](#mod-ocr) (types). Tests: [`TEST-OPS`](#test-ops), [`TEST-UNDO`](#test-undo).
 
 ### <a id="mod-store"></a>MOD-STORE (`sheaf-store`)
 
@@ -343,11 +350,11 @@ Depends on: [`MOD-CORE`](#mod-core) (protocol types), [`MOD-PDF`](#mod-pdf), [`M
 
 ### <a id="mod-cli"></a>MOD-CLI (`sheaf-cli`)
 
-Argument grammar ([`CLI-GRAMMAR`](#cli-grammar)) and single-instance aggregation: Explorer starts one process per selected file; the first instance collects arguments from later launches for 500 ms, then acts once ([`FLOW-EXPLORER`](#flow-explorer), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi)).
+The argument grammar ([`CLI-GRAMMAR`](#cli-grammar)): arguments in, a command out (window, headless quick action, tray helper, wheel overlay), with usage errors instead of panics. Pure. Single-instance aggregation (Explorer starts one process per selected file; the first instance collects arguments from later launches for 500 ms, then acts once, [`FLOW-EXPLORER`](#flow-explorer), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi)) arrives with [`PH-6`](#ph-6). Depends on: [`MOD-CORE`](#mod-core) (the quick-action types).
 
 ### <a id="mod-app"></a>MOD-APP (`sheaf-app`)
 
-The main process without a window toolkit ([`ADR-APP-CRATE`](#adr-app-crate)). `App` is the single-threaded core: the workspace, unlocked-source passwords ([`SEC-SECRETS`](#sec-secrets)), the search index, and blocking operations (import, thumbnails, OCR, export, tools). Every long operation is split into a *plan* made under the workspace lock (pages become self-contained worker requests) and an *execution* against `Shared` (worker pool and session dir, safe from any thread), so an export never blocks the tray. `Backend` is the thread-safe command layer the shell calls: it implements [`DOC-IPC`](#doc-ipc), treats every argument as hostile ([`SEC-IPC`](#sec-ipc)), runs long work as app jobs with progress, cancellation and events ([`EVT-JOB`](#evt-job)), serves page pictures, checks the bundled files' hashes at startup ([`SEC-SUPPLY`](#sec-supply)) and shuts down cleanly ([`FLOW-LIFECYCLE`](#flow-lifecycle)).
+The main process without a window toolkit ([`ADR-APP-CRATE`](#adr-app-crate)). `App` is the single-threaded core: the workspace, unlocked-source passwords ([`SEC-SECRETS`](#sec-secrets)), the search index, and blocking operations (import, thumbnails, OCR, export, tools). Every long operation is split into a *plan* made under the workspace lock (pages become self-contained worker requests) and an *execution* against `Shared` (worker pool and session dir, safe from any thread), so an export never blocks the tray. `Backend` is the thread-safe command layer the shell calls: it implements [`DOC-IPC`](#doc-ipc), treats every argument as hostile ([`SEC-IPC`](#sec-ipc)), runs long work as app jobs with progress, cancellation and events ([`EVT-JOB`](#evt-job)), serves page pictures, checks the bundled files' hashes at startup ([`SEC-SUPPLY`](#sec-supply)) and shuts down cleanly ([`FLOW-LIFECYCLE`](#flow-lifecycle)). `quick` runs the wheel's actions with no window: merge, compress, OCR, split, PDF to pictures, pictures to PDF, rotate, each through the normal import and export so the path policy, limits and worker isolation apply, never overwriting, one bad file not stopping the others ([`FLOW-WHEEL`](#flow-wheel)).
 
 ```rust
 Backend::start(cfg, emit) -> Arc<Backend>;       // engines discovery, session, settings, hash check
@@ -357,28 +364,28 @@ trait Emit { fn emit(&self, Event); }            // the shell sends events to th
 
 Depends on: [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr). Used by: [`MOD-SHELL`](#mod-shell), the harness. Tests: [`TEST-SEC`](#test-sec) (IPC checks), [`TEST-PAGEOPS`](#test-pageops), [`TEST-PROTECT`](#test-protect) and the job flow, through the real worker.
 
-### <a id="mod-shell"></a>MOD-SHELL (`src-tauri`)
+### <a id="mod-shell"></a>MOD-SHELL (`sheaf-shell`)
 
-Tauri 2 app, Windows only ([`NG-XPLAT`](#ng-xplat)). A thin translation layer over [`MOD-APP`](#mod-app): registers the [`DOC-IPC`](#doc-ipc) commands (each runs off the UI thread), emits events as `sheaf:<name>`, runs the native dialogs (so paths never come from the page, [`SEC-PATHS`](#sec-paths)), receives file drops and `sheaf open <files>` ([`CLI-GRAMMAR`](#cli-grammar)), serves the `sheaf-thumb://` scheme ([`CMD-THUMB`](#cmd-thumb)), reveals files in Explorer, and shuts the backend down on exit. Security wiring: capabilities generated from `build.rs` grant the page exactly the commands of [`DOC-IPC`](#doc-ipc) plus event listening, nothing else; the CSP is `default-src 'self'` with no inline script or style ([`SEC-IPC`](#sec-ipc)); the window can navigate only to the embedded app origin and runs in an incognito profile, so nothing the page shows is kept in a browser profile on disk ([`SEC-NONET`](#sec-nonet), [`SEC-TEMP`](#sec-temp)). A failed start is held as state and shown by the UI instead of closing the window. Not built yet: window state, single-instance aggregation ([`MOD-CLI`](#mod-cli), [`PH-6`](#ph-6)), bundling of sidecars and the installer ([`PH-7`](#ph-7)).
+The `sheaf` executable. One binary, four modes chosen by [`MOD-CLI`](#mod-cli): the main window, headless quick actions (`sheaf run`), the resident tray helper (`sheaf tray`) and the wheel overlay (`sheaf wheel`). The tray helper (Windows only, [`NG-XPLAT`](#ng-xplat)) owns the tray icon and menu (open, start with Windows, quit), the global hotkey from [`DATA-SETTINGS`](#data-settings) (default Ctrl+Alt+Space) and the selection reader: the shell's COM interfaces (`IShellWindows`, the active view's `IFolderView2`) answer which items are selected in the Explorer window in front or on the desktop. That is the only `unsafe` code in the app ([`DOC-AGENT-RULES`](#doc-agent-rules) rule 5), in `selection.rs`, `tray.rs` and nowhere else. Not built yet: single-instance aggregation ([`PH-6`](#ph-6)), Explorer verbs and the installer ([`PH-7`](#ph-7)), the window icon and window state.
 
-Depends on: [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store) (and, through [`MOD-APP`](#mod-app), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr); [`MOD-SCAN`](#mod-scan) and [`MOD-CLI`](#mod-cli) follow in later phases). Serves: [`MOD-UI`](#mod-ui).
+Depends on: [`MOD-UI`](#mod-ui), [`MOD-APP`](#mod-app), [`MOD-CLI`](#mod-cli), [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store).
 
-### <a id="mod-ui"></a>MOD-UI (`ui/`)
+### <a id="mod-ui"></a>MOD-UI (`sheaf-ui`)
 
-Vanilla ES modules ([`ADR-VANILLA-UI`](#adr-vanilla-ui)): `ipc.mjs` (the only module that touches the toolkit; typed wrappers around [`DOC-IPC`](#doc-ipc)), `state.mjs` (event bus, page cache, selection), `tray.mjs` (virtual list), `preview.mjs`, `drawer.mjs` and `ocrpanel.mjs`, `exportdlg.mjs`, `settings.mjs`, `search.mjs`, `jobs.mjs`, `toolbar.mjs`, `shortcuts.mjs`, `passwords.mjs`, `i18n.mjs` ([`ADR-I18N`](#adr-i18n)), pure `geometry.mjs` and `format.mjs`. No markup is ever built from strings, nothing is stored in the browser, and the only `fetch` reads the app's own language files; `tools/ui-test` enforces that. Components are specified in [`DOC-UI`](#doc-ui).
+Native views on egui ([`ADR-NATIVE-UI`](#adr-native-ui)): `app` (state, message pump, toolbar, job bar, toasts), `tray` (the page list, virtual), `preview` (zoom, rotate, filters, crop frame, text overlay), `side` (tools drawer, forms, OCR panel), `dialogs` (export, settings, password), `search`, `jobs` (result sentences), `textures` (pictures loaded off the UI thread), `wheel` (the radial menu and its overlay app), `i18n` ([`ADR-I18N`](#adr-i18n): the three language files are embedded), and the pure `geometry` and `format`. Anything that can block runs on a helper thread and returns as a message; the UI thread only draws ([`PERF-BUDGETS`](#perf-budgets)). The views call [`MOD-APP`](#mod-app) directly. Components are specified in [`DOC-UI`](#doc-ui).
 
 ## <a id="doc-ipc"></a>7. IPC: commands and events
 
-All commands are `async`, return `Result<T, AppError>`, and validate every argument ([`SEC-IPC`](#sec-ipc)). Paths never come from the UI as free text: they come from dialogs run by the shell, drag-drop events, or CLI args ([`SEC-PATHS`](#sec-paths)). As built: [`CMD-IMPORT`](#cmd-import) is the shell's Open dialog (`open_files`) plus the drop and `open` paths, all ending in `Backend::import`; [`CMD-APPLY`](#cmd-apply) takes only the ops a person can ask for (no `Insert`: pages enter through import alone); [`CMD-RENDER`](#cmd-render) returns the key of a picture that the page then loads through [`CMD-THUMB`](#cmd-thumb); long commands return a job id at once and report through [`EVT-JOB`](#evt-job). The scan commands and [`CMD-PRESETS`](#cmd-presets) are registered but answer `Unsupported` until [`PH-5`](#ph-5) and [`PH-6`](#ph-6), so the capability list will not change. Extra commands, appended: `snapshot` (everything the window needs at start), `jobs`, `choose_output_dir` / `clear_output_dir` (the output folder is picked in a native dialog) and `pick_image` (a stamp picture, named by token afterwards). The wire shapes are pinned by `tools/ui-test/contract/shapes.json` ([`TEST-UI`](#test-ui)). Flows that use these commands: [`FLOW-IMPORT`](#flow-import), [`FLOW-EDIT`](#flow-edit), [`FLOW-EXPORT`](#flow-export), [`FLOW-TOOL-RUN`](#flow-tool-run).
+The command surface is `Backend` in [`MOD-APP`](#mod-app), called in-process by [`MOD-UI`](#mod-ui) (and by the headless modes): commands return `Result<T, AppError>`, run long work as jobs, and validate every argument ([`SEC-IPC`](#sec-ipc)). Paths never come from the UI as free text: they come from native dialogs, drag-drop events, CLI args or the wheel's selection reader ([`SEC-PATHS`](#sec-paths)). As built: [`CMD-IMPORT`](#cmd-import) is the Open dialog plus the drop, `open` and wheel paths, all ending in `Backend::import`; [`CMD-APPLY`](#cmd-apply) takes only the ops a person can ask for (no `Insert`: pages enter through import alone); [`CMD-RENDER`](#cmd-render) and [`CMD-THUMB`](#cmd-thumb) are one call, `Backend::thumb(page, size)`, which returns PNG bytes (sizes up to 256 px are thumbnails, larger ones previews); long commands return a job id at once and report through [`EVT-JOB`](#evt-job). The scan commands and [`CMD-PRESETS`](#cmd-presets) answer `Unsupported` until [`PH-5`](#ph-5) and [`PH-6`](#ph-6). Extra commands, appended: `snapshot`, `jobs`, `set_output_dir` (the folder is picked in a native dialog) and `register_pick` (a stamp picture, named by token afterwards). Events reach the window as messages on a channel; there is no transport to secure.
 
 | ID | Args → returns | Calls | UI caller |
 |---|---|---|---|
 | <a id="cmd-import"></a> | `paths[]` (from dialog or drop) → `ImportReport` | [`MOD-JOBS`](#mod-jobs) `import_probe`, [`MOD-CORE`](#mod-core) Insert | [`UI-TOOLBAR`](#ui-toolbar), [`UI-TRAY`](#ui-tray) |
 | <a id="cmd-pages"></a> | `range` → `Page[]`, `rev` | [`MOD-CORE`](#mod-core) | [`UI-TRAY`](#ui-tray) |
-| <a id="cmd-thumb"></a> | (custom scheme) `sheaf-thumb://<pageId>/<rev>/<size>` → image bytes | [`MOD-JOBS`](#mod-jobs) `thumb` | [`UI-TRAY`](#ui-tray) |
+| <a id="cmd-thumb"></a> | `pageId, size` → PNG bytes (`Backend::thumb`; the page's edit fingerprint, `ver`, keys the texture cache) | [`MOD-JOBS`](#mod-jobs) `thumb` | [`UI-TRAY`](#ui-tray) |
 | <a id="cmd-apply"></a> | `Op` → `rev` | [`MOD-CORE`](#mod-core) | [`UI-TRAY`](#ui-tray), [`UI-PREVIEW`](#ui-preview) |
 | <a id="cmd-undo"></a> | `undo` / `redo` → `rev` | [`MOD-CORE`](#mod-core) | [`UI-TOOLBAR`](#ui-toolbar) |
-| <a id="cmd-render"></a> | `pageId, zoom` → image path in session | [`MOD-JOBS`](#mod-jobs) `render` | [`UI-PREVIEW`](#ui-preview) |
+| <a id="cmd-render"></a> | `pageId, zoom` → the picture size to ask [`CMD-THUMB`](#cmd-thumb) for | [`MOD-JOBS`](#mod-jobs) `render` | [`UI-PREVIEW`](#ui-preview) |
 | <a id="cmd-scan-devices"></a> | none → `Device[]` | [`MOD-SCAN`](#mod-scan) | [`UI-SCANDLG`](#ui-scandlg) |
 | <a id="cmd-scan-start"></a> | `ScanProfile, OcrPolicy` → `JobId` | [`MOD-SCAN`](#mod-scan), [`MOD-JOBS`](#mod-jobs) | [`UI-SCANDLG`](#ui-scandlg) |
 | <a id="cmd-scan-cancel"></a> | `JobId` | [`MOD-SCAN`](#mod-scan) | [`UI-JOBBAR`](#ui-jobbar) |
@@ -429,7 +436,7 @@ Most tools are views of the same page model ([`ADR-NONDESTRUCTIVE`](#adr-nondest
 | <a id="tool-metadata"></a> | (not in iLovePDF) view, edit, strip metadata | v1.1 | drawer: Info | [`CMD-TOOL-RUN`](#cmd-tool-run) | [`MOD-PDF`](#mod-pdf) | [`TEST-METADATA`](#test-metadata) | [`PH-7`](#ph-7) |
 | <a id="tool-sign-visual"></a> | Sign PDF (image stamp only) | v2 | drawer | [`CMD-TOOL-RUN`](#cmd-tool-run) | [`MOD-PDF`](#mod-pdf) | not yet | none |
 | <a id="tool-redact"></a> | Redact PDF | v2 | drawer | [`CMD-TOOL-RUN`](#cmd-tool-run) | [`MOD-PDF`](#mod-pdf) | not yet | none |
-| <a id="tool-html2pdf"></a> | HTML to PDF | v2 | n/a | n/a | WebView2 print-to-PDF (VERIFY availability through Tauri) | not yet | none |
+| <a id="tool-html2pdf"></a> | HTML to PDF | v2 | n/a | n/a | needs an HTML renderer, which the app deliberately does not contain ([`ADR-NATIVE-UI`](#adr-native-ui)); a decision for v2 | not yet | none |
 | <a id="tool-compare"></a> | Compare PDF | v3 | n/a | n/a | n/a | not yet | none |
 
 Later versions: [`TOOL-SIGN-VISUAL`](#tool-sign-visual), [`TOOL-REDACT`](#tool-redact), [`TOOL-HTML2PDF`](#tool-html2pdf), [`TOOL-COMPARE`](#tool-compare). Excluded: Office conversions ([`NG-OFFICE`](#ng-office)), PDF/A (ICC profiles and font-embedding validation make it a project of its own), editing existing text ([`NG-EDITTEXT`](#ng-edittext)).
@@ -486,15 +493,17 @@ Run paths: [`UI-PRESETS`](#ui-presets) → [`CMD-PRESETS`](#cmd-presets) → [`F
 ## <a id="cli-grammar"></a>10. Command line and Explorer verbs
 
 ```
-sheaf.exe open  <files...>                       open in the window, files imported
-sheaf.exe merge <files...> [--out PATH]          open + export merged
-sheaf.exe ocr   <file>     [--langs auto|eng+rus] [--replace] [--text-only]
-sheaf.exe compress <file>  [--level low|recommended|extreme]
-sheaf.exe preset <name> <files...>
-flags: --headless (no window, result path printed, exit code 0 ok / 2 partial / 1 failed)
+sheaf.exe                                        the window, empty
+sheaf.exe open <files...>                        the window, files imported (also what "Open with" passes)
+sheaf.exe run <action> <files...> [--out DIR] [--level low|recommended|extreme] [--langs auto|eng+rus]
+sheaf.exe <action> <files...> ...                the same without `run`, as an Explorer verb writes it
+sheaf.exe tray                                   the resident helper: tray icon, wheel hotkey
+sheaf.exe wheel --at X,Y --files LIST            the wheel overlay (started by the helper)
+actions: merge compress ocr split pdf2img img2pdf rotate
+run prints one output path per line; exit code 0 all done / 2 partly / 1 nothing; never overwrites
 ```
 
-Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs)) are written under `HKCU\Software\Classes\SystemFileAssociations\.pdf\shell\Sheaf.*` (and image extensions) by the installer; each runs `sheaf.exe <subcommand> "%1"`. All arguments are untrusted input ([`SEC-PATHS`](#sec-paths)). On Windows 11 these appear under "Show more options". Grammar implementation and aggregation: [`MOD-CLI`](#mod-cli); flow: [`FLOW-EXPLORER`](#flow-explorer).
+Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs)) are written under `HKCU\Software\Classes\SystemFileAssociations\.pdf\shell\Sheaf.*` (and image extensions) by the installer; each runs `sheaf.exe <subcommand> "%1"`. All arguments are untrusted input ([`SEC-PATHS`](#sec-paths)). On Windows 11 these appear under "Show more options". The wheel ([`ADR-WHEEL`](#adr-wheel)) is the same quick actions reached from a hotkey instead of a menu. Grammar: [`MOD-CLI`](#mod-cli); aggregation: [`MOD-CLI`](#mod-cli); flow: [`FLOW-EXPLORER`](#flow-explorer).
 
 ## <a id="doc-flows"></a>11. Flows
 
@@ -554,7 +563,15 @@ Trigger: import or scan with [`DATA-OCRPOLICY`](#data-ocrpolicy) `Auto`. Steps a
 
 ### <a id="flow-explorer"></a>FLOW-EXPLORER
 
-Verb → `sheaf.exe <cmd> "%1"` → [`MOD-CLI`](#mod-cli) single-instance aggregation (500 ms) → one action for the whole selection → `--headless` runs [`FLOW-TOOL-RUN`](#flow-tool-run) or [`FLOW-PRESET`](#flow-preset) without a window, otherwise the window opens with files imported ([`FLOW-IMPORT`](#flow-import)).
+Verb → `sheaf.exe <cmd> "%1"` → [`MOD-CLI`](#mod-cli) single-instance aggregation (500 ms) → one action for the whole selection → `run` executes it with no window, otherwise the window opens with files imported ([`FLOW-IMPORT`](#flow-import)).
+
+### <a id="flow-wheel"></a>FLOW-WHEEL (the action wheel)
+
+1. `sheaf tray` is running (started by the person or by Windows). Its hotkey ([`DATA-SETTINGS`](#data-settings)) is pressed while Explorer or the desktop is in front.
+2. The helper reads the selected paths from that window through the shell ([`MOD-SHELL`](#mod-shell)), the cursor position and the screen scale, writes the paths to a private list file and starts `sheaf wheel --at X,Y --files LIST`. A wheel already up is not started twice.
+3. The overlay reads and deletes the list, classifies each file by extension ([`ADR-WHEEL`](#adr-wheel)) and draws eight fixed slots around the cursor: Merge, Compress, OCR, Split, PDF to pictures, Pictures to PDF, Rotate, Open in Sheaf. Slots that make no sense for these files are dimmed and do nothing; the hub says how many files. Click, a digit key, or Esc; clicking elsewhere or leaving it alone closes it.
+4. A quick action runs in the overlay process ([`MOD-APP`](#mod-app) `quick`): each file is imported under the path policy, the output is built by the normal export and published beside the first input under a new name ([`ADR-NO-OVERWRITE`](#adr-no-overwrite)); a locked file is reported, not guessed at; one failing file does not stop the rest.
+5. The window shrinks to a card: progress, then what was made, what failed and why (the same error messages as everywhere, [`FLOW-ERROR`](#flow-error)), with "Show in folder" and "Open result in Sheaf". It closes by itself after a while unless the pointer is on it.
 
 ### <a id="flow-lifecycle"></a>FLOW-LIFECYCLE
 
@@ -638,8 +655,8 @@ Threat model: (a) hostile PDFs and images (the main attack surface), (b) other s
 
 | ID | Control | Boundary | Implementation | Verified by |
 |---|---|---|---|---|
-| <a id="sec-nonet"></a> | No listener, no outbound connections | all | No HTTP server ([`ADR-NOHTTP`](#adr-nohttp)); CSP `default-src 'self'` with no remote origin, a navigation lock to the embedded origin, an incognito webview profile and a UI that is checked in tests for any remote reference are in place; a WebView2 request filter that also blocks everything else at the network layer is not built (VERIFY the hook is reachable through Tauri/wry; the CSP and the navigation lock are the baseline either way); no updater, no telemetry; any future network feature ([`OCR-ENGINES`](#ocr-engines), ESCL) is opt-in and logged | [`TEST-SEC`](#test-sec) (port scan, blocked-request test) |
-| <a id="sec-ipc"></a> | Treat the UI as untrusted | [`SEC-TB1`](#sec-tb1) | Tauri capabilities grant only the commands in [`DOC-IPC`](#doc-ipc) (generated from `build.rs`, and a test compares them with what the UI calls); every argument validated (types, ranges, id existence, closed enums, unknown fields refused for tool parameters); no generic "run command" or "read file" command; the page is not granted the dialog plugin; CSP: `default-src 'self'`, no inline script, no remote origins | [`TEST-SEC`](#test-sec) |
+| <a id="sec-nonet"></a> | No listener, no outbound connections | all | No HTTP server ([`ADR-NOHTTP`](#adr-nohttp)) and no web view: the UI is native code in the main process ([`ADR-NATIVE-UI`](#adr-native-ui)), so there is no browser engine to reach out and no page to navigate. No network code is compiled in at all: `cargo-deny` bans the HTTP, TLS, socket-server and async-runtime crates by name, and fails CI if one appears in the dependency tree; no updater, no telemetry; any future network feature ([`OCR-ENGINES`](#ocr-engines), ESCL) is opt-in, logged, and a spec change first | [`TEST-SEC`](#test-sec) (port scan on Linux and Windows, the ban list) |
+| <a id="sec-ipc"></a> | Validate every request, wherever it comes from | [`SEC-TB1`](#sec-tb1) | The window and the wheel are trusted code in the main process, but every action goes through the `Backend` command layer, which treats its arguments as hostile anyway (types, ranges, id existence, closed enums, unknown fields refused for tool parameters, no `Insert` of pages, no free-text paths, picked files named by token), so the command line, the wheel and the window share one set of rules; the layer is tested with bad ids, huge ranges and bad paths | [`TEST-SEC`](#test-sec) |
 | <a id="sec-isolate"></a> | Hostile files only touch workers | [`SEC-TB2`](#sec-tb2), [`SEC-TB3`](#sec-tb3) | [`PROC-WORKER`](#proc-worker) per job class: Windows Job Object with memory cap and kill-on-close, timeout, reduced token where practical, no handle inheritance; main process never parses documents ([`ADR-WORKER-PROCS`](#adr-worker-procs)) | [`TEST-JOBS`](#test-jobs), [`TEST-SEC`](#test-sec) |
 | <a id="sec-paths"></a> | Path policy | [`SEC-TB4`](#sec-tb4) | Inputs only from dialogs, drops, or CLI args, canonicalized; reject device paths and alternate data streams; outputs only into the chosen output dir or beside the source with a new name ([`ADR-NO-OVERWRITE`](#adr-no-overwrite)); [`CMD-REVEAL`](#cmd-reveal) only for files this app produced; UNC paths allowed but flagged (VERIFY policy with the user) | [`TEST-SEC`](#test-sec) (traversal, reserved names, long paths) |
 | <a id="sec-limits"></a> | Resource limits | [`SEC-TB2`](#sec-tb2) | Max file size, max pages, max pixel dimensions per page (zip-bomb style images), per-job timeout, per-worker RSS cap; reject early with a clear message ([`RISK-LARGE-SCANS`](#risk-large-scans)) | [`TEST-SEC`](#test-sec) |
@@ -661,7 +678,7 @@ Budgets are targets to be measured, not claims. Each has a benchmark in `tools/b
 | <a id="perf-lazy"></a> | Render only what is visible | virtualized tray ([`UI-TRAY`](#ui-tray)), thumbnails requested by viewport, disk cache ([`MOD-STORE`](#mod-store)), LRU memory cache |
 | <a id="perf-parallel"></a> | Use the cores without stalling the UI | N worker processes (default cores minus 1, [`DATA-SETTINGS`](#data-settings)), because PDFium is not thread-safe ([`ADR-WORKER-PROCS`](#adr-worker-procs), [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads)); priority queue ([`MOD-JOBS`](#mod-jobs)) |
 | <a id="perf-ocr"></a> | OCR cost control | cache ([`OCR-CACHE`](#ocr-cache)), skip pages with text, fixed-language presets skip detection, Fast model default, one Tesseract thread per job, measure process-start cost before considering library binding ([`ADR-TESS-SIDECAR`](#adr-tess-sidecar)) |
-| <a id="perf-io"></a> | Cheap I/O | atomic writes, no base64 over IPC (custom scheme, [`CMD-THUMB`](#cmd-thumb)), streaming progress rather than polling |
+| <a id="perf-io"></a> | Cheap I/O | atomic writes, pictures passed as bytes in-process ([`CMD-THUMB`](#cmd-thumb)), streaming progress as messages rather than polling |
 
 ## <a id="doc-ui"></a>16. UI
 
@@ -690,10 +707,11 @@ Single window. No tabs, no nested modals deeper than one level. Labels come from
 | <a id="ui-search"></a> | Search | Full-text over text layers and OCR cache; results jump to page | [`CMD-SEARCH`](#cmd-search) |
 | <a id="ui-jobbar"></a> | Job bar | One row per running job, cancel, "Reveal in Explorer" | [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-REVEAL`](#cmd-reveal), [`EVT-JOB`](#evt-job) |
 | <a id="ui-shortcuts"></a> | Shortcuts | Ctrl+O open, Ctrl+Shift+S scan, Ctrl+E export, Ctrl+Z/Y undo/redo, R / Shift+R rotate, Del delete, Ctrl+D duplicate, F OCR selection, Ctrl+F search, Space preview | [`CMD-APPLY`](#cmd-apply), [`CMD-OCR-RUN`](#cmd-ocr-run) |
+| <a id="ui-wheel"></a> | Action wheel | A radial overlay at the cursor; eight fixed slots, dimmed when they do not fit the selected files; click or a digit chooses; the same window then shows progress and the result ([`FLOW-WHEEL`](#flow-wheel)) | [`MOD-APP`](#mod-app) `quick` |
 
 Keyboard map: [`UI-SHORTCUTS`](#ui-shortcuts). Accessibility: full keyboard path for every action, visible focus, no information by color alone (badges also carry text/icons), respects OS text scale and dark mode.
 
-As built in [`PH-4`](#ph-4): the tray reorders by pointer ([`ADR-UI-REORDER`](#adr-ui-reorder)) and its badges carry words, not only colors; the preview offers zoom, rotation, Color/Gray/B-W, straighten and clean, crop with handles (arrow keys move the frame, Shift resizes) and the recognized-text overlay with doubtful words marked by a dashed outline and a list; the drawer opens a form per tool and the export dialog states "hide only" in words when selected ([`SEC-HONESTY`](#sec-honesty)); locked files ask for their password in a dialog that shakes on a wrong one and keeps the file's pages hidden. The scan button and the presets menu are present but say they arrive later ([`PH-5`](#ph-5), [`PH-6`](#ph-6)). Not built yet: inline correction of recognized text ([`OCR-CONF-UI`](#ocr-conf-ui)), the "blank suspect" tray badge, the split preview in the tray ([`TOOL-SPLIT`](#tool-split)), and a shortcuts help screen. Both languages besides English are first drafts by the builder and need a native reader.
+As built in [`PH-4`](#ph-4): the tray reorders by pointer ([`ADR-UI-REORDER`](#adr-ui-reorder)) and its badges carry words, not only colors; the preview offers zoom, rotation, Color/Gray/B-W, straighten and clean, crop with handles (arrow keys move the frame, Shift resizes) and the recognized-text overlay with doubtful words marked by outline and a dashed underline and listed in the OCR panel; the drawer opens a form per tool and the export dialog states "hide only" in words when selected ([`SEC-HONESTY`](#sec-honesty)); locked files ask for their password in a dialog, and the page stays hidden until it is right. The scan button and the presets menu are present but say they arrive later ([`PH-5`](#ph-5), [`PH-6`](#ph-6)). Buttons carry words rather than icons: the bundled font has no pictograms and a missing glyph would be a blank box. Not built yet: inline correction of recognized text ([`OCR-CONF-UI`](#ocr-conf-ui)), the "blank suspect" tray badge, the split preview in the tray ([`TOOL-SPLIT`](#tool-split)), a window icon, and a shortcuts help screen. The Uzbek and Russian texts are first drafts by the builder and need a native reader.
 
 ## <a id="doc-tests"></a>17. Testing
 
@@ -705,9 +723,9 @@ As built in [`PH-4`](#ph-4): the tray reorders by pointer ([`ADR-UI-REORDER`](#a
 | [`MOD-PDF`](#mod-pdf), [`MOD-OCR`](#mod-ocr), [`MOD-WORKER`](#mod-worker) | yes (pdfium and tesseract binaries per OS) | yes | |
 | [`MOD-SCAN`](#mod-scan) with `FakeBackend` | yes | yes | |
 | [`MOD-SCAN`](#mod-scan) with `WiaBackend` | no | build only | real scanner ([`RISK-WIA`](#risk-wia)) |
-| [`MOD-APP`](#mod-app) (the command layer) | yes | yes | |
-| [`MOD-UI`](#mod-ui) | unit tests, and the real UI in Chromium against a fake backend ([`TEST-UI`](#test-ui)) | | visual check |
-| [`MOD-SHELL`](#mod-shell) | type-check only (`--target x86_64-pc-windows-msvc`) | build, WebDriver smoke test, listening-port check | visual check on a clean VM |
+| [`MOD-APP`](#mod-app) (the command layer, quick actions) | yes | yes | |
+| [`MOD-UI`](#mod-ui) | logic and language-file tests; the window and the wheel drawn under a virtual display with software GL ([`TEST-UI`](#test-ui)) | build, smoke | visual check |
+| [`MOD-SHELL`](#mod-shell) | modes, headless run; the Windows-only parts type-check (`--target x86_64-pc-windows-msvc`) | build, smoke (window, worker, no listening port, tray helper starts) | the hotkey, Explorer and desktop selection, the overlay at the cursor, on a clean VM ([`RISK-WIN-SHELL`](#risk-win-shell)) |
 | Installer, Explorer verbs, SmartScreen | no | build | clean Windows VM |
 
 ### <a id="test-fixtures"></a>Fixtures (`fixtures/`)
@@ -724,7 +742,8 @@ Born-digital PDF with text; scanned PDF without text (Uzbek Latin, Uzbek Cyrilli
 | <a id="test-ocr"></a> | Character error rate per fixture group stays under agreed thresholds (provisional: 2% English and Russian, 4% Uzbek, on synthetic 300 dpi pages; measured 0 to 0.7%); skip logic; cache hit rate; language chooser on mixed fixtures; compare engines before changing defaults ([`OCR-ENGINES`](#ocr-engines)); accuracy risk [`RISK-OCR-ACCURACY`](#risk-ocr-accuracy) |
 | <a id="test-jobs"></a> | Worker crash, hang, and memory-limit recovery; cancellation; priority ordering |
 | <a id="test-sec"></a> | No listening ports; non-local requests blocked; IPC fuzzing (bad ids, huge ranges); path traversal, device names, ADS; oversized inputs rejected; session dir removed on exit |
-| <a id="test-ui"></a> | `tools/ui-test`: logic (formatting, crop geometry, plural rules); the three language files in step with each other and with every key the code uses; source policy (no inline script, no markup injection, no storage, no remote reference, only granted commands); the fake backend held to the real payload shapes written by `wire_shapes_match_the_ui_contract`; the real UI in Chromium under the real CSP (selection, virtual tray with 1000 pages, reorder, crop in a rotated page, export and tool forms, passwords, OCR overlay and search, language and theme switch, focus handling, error display) |
+| <a id="test-ui"></a> | The three language files have the same keys, placeholders and plural forms and every key the code asks for exists; crop geometry round-trips through every rotation; job result sentences; and `tools/smoke/gui-linux.sh` starts the real window with a file and the real wheel on two PDFs under Xvfb, checks that real content was drawn and that a headless `run` writes its output |
+| <a id="test-wheel"></a> | The wheel: sector hit-testing, which slots apply to which files, the file list read once and removed; quick actions through the real worker (merge order and naming, compress, split, rotate, pictures, OCR, bad inputs, locked files, no overwrite); the argument grammar including every bad input; and the Windows smoke script ([`RISK-WIN-SHELL`](#risk-win-shell)) |
 | <a id="test-merge"></a> | Page count and order; untouched pages byte-identical objects where possible; forms behavior documented |
 | <a id="test-split"></a> | Each [`DATA-SPLITRULE`](#data-splitrule); names from [`DATA-NAMEPATTERN`](#data-namepattern); no page lost or duplicated |
 | <a id="test-pageops"></a> | Extract, remove, reorder, rotate produce expected page sequence and `/Rotate` |
@@ -743,9 +762,9 @@ Born-digital PDF with text; scanned PDF without text (Uzbek Latin, Uzbek Cyrilli
 - Pinned: PDFium build 8125 from pdfium-binaries (the newest the `pdfium-render` 0.9.5 binding supports), `tessdata_fast` 4.1.0 plus `pdf.ttf`, Tesseract 5.5.0 for Windows (the UB Mannheim installer, unpacked with 7-Zip at build time), Noto Sans Regular 2.015 with its licence. Linux CI tests against the distribution's Tesseract (5.3.4 on Ubuntu 24.04).
 - Rust stable, Cargo workspace ([`DOC-LAYOUT`](#doc-layout)); `clippy -D warnings`, `rustfmt`, `cargo-deny`, `cargo-audit` ([`SEC-SUPPLY`](#sec-supply)).
 - CI vendoring step: `tools/fetch-vendor` downloads pinned releases (pdfium binaries, Tesseract Windows build, tessdata, Noto fonts), verifies SHA-256 against `vendor/SHA256SUMS`, fails on mismatch ([`ADR-OFFLINE-ASSETS`](#adr-offline-assets)). Licenses of everything bundled go into `THIRD_PARTY_LICENSES` (VERIFY each).
-- Tauri bundler produces an NSIS or MSI installer; installer writes Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`CLI-GRAMMAR`](#cli-grammar)) per user; WebView2 runtime handling is a decision ([`RISK-WEBVIEW2`](#risk-webview2)).
-- Windows runner builds and tests everything; a Linux runner runs the cross-platform crates, without the shell ([`TEST-MATRIX`](#test-matrix)). Two more jobs: `ui` (Linux: `tools/ui-test`, with Playwright installed at build time only) and `shell-smoke` (Windows: the app started through `tauri-driver`, plus a listening-port check; marked `continue-on-error` until it has run once on a real runner).
-- Tauri brings a large dependency tree; each crate in it is covered by `cargo-deny` and `cargo-audit` like any other ([`SEC-SUPPLY`](#sec-supply)).
+- The installer (NSIS or MSI, [`PH-7`](#ph-7)) writes Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`CLI-GRAMMAR`](#cli-grammar)) per user and offers "start with Windows" for the tray helper; there is no runtime to bundle besides the app itself ([`ADR-NATIVE-UI`](#adr-native-ui)), so the former WebView2 question ([`RISK-WEBVIEW2`](#risk-webview2)) no longer applies.
+- Windows and Linux runners build, lint and test the whole workspace ([`TEST-MATRIX`](#test-matrix)); egui compiles on Linux, so the views are checked there too. Two more jobs: `gui-linux` (the window and the wheel under a virtual display, screenshots kept as artifacts) and `windows-smoke` (the real executable: a headless action, the window with a worker and no listening port, the tray helper; `continue-on-error` until it has run once on a real runner).
+- The UI toolkit brings a dependency tree of its own; each crate in it is covered by `cargo-deny` (licences, advisories, the network-crate ban list) and `cargo-audit` like any other ([`SEC-SUPPLY`](#sec-supply), [`SEC-NONET`](#sec-nonet)).
 - Signing step is present but inactive until a certificate exists ([`SEC-SIGN`](#sec-sign)).
 - Release artifact checklist: hashes published, SBOM generated, installer scanned, clean-VM smoke test.
 
@@ -759,7 +778,7 @@ Each phase ends with its definition of done. An agent completes phases in order 
 | <a id="ph-1"></a> | Core | [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`MOD-IMAGE`](#mod-image), [`MOD-PDF`](#mod-pdf) basics (open, render, build), [`MOD-WORKER`](#mod-worker) + [`MOD-JOBS`](#mod-jobs); page ops [`TOOL-REMOVE`](#tool-remove), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-ROTATE`](#tool-rotate); a headless CLI harness | [`TEST-OPS`](#test-ops), [`TEST-UNDO`](#test-undo), [`TEST-IMAGE`](#test-image), [`TEST-JOBS`](#test-jobs) pass; 100-page open and export within [`PERF-BUDGETS`](#perf-budgets) (`sheaf-harness bench --enforce`, run in CI) | yes |
 | <a id="ph-2"></a> | OCR | [`MOD-OCR`](#mod-ocr), [`OCR-PIPELINE`](#ocr-pipeline), cache, text layer (fallback first, overlay if feasible), [`TOOL-OCR`](#tool-ocr), [`FLOW-OCR-MANUAL`](#flow-ocr-manual) headless | [`TEST-OCR`](#test-ocr) passes on fixtures; searchable PDF verified by text extraction (whole page and by region) | yes |
 | <a id="ph-3"></a> | Tools | [`TOOL-MERGE`](#tool-merge), [`TOOL-SPLIT`](#tool-split), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-CROP`](#tool-crop), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-WATERMARK`](#tool-watermark), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PROTECT`](#tool-protect), [`TOOL-UNLOCK`](#tool-unlock) | all their TEST groups pass; [`RISK-LOPDF-ENC`](#risk-lopdf-enc) resolved or fallback chosen (resolved) | yes |
-| <a id="ph-4"></a> | Shell and UI | [`MOD-SHELL`](#mod-shell), [`MOD-UI`](#mod-ui), all of [`DOC-IPC`](#doc-ipc), [`DOC-UI`](#doc-ui), i18n ([`ADR-I18N`](#adr-i18n)), thumbnails protocol | WebDriver smoke test; [`TEST-SEC`](#test-sec) network and IPC checks pass. Status: [`MOD-APP`](#mod-app), the shell (type-checked and lint-clean for Windows from Linux), the UI and its tests are done and green on Linux; the WebDriver smoke test and the port check are written but have not yet run on Windows ([`RISK-WIN-SHELL`](#risk-win-shell)) | partly |
+| <a id="ph-4"></a> | Shell and UI | [`MOD-SHELL`](#mod-shell), [`MOD-UI`](#mod-ui), the [`DOC-IPC`](#doc-ipc) command surface, [`DOC-UI`](#doc-ui), i18n ([`ADR-I18N`](#adr-i18n)), and (added at the owner's request) the action wheel ([`ADR-WHEEL`](#adr-wheel)) with its headless quick actions | The window and the wheel run against the real worker; [`TEST-SEC`](#test-sec) command-layer and port checks pass. Status: built; green on Linux including the GUI smoke under a virtual display; the Windows-only parts (tray helper, hotkey, Explorer and desktop selection, overlay placement, the Windows smoke job) type-check and lint clean for the Windows target and have not run on Windows ([`RISK-WIN-SHELL`](#risk-win-shell)) | partly |
 | <a id="ph-5"></a> | Scan | [`MOD-SCAN`](#mod-scan) (`FakeBackend` first, then `WiaBackend`), [`FLOW-SCAN-LIVE`](#flow-scan-live) | [`TEST-SCAN`](#test-scan) passes; manual scan on the real device ([`RISK-WIA`](#risk-wia)) | fake only |
 | <a id="ph-6"></a> | Automation | [`PRESET-FORMAT`](#preset-format), [`FLOW-PRESET`](#flow-preset), [`MOD-CLI`](#mod-cli), Explorer verbs ([`FLOW-EXPLORER`](#flow-explorer)) | preset runs headless and from the UI; multi-select aggregation works ([`RISK-EXPLORER-MULTI`](#risk-explorer-multi)) | partly |
 | <a id="ph-7"></a> | Hardening | [`TOOL-REPAIR`](#tool-repair), [`TOOL-METADATA`](#tool-metadata), limits, fuzzing, signing, installer, perf tuning against [`PERF-BUDGETS`](#perf-budgets) | all [`TEST-SEC`](#test-sec) items, clean-VM install, budgets measured and recorded | partly |
@@ -777,11 +796,12 @@ Suggested spike order inside phases: the WIA spike (first half of [`PH-5`](#ph-5
 | <a id="risk-pdfium-threads"></a> | PDFium is not thread-safe. Confirmed in the `pdfium-render` 0.9.5 documentation; in practice, loading or dropping the library on one thread while another uses it crashes, so each process holds exactly one engine | [`PERF-PARALLEL`](#perf-parallel) | Worker processes ([`ADR-WORKER-PROCS`](#adr-worker-procs)) |
 | <a id="risk-forms-merge"></a> | Page import may drop AcroForm fields | [`TOOL-MERGE`](#tool-merge) | Done: detected at import, flatten offered at export, both tested |
 | <a id="risk-smartscreen"></a> | Unsigned exes trigger warnings | Adoption | Obtain a code-signing certificate ([`SEC-SIGN`](#sec-sign)) |
-| <a id="risk-webview2"></a> | Older Windows 10 may lack the WebView2 runtime; bootstrapper needs network at install time, fixed-version runtime adds size | Install experience | Decide per target machines; document |
+| <a id="risk-webview2"></a> | (No longer applies: the app has no web view, [`ADR-NATIVE-UI`](#adr-native-ui).) | none | none |
 | <a id="risk-av"></a> | Bundled third-party exes can trigger antivirus heuristics | Install blocked | Sign; keep hashes published; test with Defender |
 | <a id="risk-large-scans"></a> | A3 at 600 dpi creates very large bitmaps | Memory | [`SEC-LIMITS`](#sec-limits), process in strips or downsample for OCR |
 | <a id="risk-ocr-accuracy"></a> | Tesseract is weaker on photos, complex layouts, tables, handwriting; Uzbek models vary | User trust | [`TEST-OCR`](#test-ocr) on real samples, confidence UI ([`OCR-CONF-UI`](#ocr-conf-ui)), preprocessing, optional second engine ([`OCR-ENGINES`](#ocr-engines)) |
-| <a id="risk-win-shell"></a> | The shell was written and type-checked for the Windows target from a Linux machine; it has not been run on Windows. Unproven there: the window and `sheaf-thumb://` scheme under WebView2, the incognito profile, drag-drop paths, `sheaf open` through `tauri-driver`, discovery of the vendored engines, the hash check's startup cost | [`PH-4`](#ph-4) cannot be called finished | First Windows CI run of `shell-smoke`, then a manual pass on a clean VM; fix what it finds before [`PH-5`](#ph-5) |
+| <a id="risk-win-shell"></a> | The Windows-only parts were written and type-checked for the Windows target from a Linux machine and have not been run on Windows: the tray helper and its hotkey, reading the selection from Explorer (tabs, the desktop) and from an elevated window, placing a transparent overlay at the cursor with the right scale on mixed-DPI monitors and getting keyboard focus, the OpenGL renderer on Windows GPUs and over remote desktop, autostart in the Run key. The window and the wheel themselves are drawn and exercised under a virtual display on Linux | [`PH-4`](#ph-4) cannot be called finished; the wheel may not appear or may see no selection | First Windows CI run of `windows-smoke`, then a manual pass on a clean VM with Explorer tabs, the desktop, a second monitor and an elevated Explorer; fix what it finds before [`PH-5`](#ph-5) |
+| <a id="risk-wheel-hotkey"></a> | A global hotkey can clash with another program's, and a non-elevated helper cannot read the selection of an elevated Explorer window (Windows blocks it) | The wheel does nothing or shows no files | The hotkey is a setting and the helper says when registering it failed ([`DATA-SETTINGS`](#data-settings)); documented limit for elevated windows; "Open in Sheaf" and the tray menu still work |
 | <a id="risk-explorer-multi"></a> | Explorer launches one process per selected file for simple verbs; Windows 11 hides classic verbs under "Show more options" | [`FLOW-EXPLORER`](#flow-explorer) | Single-instance aggregation ([`MOD-CLI`](#mod-cli)); document the menu location |
 
 ## <a id="doc-trace"></a>21. Traceability matrix (tool → module → command → UI → test → phase)
@@ -840,7 +860,8 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`ADR-APP-CRATE`](#adr-app-crate) | ADR | [`MOD-APP`](#mod-app) |
 | [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs) | ADR | [`CLI-GRAMMAR`](#cli-grammar), [`DOC-BUILD`](#doc-build) |
 | [`ADR-I18N`](#adr-i18n) | ADR | [`DOC-UI`](#doc-ui), [`MOD-UI`](#mod-ui), [`PH-4`](#ph-4) |
-| [`ADR-NO-OVERWRITE`](#adr-no-overwrite) | ADR | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-TOOLS`](#doc-tools), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`SEC-PATHS`](#sec-paths) |
+| [`ADR-NATIVE-UI`](#adr-native-ui) | ADR | [`ADR-TAURI`](#adr-tauri), [`ADR-VANILLA-UI`](#adr-vanilla-ui), [`DOC-BUILD`](#doc-build), [`MOD-UI`](#mod-ui), [`RISK-WEBVIEW2`](#risk-webview2), [`SEC-NONET`](#sec-nonet), [`TOOL-HTML2PDF`](#tool-html2pdf) |
+| [`ADR-NO-OVERWRITE`](#adr-no-overwrite) | ADR | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-TOOLS`](#doc-tools), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`FLOW-WHEEL`](#flow-wheel), [`SEC-PATHS`](#sec-paths) |
 | [`ADR-NO-VLM-DEFAULT`](#adr-no-vlm-default) | ADR | [`OCR-ENGINES`](#ocr-engines) |
 | [`ADR-NOHTTP`](#adr-nohttp) | ADR | [`SEC-NONET`](#sec-nonet) |
 | [`ADR-NONDESTRUCTIVE`](#adr-nondestructive) | ADR | [`DATA-PAGE`](#data-page), [`DATA-SOURCE`](#data-source), [`DOC-TOOLS`](#doc-tools) |
@@ -849,10 +870,11 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`ADR-TAURI`](#adr-tauri) | ADR | [`RISK-WIA`](#risk-wia) |
 | [`ADR-TESS-SIDECAR`](#adr-tess-sidecar) | ADR | [`OCR-ENGINES`](#ocr-engines), [`PERF-OCR`](#perf-ocr) |
 | [`ADR-UI-REORDER`](#adr-ui-reorder) | ADR | [`DOC-UI`](#doc-ui) |
-| [`ADR-VANILLA-UI`](#adr-vanilla-ui) | ADR | [`MOD-UI`](#mod-ui) |
+| [`ADR-VANILLA-UI`](#adr-vanilla-ui) | ADR | (nothing; entry point or leaf) |
+| [`ADR-WHEEL`](#adr-wheel) | ADR | [`CLI-GRAMMAR`](#cli-grammar), [`FLOW-WHEEL`](#flow-wheel), [`GOAL-WHEEL`](#goal-wheel), [`MOD-CORE`](#mod-core), [`PH-4`](#ph-4) |
 | [`ADR-WIA`](#adr-wia) | ADR | [`MOD-SCAN`](#mod-scan) |
 | [`ADR-WORKER-PROCS`](#adr-worker-procs) | ADR | [`PERF-PARALLEL`](#perf-parallel), [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads), [`SEC-ISOLATE`](#sec-isolate) |
-| [`CLI-GRAMMAR`](#cli-grammar) | CLI | [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`DOC-BUILD`](#doc-build), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`MOD-CLI`](#mod-cli), [`MOD-SHELL`](#mod-shell), [`PRESET-FORMAT`](#preset-format) |
+| [`CLI-GRAMMAR`](#cli-grammar) | CLI | [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`DOC-BUILD`](#doc-build), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`MOD-CLI`](#mod-cli), [`PRESET-FORMAT`](#preset-format) |
 | [`CMD-APPLY`](#cmd-apply) | CMD | [`DOC-IPC`](#doc-ipc), [`DOC-TRACE`](#doc-trace), [`FLOW-EDIT`](#flow-edit), [`TOOL-CROP`](#tool-crop), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate), [`UI-PREVIEW`](#ui-preview), [`UI-SHORTCUTS`](#ui-shortcuts), [`UI-TRAY`](#ui-tray) |
 | [`CMD-EXPORT`](#cmd-export) | CMD | [`DOC-TRACE`](#doc-trace), [`FLOW-EXPORT`](#flow-export), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-PDF2IMG`](#tool-pdf2img), [`UI-EXPORTDLG`](#ui-exportdlg) |
 | [`CMD-IMPORT`](#cmd-import) | CMD | [`DOC-IPC`](#doc-ipc), [`DOC-TRACE`](#doc-trace), [`FLOW-IMPORT`](#flow-import), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`UI-TOOLBAR`](#ui-toolbar) |
@@ -868,7 +890,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`CMD-SCAN-START`](#cmd-scan-start) | CMD | [`DOC-TRACE`](#doc-trace), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`MOD-SCAN`](#mod-scan), [`TOOL-SCAN`](#tool-scan), [`UI-SCANDLG`](#ui-scandlg) |
 | [`CMD-SEARCH`](#cmd-search) | CMD | [`DOC-TRACE`](#doc-trace), [`MOD-OCR`](#mod-ocr), [`OCR-PIPELINE`](#ocr-pipeline), [`UI-SEARCH`](#ui-search) |
 | [`CMD-SETTINGS`](#cmd-settings) | CMD | [`UI-SETTINGS`](#ui-settings) |
-| [`CMD-THUMB`](#cmd-thumb) | CMD | [`DOC-IPC`](#doc-ipc), [`FLOW-IMPORT`](#flow-import), [`MOD-SHELL`](#mod-shell), [`PERF-IO`](#perf-io), [`UI-TRAY`](#ui-tray) |
+| [`CMD-THUMB`](#cmd-thumb) | CMD | [`CMD-RENDER`](#cmd-render), [`DOC-IPC`](#doc-ipc), [`FLOW-IMPORT`](#flow-import), [`PERF-IO`](#perf-io), [`UI-TRAY`](#ui-tray) |
 | [`CMD-TOOL-RUN`](#cmd-tool-run) | CMD | [`DOC-TRACE`](#doc-trace), [`FLOW-TOOL-RUN`](#flow-tool-run), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-METADATA`](#tool-metadata), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PROTECT`](#tool-protect), [`TOOL-REDACT`](#tool-redact), [`TOOL-REPAIR`](#tool-repair), [`TOOL-SIGN-VISUAL`](#tool-sign-visual), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark), [`UI-DRAWER`](#ui-drawer) |
 | [`CMD-UNDO`](#cmd-undo) | CMD | [`DOC-TRACE`](#doc-trace), [`FLOW-EDIT`](#flow-edit), [`UI-TOOLBAR`](#ui-toolbar) |
 | [`CMD-UNLOCK-PW`](#cmd-unlock-pw) | CMD | [`DOC-TRACE`](#doc-trace), [`FLOW-IMPORT`](#flow-import), [`TOOL-UNLOCK`](#tool-unlock), [`UI-DRAWER`](#ui-drawer) |
@@ -883,18 +905,18 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`DATA-OP`](#data-op) | DATA | [`DOC-TOOLS`](#doc-tools), [`FLOW-IMPORT`](#flow-import), [`MOD-CORE`](#mod-core), [`OCR-PIPELINE`](#ocr-pipeline), [`TEST-OPS`](#test-ops) |
 | [`DATA-PAGE`](#data-page) | DATA | [`ADR-NONDESTRUCTIVE`](#adr-nondestructive) |
 | [`DATA-SCANPROFILE`](#data-scanprofile) | DATA | [`SCAN-WIA`](#scan-wia) |
-| [`DATA-SETTINGS`](#data-settings) | DATA | [`PERF-PARALLEL`](#perf-parallel) |
+| [`DATA-SETTINGS`](#data-settings) | DATA | [`FLOW-WHEEL`](#flow-wheel), [`MOD-SHELL`](#mod-shell), [`PERF-PARALLEL`](#perf-parallel), [`RISK-WHEEL-HOTKEY`](#risk-wheel-hotkey) |
 | [`DATA-SOURCE`](#data-source) | DATA | [`MOD-CORE`](#mod-core) |
 | [`DATA-SPLITRULE`](#data-splitrule) | DATA | [`DOC-TOOLS`](#doc-tools), [`TEST-SPLIT`](#test-split) |
 | [`DATA-WORKERPROTO`](#data-workerproto) | DATA | [`DOC-SHAPE`](#doc-shape), [`MOD-WORKER`](#mod-worker) |
 | [`DATA-WORKSPACE`](#data-workspace) | DATA | [`MOD-CORE`](#mod-core) |
 | [`DOC-ADR`](#doc-adr) | DOC | (nothing; entry point or leaf) |
-| [`DOC-AGENT-RULES`](#doc-agent-rules) | DOC | [`DOC-MODULES`](#doc-modules), [`DOC-READ`](#doc-read), [`DOC-TRACE`](#doc-trace), [`GOAL-AGENT`](#goal-agent) |
+| [`DOC-AGENT-RULES`](#doc-agent-rules) | DOC | [`DOC-MODULES`](#doc-modules), [`DOC-READ`](#doc-read), [`DOC-TRACE`](#doc-trace), [`GOAL-AGENT`](#goal-agent), [`MOD-SHELL`](#mod-shell) |
 | [`DOC-BUILD`](#doc-build) | DOC | [`DOC-LAYOUT`](#doc-layout) |
 | [`DOC-DATA`](#doc-data) | DOC | (nothing; entry point or leaf) |
 | [`DOC-FLOWS`](#doc-flows) | DOC | (nothing; entry point or leaf) |
 | [`DOC-GOALS`](#doc-goals) | DOC | (nothing; entry point or leaf) |
-| [`DOC-IPC`](#doc-ipc) | DOC | [`ADR-APP-CRATE`](#adr-app-crate), [`DOC-DATA`](#doc-data), [`DOC-LAYOUT`](#doc-layout), [`MOD-APP`](#mod-app), [`MOD-SHELL`](#mod-shell), [`MOD-UI`](#mod-ui), [`PH-4`](#ph-4), [`SEC-IPC`](#sec-ipc) |
+| [`DOC-IPC`](#doc-ipc) | DOC | [`ADR-APP-CRATE`](#adr-app-crate), [`DOC-DATA`](#doc-data), [`DOC-LAYOUT`](#doc-layout), [`MOD-APP`](#mod-app), [`PH-4`](#ph-4) |
 | [`DOC-LAYOUT`](#doc-layout) | DOC | [`DOC-BUILD`](#doc-build) |
 | [`DOC-MODULES`](#doc-modules) | DOC | [`DOC-AGENT-RULES`](#doc-agent-rules) |
 | [`DOC-NONGOALS`](#doc-nongoals) | DOC | [`GOAL-COMPACT`](#goal-compact) |
@@ -917,17 +939,18 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`EVT-PAGE-READY`](#evt-page-ready) | EVT | [`FLOW-SCAN-LIVE`](#flow-scan-live), [`OCR-PIPELINE`](#ocr-pipeline) |
 | [`EVT-PAGES`](#evt-pages) | EVT | [`FLOW-EDIT`](#flow-edit), [`FLOW-IMPORT`](#flow-import) |
 | [`EVT-SCAN-PAGE`](#evt-scan-page) | EVT | [`FLOW-SCAN-LIVE`](#flow-scan-live) |
-| [`FLOW-EDIT`](#flow-edit) | FLOW | [`DOC-IPC`](#doc-ipc) |
-| [`FLOW-ERROR`](#flow-error) | FLOW | [`DOC-AGENT-RULES`](#doc-agent-rules) |
+| [`FLOW-EDIT`](#flow-edit) | FLOW | (nothing; entry point or leaf) |
+| [`FLOW-ERROR`](#flow-error) | FLOW | [`DOC-AGENT-RULES`](#doc-agent-rules), [`FLOW-WHEEL`](#flow-wheel) |
 | [`FLOW-EXPLORER`](#flow-explorer) | FLOW | [`CLI-GRAMMAR`](#cli-grammar), [`MOD-CLI`](#mod-cli), [`PH-6`](#ph-6), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi) |
-| [`FLOW-EXPORT`](#flow-export) | FLOW | [`DOC-IPC`](#doc-ipc) |
-| [`FLOW-IMPORT`](#flow-import) | FLOW | [`DOC-IPC`](#doc-ipc), [`FLOW-EXPLORER`](#flow-explorer) |
+| [`FLOW-EXPORT`](#flow-export) | FLOW | (nothing; entry point or leaf) |
+| [`FLOW-IMPORT`](#flow-import) | FLOW | [`FLOW-EXPLORER`](#flow-explorer) |
 | [`FLOW-LIFECYCLE`](#flow-lifecycle) | FLOW | [`MOD-APP`](#mod-app), [`OCR-CACHE`](#ocr-cache), [`SEC-SUPPLY`](#sec-supply) |
 | [`FLOW-OCR-AUTO`](#flow-ocr-auto) | FLOW | [`FLOW-IMPORT`](#flow-import), [`FLOW-OCR-MANUAL`](#flow-ocr-manual) |
 | [`FLOW-OCR-MANUAL`](#flow-ocr-manual) | FLOW | [`DOC-TRACE`](#doc-trace), [`GOAL-ONCMD-OCR`](#goal-oncmd-ocr), [`OCR-PIPELINE`](#ocr-pipeline), [`PH-2`](#ph-2) |
-| [`FLOW-PRESET`](#flow-preset) | FLOW | [`FLOW-EXPLORER`](#flow-explorer), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`PH-6`](#ph-6), [`PRESET-FORMAT`](#preset-format) |
+| [`FLOW-PRESET`](#flow-preset) | FLOW | [`FLOW-SCAN-LIVE`](#flow-scan-live), [`PH-6`](#ph-6), [`PRESET-FORMAT`](#preset-format) |
 | [`FLOW-SCAN-LIVE`](#flow-scan-live) | FLOW | [`DATA-PAGE`](#data-page), [`DATA-SOURCE`](#data-source), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`GOAL-LIVEOCR`](#goal-liveocr), [`PH-5`](#ph-5), [`SCAN-WIA`](#scan-wia) |
-| [`FLOW-TOOL-RUN`](#flow-tool-run) | FLOW | [`DOC-IPC`](#doc-ipc), [`FLOW-EXPLORER`](#flow-explorer) |
+| [`FLOW-TOOL-RUN`](#flow-tool-run) | FLOW | (nothing; entry point or leaf) |
+| [`FLOW-WHEEL`](#flow-wheel) | FLOW | [`GOAL-WHEEL`](#goal-wheel), [`MOD-APP`](#mod-app), [`UI-WHEEL`](#ui-wheel) |
 | [`GOAL-AGENT`](#goal-agent) | GOAL | [`DOC-TRACE`](#doc-trace) |
 | [`GOAL-COMPACT`](#goal-compact) | GOAL | [`DOC-TRACE`](#doc-trace) |
 | [`GOAL-FAST`](#goal-fast) | GOAL | [`DOC-TRACE`](#doc-trace) |
@@ -935,17 +958,18 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`GOAL-LIVEOCR`](#goal-liveocr) | GOAL | [`DOC-TRACE`](#doc-trace) |
 | [`GOAL-ONCMD-OCR`](#goal-oncmd-ocr) | GOAL | [`DOC-TRACE`](#doc-trace) |
 | [`GOAL-SECURE`](#goal-secure) | GOAL | [`DOC-TRACE`](#doc-trace), [`NG-CLOUD`](#ng-cloud) |
-| [`MOD-APP`](#mod-app) | MOD | [`ADR-APP-CRATE`](#adr-app-crate), [`DOC-LAYOUT`](#doc-layout), [`MOD-SHELL`](#mod-shell), [`PH-4`](#ph-4), [`TEST-MATRIX`](#test-matrix) |
+| [`GOAL-WHEEL`](#goal-wheel) | GOAL | (nothing; entry point or leaf) |
+| [`MOD-APP`](#mod-app) | MOD | [`ADR-APP-CRATE`](#adr-app-crate), [`ADR-NATIVE-UI`](#adr-native-ui), [`ADR-WHEEL`](#adr-wheel), [`DOC-IPC`](#doc-ipc), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`FLOW-WHEEL`](#flow-wheel), [`MOD-SHELL`](#mod-shell), [`MOD-UI`](#mod-ui), [`PROC-WHEEL`](#proc-wheel), [`TEST-MATRIX`](#test-matrix), [`UI-WHEEL`](#ui-wheel) |
 | [`MOD-CLI`](#mod-cli) | MOD | [`CLI-GRAMMAR`](#cli-grammar), [`DOC-LAYOUT`](#doc-layout), [`DOC-TRACE`](#doc-trace), [`FLOW-EXPLORER`](#flow-explorer), [`MOD-SHELL`](#mod-shell), [`PH-6`](#ph-6), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi) |
-| [`MOD-CORE`](#mod-core) | MOD | (preamble), [`CMD-APPLY`](#cmd-apply), [`CMD-IMPORT`](#cmd-import), [`CMD-PAGES`](#cmd-pages), [`CMD-UNDO`](#cmd-undo), [`DOC-DATA`](#doc-data), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-EDIT`](#flow-edit), [`FLOW-IMPORT`](#flow-import), [`MOD-APP`](#mod-app), [`MOD-IMAGE`](#mod-image), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-SCAN`](#mod-scan), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`MOD-WORKER`](#mod-worker), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-CROP`](#tool-crop), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate) |
+| [`MOD-CORE`](#mod-core) | MOD | (preamble), [`CMD-APPLY`](#cmd-apply), [`CMD-IMPORT`](#cmd-import), [`CMD-PAGES`](#cmd-pages), [`CMD-UNDO`](#cmd-undo), [`DOC-DATA`](#doc-data), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-EDIT`](#flow-edit), [`FLOW-IMPORT`](#flow-import), [`MOD-APP`](#mod-app), [`MOD-CLI`](#mod-cli), [`MOD-IMAGE`](#mod-image), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-SCAN`](#mod-scan), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`MOD-WORKER`](#mod-worker), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-CROP`](#tool-crop), [`TOOL-ORGANIZE`](#tool-organize), [`TOOL-REMOVE`](#tool-remove), [`TOOL-ROTATE`](#tool-rotate) |
 | [`MOD-IMAGE`](#mod-image) | MOD | [`DATA-FILTER`](#data-filter), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-SCAN`](#mod-scan), [`MOD-WORKER`](#mod-worker), [`OCR-PIPELINE`](#ocr-pipeline), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-SPLIT`](#tool-split) |
-| [`MOD-JOBS`](#mod-jobs) | MOD | [`CMD-EXPORT`](#cmd-export), [`CMD-IMPORT`](#cmd-import), [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-OCR-RUN`](#cmd-ocr-run), [`CMD-PRESETS`](#cmd-presets), [`CMD-RENDER`](#cmd-render), [`CMD-SCAN-START`](#cmd-scan-start), [`CMD-THUMB`](#cmd-thumb), [`CMD-TOOL-RUN`](#cmd-tool-run), [`CMD-UNLOCK-PW`](#cmd-unlock-pw), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-IMPORT`](#flow-import), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`OCR-TESS-CLI`](#ocr-tess-cli), [`PERF-PARALLEL`](#perf-parallel), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix) |
-| [`MOD-OCR`](#mod-ocr) | MOD | [`CMD-OCR-RESULT`](#cmd-ocr-result), [`CMD-SEARCH`](#cmd-search), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store), [`MOD-WORKER`](#mod-worker), [`PH-2`](#ph-2), [`TEST-MATRIX`](#test-matrix), [`TOOL-OCR`](#tool-ocr), [`TOOL-SPLIT`](#tool-split) |
+| [`MOD-JOBS`](#mod-jobs) | MOD | [`CMD-EXPORT`](#cmd-export), [`CMD-IMPORT`](#cmd-import), [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-OCR-RUN`](#cmd-ocr-run), [`CMD-PRESETS`](#cmd-presets), [`CMD-RENDER`](#cmd-render), [`CMD-SCAN-START`](#cmd-scan-start), [`CMD-THUMB`](#cmd-thumb), [`CMD-TOOL-RUN`](#cmd-tool-run), [`CMD-UNLOCK-PW`](#cmd-unlock-pw), [`DOC-LAYOUT`](#doc-layout), [`DOC-TRACE`](#doc-trace), [`FLOW-IMPORT`](#flow-import), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`OCR-TESS-CLI`](#ocr-tess-cli), [`PERF-PARALLEL`](#perf-parallel), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix) |
+| [`MOD-OCR`](#mod-ocr) | MOD | [`CMD-OCR-RESULT`](#cmd-ocr-result), [`CMD-SEARCH`](#cmd-search), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-STORE`](#mod-store), [`MOD-WORKER`](#mod-worker), [`PH-2`](#ph-2), [`TEST-MATRIX`](#test-matrix), [`TOOL-OCR`](#tool-ocr), [`TOOL-SPLIT`](#tool-split) |
 | [`MOD-PDF`](#mod-pdf) | MOD | [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-CORE`](#mod-core), [`MOD-IMAGE`](#mod-image), [`MOD-WORKER`](#mod-worker), [`OCR-PIPELINE`](#ocr-pipeline), [`OCR-TEXTLAYER`](#ocr-textlayer), [`PH-1`](#ph-1), [`TEST-MATRIX`](#test-matrix), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-METADATA`](#tool-metadata), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-PROTECT`](#tool-protect), [`TOOL-REDACT`](#tool-redact), [`TOOL-REPAIR`](#tool-repair), [`TOOL-ROTATE`](#tool-rotate), [`TOOL-SIGN-VISUAL`](#tool-sign-visual), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark) |
-| [`MOD-SCAN`](#mod-scan) | MOD | [`CMD-SCAN-CANCEL`](#cmd-scan-cancel), [`CMD-SCAN-DEVICES`](#cmd-scan-devices), [`CMD-SCAN-START`](#cmd-scan-start), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`MOD-SHELL`](#mod-shell), [`PH-5`](#ph-5), [`SCAN-BACKEND`](#scan-backend), [`SCAN-THREADING`](#scan-threading), [`TEST-MATRIX`](#test-matrix), [`TOOL-SCAN`](#tool-scan) |
-| [`MOD-SHELL`](#mod-shell) | MOD | (preamble), [`ADR-APP-CRATE`](#adr-app-crate), [`CMD-REVEAL`](#cmd-reveal), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-SCAN`](#mod-scan), [`MOD-STORE`](#mod-store), [`PH-4`](#ph-4), [`TEST-MATRIX`](#test-matrix) |
+| [`MOD-SCAN`](#mod-scan) | MOD | [`CMD-SCAN-CANCEL`](#cmd-scan-cancel), [`CMD-SCAN-DEVICES`](#cmd-scan-devices), [`CMD-SCAN-START`](#cmd-scan-start), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`DOC-TRACE`](#doc-trace), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`PH-5`](#ph-5), [`SCAN-BACKEND`](#scan-backend), [`SCAN-THREADING`](#scan-threading), [`TEST-MATRIX`](#test-matrix), [`TOOL-SCAN`](#tool-scan) |
+| [`MOD-SHELL`](#mod-shell) | MOD | (preamble), [`CMD-REVEAL`](#cmd-reveal), [`DOC-LAYOUT`](#doc-layout), [`FLOW-WHEEL`](#flow-wheel), [`MOD-APP`](#mod-app), [`MOD-CORE`](#mod-core), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-SCAN`](#mod-scan), [`MOD-STORE`](#mod-store), [`PH-4`](#ph-4), [`TEST-MATRIX`](#test-matrix) |
 | [`MOD-STORE`](#mod-store) | MOD | [`CMD-PRESETS`](#cmd-presets), [`CMD-SETTINGS`](#cmd-settings), [`DATA-PAGE`](#data-page), [`DATA-SOURCE`](#data-source), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`FLOW-IMPORT`](#flow-import), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-APP`](#mod-app), [`MOD-JOBS`](#mod-jobs), [`MOD-OCR`](#mod-ocr), [`MOD-SHELL`](#mod-shell), [`MOD-WORKER`](#mod-worker), [`PERF-LAZY`](#perf-lazy), [`PH-1`](#ph-1), [`PRESET-FORMAT`](#preset-format), [`TEST-MATRIX`](#test-matrix) |
-| [`MOD-UI`](#mod-ui) | MOD | [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`MOD-SHELL`](#mod-shell), [`PH-4`](#ph-4), [`PROC-UI`](#proc-ui), [`TEST-MATRIX`](#test-matrix) |
+| [`MOD-UI`](#mod-ui) | MOD | [`DOC-IPC`](#doc-ipc), [`DOC-LAYOUT`](#doc-layout), [`DOC-SHAPE`](#doc-shape), [`MOD-SHELL`](#mod-shell), [`PH-4`](#ph-4), [`PROC-MAIN`](#proc-main), [`PROC-UI`](#proc-ui), [`TEST-MATRIX`](#test-matrix) |
 | [`MOD-WORKER`](#mod-worker) | MOD | [`DATA-WORKERPROTO`](#data-workerproto), [`DOC-LAYOUT`](#doc-layout), [`DOC-TRACE`](#doc-trace), [`MOD-IMAGE`](#mod-image), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`MOD-STORE`](#mod-store), [`PH-1`](#ph-1), [`PROC-WORKER`](#proc-worker), [`TEST-MATRIX`](#test-matrix), [`TOOL-OCR`](#tool-ocr) |
 | [`NG-AI`](#ng-ai) | NG | (nothing; entry point or leaf) |
 | [`NG-CLOUD`](#ng-cloud) | NG | [`DOC-AGENT-RULES`](#doc-agent-rules) |
@@ -960,7 +984,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`OCR-PIPELINE`](#ocr-pipeline) | OCR | [`FLOW-OCR-AUTO`](#flow-ocr-auto), [`MOD-PDF`](#mod-pdf), [`PH-2`](#ph-2) |
 | [`OCR-TESS-CLI`](#ocr-tess-cli) | OCR | [`DATA-OCRRESULT`](#data-ocrresult), [`DOC-AGENT-RULES`](#doc-agent-rules), [`MOD-OCR`](#mod-ocr), [`OCR-PIPELINE`](#ocr-pipeline) |
 | [`OCR-TEXTLAYER`](#ocr-textlayer) | OCR | [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`MOD-OCR`](#mod-ocr), [`MOD-PDF`](#mod-pdf), [`RISK-OVERLAY-FONT`](#risk-overlay-font) |
-| [`PERF-BUDGETS`](#perf-budgets) | PERF | [`ADR-TESS-SIDECAR`](#adr-tess-sidecar), [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-FAST`](#goal-fast), [`OCR-LANGS`](#ocr-langs), [`OCR-TESS-CLI`](#ocr-tess-cli), [`PH-1`](#ph-1), [`PH-7`](#ph-7) |
+| [`PERF-BUDGETS`](#perf-budgets) | PERF | [`ADR-NATIVE-UI`](#adr-native-ui), [`ADR-TESS-SIDECAR`](#adr-tess-sidecar), [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-FAST`](#goal-fast), [`MOD-UI`](#mod-ui), [`OCR-LANGS`](#ocr-langs), [`OCR-TESS-CLI`](#ocr-tess-cli), [`PH-1`](#ph-1), [`PH-7`](#ph-7) |
 | [`PERF-IO`](#perf-io) | PERF | [`PERF-BUDGETS`](#perf-budgets) |
 | [`PERF-LAZY`](#perf-lazy) | PERF | [`PERF-BUDGETS`](#perf-budgets) |
 | [`PERF-LOSSLESS`](#perf-lossless) | PERF | [`DOC-TOOLS`](#doc-tools), [`MOD-PDF`](#mod-pdf), [`PERF-BUDGETS`](#perf-budgets) |
@@ -972,13 +996,15 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`PH-3`](#ph-3) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-WORKER`](#mod-worker), [`TOOL-COMPRESS`](#tool-compress), [`TOOL-CROP`](#tool-crop), [`TOOL-EXTRACT`](#tool-extract), [`TOOL-IMG2PDF`](#tool-img2pdf), [`TOOL-MERGE`](#tool-merge), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-PDF2IMG`](#tool-pdf2img), [`TOOL-PROTECT`](#tool-protect), [`TOOL-SPLIT`](#tool-split), [`TOOL-UNLOCK`](#tool-unlock), [`TOOL-WATERMARK`](#tool-watermark) |
 | [`PH-4`](#ph-4) | PH | [`DOC-UI`](#doc-ui), [`PH-PLAN`](#ph-plan), [`RISK-WIN-SHELL`](#risk-win-shell) |
 | [`PH-5`](#ph-5) | PH | [`DOC-IPC`](#doc-ipc), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`PH-PLAN`](#ph-plan), [`RISK-WIA`](#risk-wia), [`RISK-WIN-SHELL`](#risk-win-shell), [`TOOL-SCAN`](#tool-scan) |
-| [`PH-6`](#ph-6) | PH | [`DOC-IPC`](#doc-ipc), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`MOD-SHELL`](#mod-shell) |
-| [`PH-7`](#ph-7) | PH | [`DOC-TRACE`](#doc-trace), [`MOD-JOBS`](#mod-jobs), [`MOD-SHELL`](#mod-shell), [`TOOL-METADATA`](#tool-metadata), [`TOOL-REPAIR`](#tool-repair) |
+| [`PH-6`](#ph-6) | PH | [`DOC-IPC`](#doc-ipc), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`MOD-CLI`](#mod-cli), [`MOD-SHELL`](#mod-shell) |
+| [`PH-7`](#ph-7) | PH | [`DOC-BUILD`](#doc-build), [`DOC-TRACE`](#doc-trace), [`MOD-JOBS`](#mod-jobs), [`MOD-SHELL`](#mod-shell), [`TOOL-METADATA`](#tool-metadata), [`TOOL-REPAIR`](#tool-repair) |
 | [`PH-PLAN`](#ph-plan) | PH | [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-AGENT`](#goal-agent) |
 | [`PRESET-FORMAT`](#preset-format) | PRESET | [`DATA-SPLITRULE`](#data-splitrule), [`PH-6`](#ph-6) |
 | [`PROC-MAIN`](#proc-main) | PROC | [`DOC-SHAPE`](#doc-shape) |
 | [`PROC-TESS`](#proc-tess) | PROC | [`DOC-SHAPE`](#doc-shape) |
-| [`PROC-UI`](#proc-ui) | PROC | [`DOC-SHAPE`](#doc-shape) |
+| [`PROC-TRAY`](#proc-tray) | PROC | [`DOC-SHAPE`](#doc-shape) |
+| [`PROC-UI`](#proc-ui) | PROC | (nothing; entry point or leaf) |
+| [`PROC-WHEEL`](#proc-wheel) | PROC | [`DOC-SHAPE`](#doc-shape) |
 | [`PROC-WORKER`](#proc-worker) | PROC | [`ADR-WORKER-PROCS`](#adr-worker-procs), [`DOC-SHAPE`](#doc-shape), [`FLOW-IMPORT`](#flow-import), [`MOD-JOBS`](#mod-jobs), [`MOD-PDF`](#mod-pdf), [`OCR-PIPELINE`](#ocr-pipeline), [`SEC-ISOLATE`](#sec-isolate) |
 | [`RISK-AV`](#risk-av) | RISK | [`SEC-SIGN`](#sec-sign) |
 | [`RISK-COMPRESS`](#risk-compress) | RISK | [`DOC-TOOLS`](#doc-tools) |
@@ -991,19 +1017,20 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads) | RISK | [`MOD-PDF`](#mod-pdf), [`PERF-PARALLEL`](#perf-parallel) |
 | [`RISK-SMARTSCREEN`](#risk-smartscreen) | RISK | [`SEC-SIGN`](#sec-sign) |
 | [`RISK-WEBVIEW2`](#risk-webview2) | RISK | [`DOC-BUILD`](#doc-build) |
+| [`RISK-WHEEL-HOTKEY`](#risk-wheel-hotkey) | RISK | (nothing; entry point or leaf) |
 | [`RISK-WIA`](#risk-wia) | RISK | [`ADR-TAURI`](#adr-tauri), [`ADR-WIA`](#adr-wia), [`MOD-SCAN`](#mod-scan), [`PH-5`](#ph-5), [`SCAN-FAILURES`](#scan-failures), [`TEST-MATRIX`](#test-matrix) |
-| [`RISK-WIN-SHELL`](#risk-win-shell) | RISK | [`PH-4`](#ph-4) |
+| [`RISK-WIN-SHELL`](#risk-win-shell) | RISK | [`PH-4`](#ph-4), [`TEST-MATRIX`](#test-matrix), [`TEST-WHEEL`](#test-wheel) |
 | [`SCAN-BACKEND`](#scan-backend) | SCAN | [`MOD-SCAN`](#mod-scan) |
 | [`SCAN-FAILURES`](#scan-failures) | SCAN | [`MOD-SCAN`](#mod-scan) |
 | [`SCAN-THREADING`](#scan-threading) | SCAN | [`MOD-SCAN`](#mod-scan) |
 | [`SCAN-WIA`](#scan-wia) | SCAN | [`MOD-SCAN`](#mod-scan) |
 | [`SEC-HONESTY`](#sec-honesty) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-UI`](#doc-ui) |
-| [`SEC-IPC`](#sec-ipc) | SEC | [`ADR-TAURI`](#adr-tauri), [`DOC-IPC`](#doc-ipc), [`MOD-APP`](#mod-app), [`MOD-SHELL`](#mod-shell), [`PROC-UI`](#proc-ui) |
+| [`SEC-IPC`](#sec-ipc) | SEC | [`DOC-IPC`](#doc-ipc), [`MOD-APP`](#mod-app), [`PROC-UI`](#proc-ui) |
 | [`SEC-ISOLATE`](#sec-isolate) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-SECURE`](#goal-secure) |
 | [`SEC-LIMITS`](#sec-limits) | SEC | [`FLOW-IMPORT`](#flow-import), [`RISK-LARGE-SCANS`](#risk-large-scans) |
 | [`SEC-LOG`](#sec-log) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules) |
-| [`SEC-NONET`](#sec-nonet) | SEC | [`ADR-OFFLINE-ASSETS`](#adr-offline-assets), [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-SECURE`](#goal-secure), [`MOD-SHELL`](#mod-shell), [`SCAN-BACKEND`](#scan-backend) |
-| [`SEC-PATHS`](#sec-paths) | SEC | [`CLI-GRAMMAR`](#cli-grammar), [`DATA-WORKERPROTO`](#data-workerproto), [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-IPC`](#doc-ipc), [`FLOW-IMPORT`](#flow-import), [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store) |
+| [`SEC-NONET`](#sec-nonet) | SEC | [`ADR-OFFLINE-ASSETS`](#adr-offline-assets), [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-BUILD`](#doc-build), [`GOAL-SECURE`](#goal-secure), [`SCAN-BACKEND`](#scan-backend) |
+| [`SEC-PATHS`](#sec-paths) | SEC | [`CLI-GRAMMAR`](#cli-grammar), [`DATA-WORKERPROTO`](#data-workerproto), [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-IPC`](#doc-ipc), [`FLOW-IMPORT`](#flow-import), [`MOD-STORE`](#mod-store), [`PROC-TRAY`](#proc-tray) |
 | [`SEC-SECRETS`](#sec-secrets) | SEC | [`DOC-TOOLS`](#doc-tools), [`MOD-APP`](#mod-app), [`PRESET-FORMAT`](#preset-format) |
 | [`SEC-SIGN`](#sec-sign) | SEC | [`DOC-BUILD`](#doc-build), [`RISK-SMARTSCREEN`](#risk-smartscreen) |
 | [`SEC-SUPPLY`](#sec-supply) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-BUILD`](#doc-build), [`EVT-ENGINES`](#evt-engines), [`FLOW-LIFECYCLE`](#flow-lifecycle), [`MOD-APP`](#mod-app) |
@@ -1011,7 +1038,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`SEC-TB2`](#sec-tb2) | SEC | [`SEC-ISOLATE`](#sec-isolate), [`SEC-LIMITS`](#sec-limits) |
 | [`SEC-TB3`](#sec-tb3) | SEC | [`SEC-ISOLATE`](#sec-isolate) |
 | [`SEC-TB4`](#sec-tb4) | SEC | [`SEC-PATHS`](#sec-paths), [`SEC-TEMP`](#sec-temp) |
-| [`SEC-TEMP`](#sec-temp) | SEC | [`MOD-SHELL`](#mod-shell), [`MOD-STORE`](#mod-store) |
+| [`SEC-TEMP`](#sec-temp) | SEC | [`MOD-STORE`](#mod-store) |
 | [`TEST-COMPRESS`](#test-compress) | TEST | [`DOC-TRACE`](#doc-trace), [`TOOL-COMPRESS`](#tool-compress) |
 | [`TEST-CROP`](#test-crop) | TEST | [`DOC-TRACE`](#doc-trace), [`TOOL-CROP`](#tool-crop) |
 | [`TEST-FIXTURES`](#test-fixtures) | TEST | [`DOC-LAYOUT`](#doc-layout), [`DOC-PERF`](#doc-perf) |
@@ -1031,8 +1058,9 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`TEST-SEC`](#test-sec) | TEST | [`GOAL-SECURE`](#goal-secure), [`MOD-APP`](#mod-app), [`MOD-STORE`](#mod-store), [`PH-4`](#ph-4), [`PH-7`](#ph-7), [`SEC-IPC`](#sec-ipc), [`SEC-ISOLATE`](#sec-isolate), [`SEC-LIMITS`](#sec-limits), [`SEC-NONET`](#sec-nonet), [`SEC-PATHS`](#sec-paths), [`SEC-TEMP`](#sec-temp) |
 | [`TEST-SPLIT`](#test-split) | TEST | [`DOC-TRACE`](#doc-trace), [`TOOL-SPLIT`](#tool-split) |
 | [`TEST-STAMP`](#test-stamp) | TEST | [`DOC-TRACE`](#doc-trace), [`TOOL-PAGENUM`](#tool-pagenum), [`TOOL-WATERMARK`](#tool-watermark) |
-| [`TEST-UI`](#test-ui) | TEST | [`DOC-IPC`](#doc-ipc), [`TEST-MATRIX`](#test-matrix) |
+| [`TEST-UI`](#test-ui) | TEST | [`TEST-MATRIX`](#test-matrix) |
 | [`TEST-UNDO`](#test-undo) | TEST | [`DOC-TRACE`](#doc-trace), [`MOD-CORE`](#mod-core), [`PH-1`](#ph-1) |
+| [`TEST-WHEEL`](#test-wheel) | TEST | [`GOAL-WHEEL`](#goal-wheel) |
 | [`TOOL-COMPARE`](#tool-compare) | TOOL | [`DOC-TOOLS`](#doc-tools) |
 | [`TOOL-COMPRESS`](#tool-compress) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`FLOW-EXPORT`](#flow-export), [`MOD-PDF`](#mod-pdf), [`PH-3`](#ph-3), [`RISK-COMPRESS`](#risk-compress) |
 | [`TOOL-CROP`](#tool-crop) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-PDF`](#mod-pdf), [`PH-3`](#ph-3), [`SEC-HONESTY`](#sec-honesty) |
@@ -1067,6 +1095,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`UI-SHORTCUTS`](#ui-shortcuts) | UI | [`DOC-UI`](#doc-ui) |
 | [`UI-TOOLBAR`](#ui-toolbar) | UI | [`CMD-IMPORT`](#cmd-import), [`CMD-OCR-RUN`](#cmd-ocr-run), [`CMD-UNDO`](#cmd-undo), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`FLOW-IMPORT`](#flow-import) |
 | [`UI-TRAY`](#ui-tray) | UI | [`CMD-APPLY`](#cmd-apply), [`CMD-IMPORT`](#cmd-import), [`CMD-OCR-RUN`](#cmd-ocr-run), [`CMD-PAGES`](#cmd-pages), [`CMD-THUMB`](#cmd-thumb), [`DATA-WORKSPACE`](#data-workspace), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`PERF-LAZY`](#perf-lazy) |
+| [`UI-WHEEL`](#ui-wheel) | UI | (nothing; entry point or leaf) |
 <!-- END GENERATED appendix-a -->
 
 ## <a id="appendix-b"></a>Appendix B. Open VERIFY items (generated)
@@ -1076,10 +1105,8 @@ Each is a claim not yet proven. Resolve by testing, edit the text, remove the ma
 <!-- BEGIN GENERATED appendix-b -->
 | Where | Item |
 |---|---|
-| [`TOOL-HTML2PDF`](#tool-html2pdf) | VERIFY availability through Tauri |
 | [`OCR-TESS-CLI`](#ocr-tess-cli) | VERIFY best setting by benchmark, PERF-BUDGETS |
 | [`SCAN-WIA`](#scan-wia) | document handling: feeder/flatbed/duplex, x/y resolution, data type, page size; exact property IDs from `wiadef.h`, VERIFY on target driver |
-| [`SEC-NONET`](#sec-nonet) | VERIFY the hook is reachable through Tauri/wry; the CSP and the navigation lock are the baseline either way |
 | [`SEC-PATHS`](#sec-paths) | VERIFY policy with the user |
 | [`DOC-BUILD`](#doc-build) | VERIFY each |
 <!-- END GENERATED appendix-b -->

@@ -5,11 +5,14 @@ Local, offline PDF and scan toolkit for Windows (Rust + Tauri 2). No network at 
 The design and the phase-by-phase build plan are in [ARCHITECTURE.md](ARCHITECTURE.md);
 start with its reading guide and the rules for whoever writes code.
 
-**Status:** PH-4 (shell and UI) is built on top of the core, OCR and tools: a Tauri 2 window for Windows
-with a page tray, preview, tools drawer, OCR panel, export dialog, settings and job bar, in English, Uzbek
-and Russian. It has been type-checked for Windows from Linux and its UI tested in Chromium; it has **not
-yet been run on Windows** (see `RISK-WIN-SHELL` in the spec). Scanning (PH-5) and presets (PH-6) are not
-there yet. The headless harness still works.
+**Status:** PH-4 (shell and UI) is built on top of the core, OCR and tools, as a **native Rust app** (egui,
+no web view): a window with a page tray, preview, tools drawer, OCR panel, export dialog, settings and job
+bar, in English, Uzbek and Russian; plus the **action wheel**: a tray helper with a global hotkey that, over
+Explorer or the desktop, pops a radial menu at the cursor and merges, compresses, OCRs, splits, converts or
+rotates the selected files with no window. The same actions run from the command line (`sheaf run ...`).
+The window and the wheel are exercised on Linux under a virtual display; the Windows-only parts (tray helper,
+hotkey, Explorer and desktop selection, overlay placement) type-check for Windows but **have not yet run on
+Windows** (see `RISK-WIN-SHELL` in the spec). Scanning (PH-5) and presets (PH-6) are not there yet.
 
 ## Working on it
 
@@ -18,19 +21,19 @@ bash tools/fetch-vendor                 # download and verify pinned third-party
 ```
 
 ```bash
-cargo build --workspace --exclude sheaf-shell   # the tests drive the real worker binary
+cargo build --workspace                 # the tests drive the real worker binary
 ```
 
 ```bash
-cargo test --workspace --exclude sheaf-shell    # needs the vendored PDFium and a `tesseract` on PATH (Linux)
+cargo test --workspace                  # needs the vendored PDFium and a `tesseract` on PATH (Linux)
 ```
 
 ```bash
-cargo check --target x86_64-pc-windows-msvc -p sheaf-shell   # type-check the Windows shell from Linux
+cargo clippy --target x86_64-pc-windows-msvc -p sheaf-shell -p sheaf-ui -- -D warnings   # the Windows-only code, from Linux
 ```
 
 ```bash
-cd tools/ui-test && npm ci && node --test "unit/*.test.mjs" && node e2e/run.mjs   # UI logic and browser tests
+bash tools/smoke/gui-linux.sh           # window + wheel + headless action under Xvfb (needs xvfb, imagemagick, mesa)
 ```
 
 ```bash
@@ -46,11 +49,15 @@ cargo run -p link-check -- --write      # regenerate the appendices after editin
 ```powershell
 bash tools/fetch-vendor
 cargo build --release -p sheaf-shell -p sheaf-worker
-.\target\release\sheaf.exe open some.pdf     # `open` is optional; files can also be dropped on the window
+.\target\release\sheaf.exe open some.pdf       # the window (files can also be dropped on it)
+.\target\release\sheaf.exe tray                # the helper: tray icon + Ctrl+Alt+Space action wheel
+.\target\release\sheaf.exe run compress a.pdf b.pdf    # headless; prints the outputs, exit 0 / 2 / 1
 ```
 
+Select files in Explorer or on the desktop, press the hotkey, click an action. Actions: `merge compress ocr
+split pdf2img img2pdf rotate`. Results land beside the first input under a new name; nothing is overwritten.
 The app finds `vendor/` next to the executable or in the checkout above it (or `SHEAF_VENDOR_DIR`).
-Settings live in `%APPDATA%\Sheaf`, the session in `%LOCALAPPDATA%\Sheaf` and is deleted on exit.
+Settings live in `%APPDATA%\Sheaf` (the hotkey too), the session in `%LOCALAPPDATA%\Sheaf` and is deleted on exit.
 
 ## Trying it
 

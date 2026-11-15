@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/*", "tools/*", "src-tauri"]
-# tools/ui-test holds JavaScript tests, not a crate.
-exclude = ["tools/ui-test"]
+members = ["crates/*", "tools/*"]
+# tools/smoke holds scripts, not a crate.
+exclude = ["tools/smoke"]
 
 [workspace.package]
 version = "0.0.0"
