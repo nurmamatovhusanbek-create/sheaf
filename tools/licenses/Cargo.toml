@@ -1,0 +1,13 @@
+[package]
+name = "licenses"
+description = "Writes THIRD_PARTY_LICENSES: the licence of every crate that ships in the Windows build and of the bundled components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+serde_json.workspace = true

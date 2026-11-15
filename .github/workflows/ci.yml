@@ -33,6 +33,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Spec link check
         run: cargo run --locked -p link-check
+      - name: THIRD_PARTY_LICENSES is current
+        if: runner.os == 'Linux'
+        run: |
+          bash tools/fetch-vendor
+          cargo run --locked -q -p licenses -- --check
       - name: Tesseract for tests (Linux; Windows uses the vendored build)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
