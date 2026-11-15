@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 sheaf-core = { path = "../sheaf-core" }
-sheaf-store = { path = "../sheaf-store" }
 serde.workspace = true
 serde_json.workspace = true
 

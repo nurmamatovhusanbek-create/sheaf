@@ -99,7 +99,7 @@ pub struct OcrJob {
 }
 
 /// The worker binary that sits beside this executable (or one level up,
-/// where cargo puts binaries relative to test executables).
+/// where cargo puts binaries relative to test executables; a few levels with newer cargo).
 pub fn sibling_worker() -> Result<PathBuf> {
     let name = if cfg!(windows) {
         "sheaf-worker.exe"
@@ -107,9 +107,11 @@ pub fn sibling_worker() -> Result<PathBuf> {
         "sheaf-worker"
     };
     let exe = std::env::current_exe().map_err(|e| AppError::io("locate executable", &e))?;
+    // Next to the program, or (for a test binary) a few folders up: newer cargo keeps test
+    // executables in `target/<profile>/build/<package>/<hash>/out/`.
     exe.ancestors()
         .skip(1)
-        .take(2)
+        .take(6)
         .map(|dir| dir.join(name))
         .find(|p| p.is_file())
         .ok_or_else(|| {

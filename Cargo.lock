@@ -3102,7 +3102,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sheaf-core",
- "sheaf-store",
  "windows",
 ]
 
@@ -3114,7 +3113,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sheaf-core",
- "sheaf-image",
  "sheaf-store",
 ]
 
