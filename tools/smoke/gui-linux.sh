@@ -120,6 +120,16 @@ case "$repaired" in *"cut.repaired.pdf") ;; *) echo "FAIL unexpected repair outp
 grep -q "6 pages recovered" "$out/repair-err.txt" || { echo "FAIL the repair did not say how many pages came back"; cat "$out/repair-err.txt"; exit 1; }
 [ -f "$work/cut.repaired.pdf" ] || { echo "FAIL no repaired file"; exit 1; }
 
+echo "== info: set, read back, strip"
+edited="$("$sheaf" info "$work/b.pdf" --set "title=Smoke test" --set "author=Sheaf" 2>"$out/info-set.txt")"
+case "$edited" in *"b.edited.pdf") ;; *) echo "FAIL unexpected info output: $edited"; cat "$out/info-set.txt"; exit 1;; esac
+grep -q "title: Smoke test" "$out/info-set.txt" || { echo "FAIL the title was not written"; cat "$out/info-set.txt"; exit 1; }
+"$sheaf" info "$edited" 2>"$out/info-read.txt" >/dev/null
+grep -q "author: Sheaf" "$out/info-read.txt" || { echo "FAIL the author was not read back"; cat "$out/info-read.txt"; exit 1; }
+cleaned="$("$sheaf" info "$edited" --strip 2>"$out/info-strip.txt")"
+grep -q "xmp: no" "$out/info-strip.txt" || { echo "FAIL strip left the XMP packet"; cat "$out/info-strip.txt"; exit 1; }
+! grep -aq "Smoke test" "$cleaned" || { echo "FAIL the title is still in the stripped file"; exit 1; }
+
 echo "== action wheel on two PDFs"
 printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/list.txt"
 "$sheaf" wheel --at 600,400 --files "$work/list.txt" &

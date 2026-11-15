@@ -9,6 +9,7 @@
 //! sheaf <action> <files...> ...      the same, `run` left out (what an Explorer verb writes)
 //! sheaf preset <name> <files...> [--out DIR]   run a saved preset on files, no window
 //! sheaf presets                      list the saved presets, one per line
+//! sheaf info <file> [--strip | --set key=value ...] [--out DIR]   show, change or remove a PDF's information
 //! sheaf repair <files...> [--out DIR]   rebuild damaged PDFs into NAME.repaired.pdf, never overwriting
 //! sheaf install-verbs | uninstall-verbs   add or remove the Explorer right-click menu (current user)
 //! --card (with an action or preset): the progress and result show in a small card at the cursor
@@ -36,6 +37,8 @@ pub enum Command {
     Presets,
     /// Rebuild damaged PDFs into new files (TOOL-REPAIR).
     Repair(RepairRun),
+    /// Show, change or remove what a PDF says about itself (TOOL-METADATA).
+    Info(InfoRun),
     /// Write or remove Explorer's right-click entries (FLOW-EXPLORER).
     InstallVerbs,
     UninstallVerbs,
@@ -97,6 +100,20 @@ pub type Run = QuickRequest;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepairRun {
     pub files: Vec<PathBuf>,
+    pub out: Option<PathBuf>,
+}
+
+/// The fields `sheaf info --set` knows.
+pub const INFO_KEYS: [&str; 6] = ["title", "author", "subject", "keywords", "creator", "producer"];
+
+/// One PDF whose information is shown, changed or removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InfoRun {
+    pub file: PathBuf,
+    /// Write a copy with all of it removed.
+    pub strip: bool,
+    /// Write a copy with these fields changed (the others stay as they are).
+    pub set: Vec<(String, String)>,
     pub out: Option<PathBuf>,
 }
 
@@ -180,6 +197,7 @@ fn parse_one(args: &[OsString]) -> Result<Command, UsageError> {
         },
         "preset" => parse_preset(it.collect()),
         "repair" => parse_repair(it.collect()),
+        "info" => parse_info(it.collect()),
         "install-verbs" | "uninstall-verbs" => match it.next() {
             None if first_str == "install-verbs" => Ok(Command::InstallVerbs),
             None => Ok(Command::UninstallVerbs),
@@ -279,6 +297,48 @@ fn parse_repair(rest: Vec<&OsString>) -> Result<Command, UsageError> {
         return err("repair needs at least one file");
     }
     Ok(Command::Repair(RepairRun { files, out }))
+}
+
+fn parse_info(rest: Vec<&OsString>) -> Result<Command, UsageError> {
+    let mut run = InfoRun {
+        file: PathBuf::new(),
+        strip: false,
+        set: Vec::new(),
+        out: None,
+    };
+    let mut have_file = false;
+    let mut it = rest.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.to_str() {
+            Some("--strip") => run.strip = true,
+            Some("--out") => {
+                run.out = Some(PathBuf::from(
+                    it.next().ok_or(UsageError("--out needs a folder".into()))?,
+                ))
+            }
+            Some("--set") => {
+                let pair = it.next().and_then(|v| v.to_str()).unwrap_or("");
+                let (key, value) = pair.split_once('=').ok_or(UsageError("--set needs key=value".into()))?;
+                if !INFO_KEYS.contains(&key) {
+                    return err(format!("--set knows {}", INFO_KEYS.join(", ")));
+                }
+                run.set.push((key.to_string(), value.to_string()));
+            }
+            Some(flag) if flag.starts_with("--") => return err(format!("unknown option {flag}")),
+            _ if !have_file => {
+                run.file = PathBuf::from(arg);
+                have_file = true;
+            }
+            _ => return err("info takes one file"),
+        }
+    }
+    if !have_file {
+        return err("info needs a file");
+    }
+    if run.strip && !run.set.is_empty() {
+        return err("--strip and --set cannot be used together");
+    }
+    Ok(Command::Info(run))
 }
 
 fn parse_wheel(rest: Vec<&OsString>) -> Result<Command, UsageError> {
@@ -438,6 +498,54 @@ mod tests {
             &["repair", "--out", "x"],
             &["repair", "a.pdf", "--frobnicate"],
             &["repair", "a.pdf", "--out"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn info_shows_by_default_and_changes_a_copy_with_strip_or_set() {
+        let show = p(&["info", "a.pdf"]).expect("parses");
+        assert_eq!(
+            show,
+            Command::Info(InfoRun {
+                file: "a.pdf".into(),
+                strip: false,
+                set: vec![],
+                out: None
+            })
+        );
+        match p(&[
+            "info",
+            "a.pdf",
+            "--set",
+            "title=My file",
+            "--set",
+            "author=A=B",
+            "--out",
+            "o",
+        ]) {
+            Ok(Command::Info(r)) => {
+                assert_eq!(
+                    r.set,
+                    [
+                        ("title".to_string(), "My file".to_string()),
+                        ("author".to_string(), "A=B".to_string())
+                    ]
+                );
+                assert_eq!(r.out, Some("o".into()));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(p(&["info", "a.pdf", "--strip"]), Ok(Command::Info(r)) if r.strip));
+        for bad in [
+            &["info"][..],
+            &["info", "a", "b"],
+            &["info", "a", "--strip", "--set", "title=x"],
+            &["info", "a", "--set", "colour=red"],
+            &["info", "a", "--set", "novalue"],
+            &["info", "a", "--set"],
+            &["info", "a", "--frobnicate"],
         ] {
             assert!(p(bad).is_err(), "{bad:?}");
         }

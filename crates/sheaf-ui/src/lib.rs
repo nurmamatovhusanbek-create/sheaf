@@ -5,6 +5,7 @@ mod appicon;
 mod dialogs;
 mod icons;
 mod jobs;
+mod meta_ui;
 mod platform;
 mod presets_ui;
 mod preview;

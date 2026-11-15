@@ -142,6 +142,7 @@ impl SheafApp {
             Modal::Password(f) => self.password_dialog(ctx, f).map(Modal::Password),
             Modal::Scan(f) => self.scan_dialog(ctx, f).map(Modal::Scan),
             Modal::Presets(f) => self.presets_dialog(ctx, f).map(Modal::Presets),
+            Modal::Info(f) => self.info_dialog(ctx, f).map(Modal::Info),
         };
     }
 

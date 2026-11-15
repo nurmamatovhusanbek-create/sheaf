@@ -79,6 +79,7 @@ fn dispatch(command: Command) -> ExitCode {
         Command::Preset(run) => headless::preset(&run),
         Command::Presets => headless::presets(),
         Command::Repair(run) => headless::repair(&run),
+        Command::Info(run) => headless::info(&run),
         Command::InstallVerbs => run_verbs(true),
         Command::UninstallVerbs => run_verbs(false),
         Command::Wheel { at, list } => {

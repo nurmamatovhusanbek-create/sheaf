@@ -6,7 +6,10 @@
 //! this crate, only inside a worker process.
 
 use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
-use lopdf::{Document, EncryptionState, EncryptionVersion, Object, ObjectId, Permissions};
+use lopdf::{
+    Dictionary, Document, EncryptionState, EncryptionVersion, Object, ObjectId, Permissions, Stream, StringFormat,
+};
+use sheaf_core::proto::{MetaEdit, MetaFields, MetadataInfo};
 use sheaf_core::{AppError, CompressLevel, ErrorCode, Protect, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -71,6 +74,226 @@ pub fn repair(path: &Path, out: &Path) -> Result<u32> {
     }
     doc.save(out).map_err(|e| AppError::io("write repaired file", &e))?;
     Ok(pages)
+}
+
+// -- TOOL-METADATA ---------------------------------------------------------
+
+/// A PDF text string: UTF-16BE with a byte order mark, UTF-8 with a mark, or PDFDocEncoding
+/// (which for the characters people type is Latin-1).
+fn decode_text(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        let units: Vec<u16> = rest.chunks_exact(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        String::from_utf16_lossy(&units)
+    } else if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        String::from_utf8_lossy(rest).into_owned()
+    } else {
+        bytes.iter().map(|&b| b as char).collect()
+    }
+}
+
+/// Plain ASCII goes in as is; anything else as UTF-16BE with its mark, which every reader understands.
+fn encode_text(s: &str) -> Object {
+    if s.is_ascii() {
+        Object::String(s.as_bytes().to_vec(), StringFormat::Literal)
+    } else {
+        let mut out = vec![0xFE, 0xFF];
+        for unit in s.encode_utf16() {
+            out.extend_from_slice(&unit.to_be_bytes());
+        }
+        Object::String(out, StringFormat::Hexadecimal)
+    }
+}
+
+fn text_of(doc: &Document, object: &Object) -> String {
+    match object {
+        Object::String(bytes, _) => decode_text(bytes),
+        Object::Reference(id) => doc.get_object(*id).map(|o| text_of(doc, o)).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn info_id(doc: &Document) -> Option<ObjectId> {
+    doc.trailer.get(b"Info").ok()?.as_reference().ok()
+}
+
+fn read_info(doc: &Document) -> MetadataInfo {
+    let field = |key: &[u8]| -> String {
+        info_id(doc)
+            .and_then(|id| doc.get_dictionary(id).ok())
+            .and_then(|d| d.get(key).ok())
+            .map(|o| text_of(doc, o))
+            .unwrap_or_default()
+    };
+    MetadataInfo {
+        fields: MetaFields {
+            title: field(b"Title"),
+            author: field(b"Author"),
+            subject: field(b"Subject"),
+            keywords: field(b"Keywords"),
+            creator: field(b"Creator"),
+            producer: field(b"Producer"),
+        },
+        created: field(b"CreationDate"),
+        modified: field(b"ModDate"),
+        has_xmp: doc.catalog().is_ok_and(|c| c.has(b"Metadata")),
+        pages: doc.get_pages().len() as u32,
+    }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '&' => "&amp;".to_string(),
+            '<' => "&lt;".to_string(),
+            '>' => "&gt;".to_string(),
+            '"' => "&quot;".to_string(),
+            c => c.to_string(),
+        })
+        .collect()
+}
+
+/// The XMP packet that says the same as the information fields (Dublin Core and the PDF schema).
+fn xmp_packet(f: &MetaFields) -> String {
+    let mut out = String::from(
+        "<?xpacket begin=\"\u{feff}\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n",
+    );
+    let alt = |tag: &str, v: &str| {
+        format!(
+            "<dc:{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{}</rdf:li></rdf:Alt></dc:{tag}>\n",
+            xml_escape(v)
+        )
+    };
+    if !f.title.is_empty() {
+        out.push_str(&alt("title", &f.title));
+    }
+    if !f.subject.is_empty() {
+        out.push_str(&alt("description", &f.subject));
+    }
+    if !f.author.is_empty() {
+        out.push_str(&format!(
+            "<dc:creator><rdf:Seq><rdf:li>{}</rdf:li></rdf:Seq></dc:creator>\n",
+            xml_escape(&f.author)
+        ));
+    }
+    if !f.keywords.is_empty() {
+        out.push_str(&format!("<pdf:Keywords>{}</pdf:Keywords>\n", xml_escape(&f.keywords)));
+    }
+    if !f.producer.is_empty() {
+        out.push_str(&format!("<pdf:Producer>{}</pdf:Producer>\n", xml_escape(&f.producer)));
+    }
+    if !f.creator.is_empty() {
+        out.push_str(&format!(
+            "<xmp:CreatorTool>{}</xmp:CreatorTool>\n",
+            xml_escape(&f.creator)
+        ));
+    }
+    out.push_str("</rdf:Description>\n</rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>");
+    out
+}
+
+fn drop_object(doc: &mut Document, id: ObjectId) {
+    doc.objects.remove(&id);
+}
+
+/// Remove the information fields and the XMP packet.
+fn strip(doc: &mut Document) {
+    if let Some(id) = info_id(doc) {
+        drop_object(doc, id);
+    }
+    doc.trailer.remove(b"Info");
+    let xmp = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Metadata").ok())
+        .and_then(|o| o.as_reference().ok());
+    if let Some(id) = xmp {
+        drop_object(doc, id);
+    }
+    if let Ok(catalog) = doc.catalog_mut() {
+        catalog.remove(b"Metadata");
+    }
+}
+
+/// Write the fields to the information dictionary and to a fresh XMP packet; the old packet goes,
+/// so no stale value survives in it. An empty field is left out.
+fn set(doc: &mut Document, f: &MetaFields) {
+    let old_xmp = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"Metadata").ok())
+        .and_then(|o| o.as_reference().ok());
+    let id = info_id(doc)
+        .filter(|id| doc.get_dictionary(*id).is_ok())
+        .unwrap_or_else(|| {
+            let id = doc.add_object(Dictionary::new());
+            doc.trailer.set("Info", Object::Reference(id));
+            id
+        });
+    if let Ok(info) = doc.get_dictionary_mut(id) {
+        for (key, value) in [
+            ("Title", &f.title),
+            ("Author", &f.author),
+            ("Subject", &f.subject),
+            ("Keywords", &f.keywords),
+            ("Creator", &f.creator),
+            ("Producer", &f.producer),
+        ] {
+            if value.is_empty() {
+                info.remove(key.as_bytes());
+            } else {
+                info.set(key, encode_text(value));
+            }
+        }
+    }
+    if let Some(id) = old_xmp {
+        drop_object(doc, id);
+    }
+    let mut dict = Dictionary::new();
+    dict.set("Type", Object::Name(b"Metadata".to_vec()));
+    dict.set("Subtype", Object::Name(b"XML".to_vec()));
+    let mut stream = Stream::new(dict, xmp_packet(f).into_bytes());
+    // Readers look for the packet in plain text.
+    stream.allows_compression = false;
+    let xmp = doc.add_object(stream);
+    if let Ok(catalog) = doc.catalog_mut() {
+        catalog.set("Metadata", Object::Reference(xmp));
+    }
+}
+
+fn load_for_metadata(path: &Path) -> Result<Document> {
+    let size = std::fs::metadata(path)
+        .map_err(|e| AppError::io("read file", &e))?
+        .len();
+    if size > sheaf_core::consts::MAX_FILE_BYTES {
+        return Err(AppError::limit("file is too large"));
+    }
+    let doc = Document::load(path).map_err(map_err)?;
+    if doc.is_encrypted() {
+        return Err(AppError::new(
+            ErrorCode::NeedsPassword,
+            "document is password protected",
+        ));
+    }
+    Ok(doc)
+}
+
+/// TOOL-METADATA: what a PDF says about itself.
+pub fn read_metadata(path: &Path) -> Result<MetadataInfo> {
+    Ok(read_info(&load_for_metadata(path)?))
+}
+
+/// TOOL-METADATA: write a changed copy and return what is really in it (read back from the file).
+pub fn edit_metadata(path: &Path, out: &Path, edit: &MetaEdit) -> Result<MetadataInfo> {
+    let mut doc = load_for_metadata(path)?;
+    match edit {
+        MetaEdit::Strip => strip(&mut doc),
+        MetaEdit::Set(fields) => {
+            fields.validate()?;
+            set(&mut doc, fields);
+        }
+    }
+    doc.save(out).map_err(|e| AppError::io("write file", &e))?;
+    read_metadata(out)
 }
 
 /// What [`compress`] did.

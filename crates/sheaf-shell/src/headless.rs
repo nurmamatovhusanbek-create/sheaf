@@ -4,7 +4,7 @@
 
 use sheaf_app::quick::{run_quick, QuickReport};
 use sheaf_app::{App, Engines};
-use sheaf_cli::{PresetRun, RepairRun};
+use sheaf_cli::{InfoRun, PresetRun, RepairRun};
 use sheaf_core::{AppError, QuickRequest};
 use std::process::ExitCode;
 
@@ -111,6 +111,74 @@ pub fn repair(run: &RepairRun) -> ExitCode {
             }
             finish(Ok(report.quick))
         }
+        Err(e) => fail(&e),
+    }
+}
+
+/// `sheaf info FILE`: print what a PDF says about itself; with `--strip` or `--set`, write a changed copy.
+pub fn info(run: &InfoRun) -> ExitCode {
+    use sheaf_app::plan::NoCtl;
+    use sheaf_core::proto::{MetaEdit, MetaFields};
+    let app = match start_app() {
+        Ok(app) => app,
+        Err(e) => return fail(&e),
+    };
+    let shared = app.shared();
+    let result = (|| -> Result<(), AppError> {
+        let change = if run.strip {
+            Some(MetaEdit::Strip)
+        } else if run.set.is_empty() {
+            None
+        } else {
+            // Only the named fields change; the others are kept as they are.
+            let mut fields: MetaFields = sheaf_app::metadata::read(&shared, &run.file, &NoCtl)?.fields;
+            for (key, value) in &run.set {
+                let slot = match key.as_str() {
+                    "title" => &mut fields.title,
+                    "author" => &mut fields.author,
+                    "subject" => &mut fields.subject,
+                    "keywords" => &mut fields.keywords,
+                    "creator" => &mut fields.creator,
+                    _ => &mut fields.producer,
+                };
+                *slot = value.clone();
+            }
+            Some(MetaEdit::Set(fields))
+        };
+        let (info, written) = match change {
+            Some(change) => {
+                let (out, info) = sheaf_app::metadata::edit(&shared, &run.file, &change, run.out.as_deref(), &NoCtl)?;
+                (info, Some(out))
+            }
+            None => (sheaf_app::metadata::read(&shared, &run.file, &NoCtl)?, None),
+        };
+        let f = &info.fields;
+        for (k, v) in [
+            ("title", &f.title),
+            ("author", &f.author),
+            ("subject", &f.subject),
+            ("keywords", &f.keywords),
+            ("creator", &f.creator),
+            ("producer", &f.producer),
+            ("created", &info.created),
+            ("modified", &info.modified),
+        ] {
+            crate::say_err(&format!("{k}: {v}"));
+        }
+        crate::say_err(&format!(
+            "pages: {}  xmp: {}",
+            info.pages,
+            if info.has_xmp { "yes" } else { "no" }
+        ));
+        if let Some(out) = written {
+            crate::say(&out.display().to_string());
+        }
+        Ok(())
+    })();
+    drop(shared);
+    let _ = app.close();
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(&e),
     }
 }

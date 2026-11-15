@@ -3,8 +3,8 @@ use serde_json::{json, Value};
 use sheaf_core::consts::{MAX_PAGE_SIDE, RASTER_DPI};
 use sheaf_core::proto::{
     ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, ImageFormat,
-    OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs, ProbeResult, RenderArgs, RenderResult,
-    RepairArgs, RepairResult, Request, SourceRef,
+    MetadataArgs, MetadataResult, OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs,
+    ProbeResult, RenderArgs, RenderResult, RepairArgs, RepairResult, Request, SourceRef,
 };
 use sheaf_core::{AppError, ErrorCode, Result, Rot, SourceKind};
 use sheaf_image::RgbaImage;
@@ -215,6 +215,7 @@ impl Worker {
             ops::EXPORT_IMAGES => to_value(&self.export_images(&parse(&req.args)?, progress)?),
             ops::EXTRACT_IMAGES => to_value(&self.extract_images(&parse(&req.args)?)?),
             ops::REPAIR => to_value(&self.repair(&parse(&req.args)?)?),
+            ops::METADATA => to_value(&self.metadata(&parse(&req.args)?)?),
             _ => Err(AppError::invalid("unknown op")),
         }
     }
@@ -241,6 +242,35 @@ impl Worker {
                     sizes_pt: vec![(pt(w), pt(h)); pages as usize],
                 })
             }
+        }
+    }
+
+    /// TOOL-METADATA: read what a PDF says about itself, or write a changed copy.
+    fn metadata(&mut self, args: &MetadataArgs) -> Result<MetadataResult> {
+        let path = input(&args.path)?;
+        if sniff(&path)? != SourceKind::Pdf {
+            return Err(AppError::new(
+                ErrorCode::Unsupported,
+                "only PDF files carry this information",
+            ));
+        }
+        match (&args.out, &args.edit) {
+            (Some(rel), Some(edit)) => {
+                let out = self.session.resolve(rel)?;
+                if let Some(parent) = out.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| AppError::io("create output dir", &e))?;
+                }
+                let info = lo::edit_metadata(&path, &out, edit)?;
+                Ok(MetadataResult {
+                    info,
+                    out: Some(rel.clone()),
+                })
+            }
+            (None, None) => Ok(MetadataResult {
+                info: lo::read_metadata(&path)?,
+                out: None,
+            }),
+            _ => Err(AppError::invalid("an edit needs an output and an output needs an edit")),
         }
     }
 

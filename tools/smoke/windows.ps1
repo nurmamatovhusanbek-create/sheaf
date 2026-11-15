@@ -80,6 +80,17 @@ Step "repair: a PDF with its tail cut off" {
   Check-Output "repair" $made
 }
 
+Step "info: set, read back, strip" {
+  $edited = & $Cli info $Fixture --set "title=Smoke test" --set "author=Sheaf" 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "info --set exited with $LASTEXITCODE" }
+  Check-Output "info --set" $edited
+  $said = (& $Cli info ($edited | Select-Object -First 1) 2>&1 | Out-String)
+  if ($said -notmatch 'author: Sheaf') { throw "the author was not read back: $said" }
+  $cleaned = & $Cli info ($edited | Select-Object -First 1) --strip 2>$null
+  Check-Output "info --strip" $cleaned
+  if ((Get-Content -LiteralPath ($cleaned | Select-Object -First 1) -Raw -Encoding Latin1) -match 'Smoke test') { throw "the title is still in the stripped file" }
+}
+
 Step "Explorer-style selection: three processes, one merge" {
   $agg = Join-Path ([System.IO.Path]::GetTempPath()) "sheaf-agg"
   Remove-Item -Recurse -Force $agg -ErrorAction SilentlyContinue

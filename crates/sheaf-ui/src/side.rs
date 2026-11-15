@@ -31,10 +31,11 @@ pub enum Tool {
     Lock,
     Ocr,
     Repair,
+    Info,
     Scan,
 }
 
-const TOOLS: [(Tool, &str); 15] = [
+const TOOLS: [(Tool, &str); 16] = [
     (Tool::Merge, "merge"),
     (Tool::Split, "split"),
     (Tool::Extract, "extract"),
@@ -49,6 +50,7 @@ const TOOLS: [(Tool, &str); 15] = [
     (Tool::Lock, "lock"),
     (Tool::Ocr, "ocr"),
     (Tool::Repair, "repair"),
+    (Tool::Info, "info"),
     (Tool::Scan, "scan"),
 ];
 
@@ -209,6 +211,7 @@ fn tool_icon(tool: Tool) -> crate::icons::Icon {
         Tool::Lock => Icon::Lock,
         Tool::Ocr => Icon::Ocr,
         Tool::Repair => Icon::Check,
+        Tool::Info => Icon::Text,
         Tool::Scan => Icon::Scan,
     }
 }
@@ -401,6 +404,7 @@ impl SheafApp {
             Tool::Ocr => self.side.tab = Tab::Ocr,
             Tool::Scan => self.open_scan(),
             Tool::Repair => self.open_repair(),
+            Tool::Info => self.open_info(),
             Tool::Split | Tool::Compress | Tool::Pdf2Img | Tool::Stamp | Tool::Lock => {
                 self.side.error = None;
                 self.side.form = Some(tool);

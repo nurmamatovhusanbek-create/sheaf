@@ -80,6 +80,9 @@ pub fn summary(t: &I18n, job: &JobView) -> String {
                     .unwrap_or_default();
                 return format!("{}{sizes}{enc}", t.tn("job.files", files.len() as i64, &[]));
             }
+            if job.kind == "metadata" {
+                return t.t("job.metadata_done");
+            }
             if job.kind == "repair" {
                 // Say how much came back, not only that a file was written.
                 let files = t.tn("job.files", num("count").unwrap_or(0) as i64, &[]);

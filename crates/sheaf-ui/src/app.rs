@@ -61,6 +61,8 @@ pub enum Msg {
     Preset(crate::presets_ui::PresetMsg),
     /// Files chosen for Repair.
     RepairFiles(Vec<PathBuf>),
+    /// Work for the document information dialog.
+    Meta(crate::meta_ui::MetaMsg),
 }
 
 struct ChannelEmit {
@@ -88,6 +90,7 @@ pub enum Modal {
     Password(crate::dialogs::PasswordForm),
     Scan(crate::dialogs::ScanForm),
     Presets(crate::presets_ui::PresetsForm),
+    Info(crate::meta_ui::MetaForm),
 }
 
 #[derive(Default)]
@@ -336,6 +339,7 @@ impl SheafApp {
                 Msg::OcrResult { page, result } => self.preview.on_ocr_result(page, result),
                 Msg::Search(r) => self.search.on_result(r),
                 Msg::Preset(m) => self.on_preset_msg(m),
+                Msg::Meta(m) => self.on_meta_msg(m),
                 Msg::RepairFiles(files) => self.start_job(move |b| b.repair_run(files)),
                 Msg::ScanDevices(r) => {
                     if let Some(Modal::Scan(f)) = &mut self.modal {

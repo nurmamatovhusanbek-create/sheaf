@@ -27,6 +27,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 type Result<T> = sheaf_core::Result<T>;
 
+mod metadata;
 mod presets;
 mod repair;
 mod scan;
