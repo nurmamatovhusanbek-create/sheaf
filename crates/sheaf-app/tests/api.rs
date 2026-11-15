@@ -865,15 +865,30 @@ fn wire_shapes_match_the_ui_contract() {
 
     let job = rig
         .backend
-        .ocr_run(Some(vec![ids[0]]), OcrPolicyDto { mode: "redo".into(), langs: Some(vec!["eng".into()]) })
+        .ocr_run(
+            Some(vec![ids[0]]),
+            OcrPolicyDto {
+                mode: "redo".into(),
+                langs: Some(vec!["eng".into()]),
+            },
+        )
         .expect("ocr");
     rig.wait(job);
-    put("job.ocr", to(&rig.backend.jobs().into_iter().find(|j| j.id == job).expect("job")));
+    put(
+        "job.ocr",
+        to(&rig.backend.jobs().into_iter().find(|j| j.id == job).expect("job")),
+    );
     put("ocr_result", to(&rig.backend.ocr_result(ids[0]).expect("result")));
     put("search", to(&rig.backend.search("page").expect("search")));
 
     let events = rig.events.all();
-    let payload = |name: &str| events.iter().find(|e| e.name() == name).map(|e| e.payload()).unwrap_or(Value::Null);
+    let payload = |name: &str| {
+        events
+            .iter()
+            .find(|e| e.name() == name)
+            .map(|e| e.payload())
+            .unwrap_or(Value::Null)
+    };
     put("event.pages", payload("pages"));
     put("event.page-ready", payload("page-ready"));
     put("event.import", payload("import"));
@@ -883,7 +898,9 @@ fn wire_shapes_match_the_ui_contract() {
     put("pick", to(&rig.backend.register_pick(&png).expect("pick")));
     put(
         "error",
-        to(&sheaf_app::api::ErrorDto::from(&sheaf_core::AppError::not_found("page"))),
+        to(&sheaf_app::api::ErrorDto::from(&sheaf_core::AppError::not_found(
+            "page",
+        ))),
     );
     put("engines", to(&rig.backend.snapshot().expect("snapshot").engines));
 

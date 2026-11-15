@@ -6,6 +6,11 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # proc-macro-error is a build-time macro helper of the GTK3 bindings that Tauri uses on Linux.
+    # This project ships the shell on Windows only (NG-XPLAT) and never links GTK; revisit when Tauri moves on.
+    { id = "RUSTSEC-2024-0370", reason = "GTK3 bindings on Linux only; the Windows-only shell does not use them" },
+]
 
 [licenses]
 # Extend deliberately, one license at a time, as dependencies arrive.
@@ -16,6 +21,8 @@ allow = [
     "Unicode-3.0",
     "ISC",      # libloading (via pdfium-render)
     "MPL-2.0",  # imbl: file-level copyleft, used unmodified
+    "Zlib",     # foldhash (via tauri-utils' HTML handling); permissive
+    "Apache-2.0 WITH LLVM-exception", # target-lexicon (via tauri-build's cfg handling); Apache-2.0 plus a linking exception
 ]
 
 [licenses.private]

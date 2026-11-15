@@ -49,6 +49,61 @@ jobs:
           cargo build --workspace --release --locked ${{ runner.os == 'Linux' && '--exclude sheaf-shell' || '' }}
           ./target/release/sheaf-harness bench --enforce
 
+  ui:
+    name: ui (logic + browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tools/ui-test/package-lock.json
+      - name: Install test tooling (build time only)
+        working-directory: tools/ui-test
+        run: npm ci && npx playwright install --with-deps chromium
+      - name: Logic, i18n, policy and contract tests
+        working-directory: tools/ui-test
+        run: node --test "unit/*.test.mjs"
+      - name: The real UI in a browser, under the real CSP
+        working-directory: tools/ui-test
+        run: node e2e/run.mjs
+
+  shell-smoke:
+    name: shell smoke (Windows, WebDriver)
+    runs-on: windows-latest
+    # The Windows shell was written without a Windows machine; its first runs may need adjusting.
+    # Remove this line once the job has passed (ARCHITECTURE.md, PH-4).
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Fetch and verify vendored assets
+        run: bash tools/fetch-vendor
+      - name: Build the app and its worker
+        run: cargo build --release --locked -p sheaf-shell -p sheaf-worker
+      - name: A fixture to open
+        run: cargo run --release --locked -p fixture-gen --bin write-fixture -- "$RUNNER_TEMP/smoke.pdf"
+      - name: No listening ports (TEST-SEC)
+        shell: pwsh
+        run: ./tools/ui-test/smoke/no-listeners.ps1 -App "$PWD/target/release/sheaf.exe" -Fixture "$env:RUNNER_TEMP/smoke.pdf"
+      - name: WebDriver
+        run: cargo install tauri-driver --locked --version 2.1.0
+      - name: Smoke test (window, import, thumbnails, no remote requests)
+        shell: pwsh
+        run: |
+          $driver = Start-Process tauri-driver -ArgumentList @("--native-driver", "$env:EdgeWebDriver\msedgedriver.exe") -PassThru
+          Start-Sleep -Seconds 3
+          try { node tools/ui-test/smoke/webdriver.mjs "$PWD/target/release/sheaf.exe" "$env:RUNNER_TEMP/smoke.pdf" }
+          finally { Stop-Process -Id $driver.Id -Force -ErrorAction SilentlyContinue }
+
   supply-chain:
     name: cargo-deny + cargo-audit
     runs-on: ubuntu-latest
