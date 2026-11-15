@@ -9,6 +9,11 @@
 //! sheaf <action> <files...> ...      the same, `run` left out (what an Explorer verb writes)
 //! sheaf preset <name> <files...> [--out DIR]   run a saved preset on files, no window
 //! sheaf presets                      list the saved presets, one per line
+//! sheaf install-verbs | uninstall-verbs   add or remove the Explorer right-click menu (current user)
+//! --card (with an action or preset): the progress and result show in a small card at the cursor
+//! --collect (with open, an action or preset): what an Explorer verb adds. The first process gathers the
+//!                                    files of the processes Explorer starts for the same selection and
+//!                                    acts once for all of them; the others leave
 //! sheaf tray                         the resident helper: tray icon and the wheel hotkey
 //! sheaf wheel --at X,Y --files LIST  the wheel overlay (started by the helper)
 //! ```
@@ -28,11 +33,58 @@ pub enum Command {
     Preset(PresetRun),
     /// The names of the saved presets.
     Presets,
+    /// Write or remove Explorer's right-click entries (FLOW-EXPLORER).
+    InstallVerbs,
+    UninstallVerbs,
     Tray,
     Wheel {
         at: (i32, i32),
         list: PathBuf,
     },
+    /// The command, to run once for every process Explorer started for one selection (`--collect`).
+    Collected(Box<Command>),
+    /// An action or preset whose progress and result show in a small card at the cursor instead of
+    /// on the console (`--card`, what Explorer verbs use).
+    Card(Box<Command>),
+}
+
+impl Command {
+    /// What kind of work a collected command is, so that only like batches with like.
+    pub fn collect_key(&self) -> String {
+        match self {
+            Command::Window { .. } => "open".into(),
+            Command::Run(r) => r.action.id().into(),
+            Command::Preset(p) => format!("preset-{}", p.name),
+            Command::Card(inner) | Command::Collected(inner) => inner.collect_key(),
+            _ => "other".into(),
+        }
+    }
+
+    /// The files this command works on.
+    pub fn files(&self) -> &[PathBuf] {
+        match self {
+            Command::Window { files } => files,
+            Command::Run(r) => &r.files,
+            Command::Preset(p) => &p.files,
+            Command::Card(inner) | Command::Collected(inner) => inner.files(),
+            _ => &[],
+        }
+    }
+
+    /// The same command on other files.
+    pub fn with_files(mut self, new: Vec<PathBuf>) -> Command {
+        match &mut self {
+            Command::Window { files } => *files = new,
+            Command::Run(r) => r.files = new,
+            Command::Preset(p) => p.files = new,
+            Command::Card(inner) | Command::Collected(inner) => {
+                let moved = std::mem::replace(&mut **inner, Command::Tray);
+                **inner = moved.with_files(new);
+            }
+            _ => {}
+        }
+        self
+    }
 }
 
 /// A headless quick action.
@@ -59,7 +111,7 @@ impl std::fmt::Display for UsageError {
 pub const USAGE: &str =
     "usage: sheaf [open FILES... | run ACTION FILES... | ACTION FILES... | preset NAME FILES... | presets | tray]\n\
 actions: merge compress ocr split pdf2img img2pdf rotate\n\
-run flags: --out DIR  --level low|recommended|extreme  --langs auto|eng+rus";
+run flags: --out DIR  --level low|recommended|extreme  --langs auto|eng+rus  --card  --collect (Explorer verbs)";
 
 fn err<T>(msg: impl Into<String>) -> Result<T, UsageError> {
     Err(UsageError(msg.into()))
@@ -67,6 +119,37 @@ fn err<T>(msg: impl Into<String>) -> Result<T, UsageError> {
 
 /// Parse the arguments after the program name.
 pub fn parse(args: &[OsString]) -> Result<Command, UsageError> {
+    let (collect, card) = (
+        args.iter().any(|a| a == "--collect"),
+        args.iter().any(|a| a == "--card"),
+    );
+    if !collect && !card {
+        return parse_one(args);
+    }
+    let rest: Vec<OsString> = args
+        .iter()
+        .filter(|a| *a != "--collect" && *a != "--card")
+        .cloned()
+        .collect();
+    let mut command = parse_one(&rest)?;
+    if card {
+        command = match command {
+            c @ (Command::Run(_) | Command::Preset(_)) => Command::Card(Box::new(c)),
+            _ => return err("--card goes with an action or a preset"),
+        };
+    }
+    if collect {
+        command = match command {
+            c @ (Command::Window { .. } | Command::Run(_) | Command::Preset(_) | Command::Card(_)) => {
+                Command::Collected(Box::new(c))
+            }
+            _ => return err("--collect goes with open, an action or a preset"),
+        };
+    }
+    Ok(command)
+}
+
+fn parse_one(args: &[OsString]) -> Result<Command, UsageError> {
     let mut it = args.iter();
     let Some(first) = it.next() else {
         return Ok(Command::Window { files: vec![] });
@@ -86,6 +169,11 @@ pub fn parse(args: &[OsString]) -> Result<Command, UsageError> {
             Some(_) => err("presets takes no arguments"),
         },
         "preset" => parse_preset(it.collect()),
+        "install-verbs" | "uninstall-verbs" => match it.next() {
+            None if first_str == "install-verbs" => Ok(Command::InstallVerbs),
+            None => Ok(Command::UninstallVerbs),
+            Some(_) => err(format!("{first_str} takes no arguments")),
+        },
         "run" => match it.next().and_then(|w| w.to_str()).and_then(QuickAction::parse) {
             Some(action) => parse_run(action, it.collect()),
             None => err("run needs an action: merge compress ocr split pdf2img img2pdf rotate"),
@@ -257,6 +345,52 @@ mod tests {
         ] {
             assert!(p(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn collect_wraps_the_command_and_names_the_kind_of_work() {
+        let c = p(&["merge", "--collect", "a.pdf"]).expect("parses");
+        let Command::Collected(inner) = c else { panic!("{c:?}") };
+        assert_eq!(inner.collect_key(), "merge");
+        assert_eq!(inner.files(), [PathBuf::from("a.pdf")]);
+        let both = inner.with_files(vec!["a.pdf".into(), "b.pdf".into()]);
+        assert_eq!(both.files().len(), 2);
+        match p(&["preset", "Contract scan", "x.pdf", "--collect"]) {
+            Ok(Command::Collected(i)) => assert_eq!(i.collect_key(), "preset-Contract scan"),
+            other => panic!("{other:?}"),
+        }
+        match p(&["open", "--collect", "x.pdf"]) {
+            Ok(Command::Collected(i)) => assert_eq!(i.collect_key(), "open"),
+            other => panic!("{other:?}"),
+        }
+        // A verb is both: gather the selection, then show a card.
+        match p(&["compress", "--collect", "--card", "a.pdf"]) {
+            Ok(Command::Collected(i)) => match *i {
+                Command::Card(run) => assert!(matches!(*run, Command::Run(_))),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        }
+        let both = p(&["preset", "X", "--card", "--collect", "a.pdf"]).expect("parses");
+        assert_eq!(both.files(), [PathBuf::from("a.pdf")]);
+        let more = both.with_files(vec!["a.pdf".into(), "b.pdf".into()]);
+        assert_eq!(
+            more.files().len(),
+            2,
+            "the files reach the command inside both wrappers"
+        );
+        assert_eq!(p(&["install-verbs"]), Ok(Command::InstallVerbs));
+        assert_eq!(p(&["uninstall-verbs"]), Ok(Command::UninstallVerbs));
+        assert!(p(&["install-verbs", "x"]).is_err() && p(&["install-verbs", "--collect"]).is_err());
+        assert!(p(&["tray", "--card"]).is_err() && p(&["open", "--card"]).is_err());
+        assert!(p(&["tray", "--collect"]).is_err());
+        assert!(p(&["presets", "--collect"]).is_err());
+        assert!(
+            p(&["--collect"]).is_ok_and(|c| matches!(c, Command::Collected(_))),
+            "an empty window, once"
+        );
+        // Without the flag nothing changes.
+        assert!(matches!(p(&["merge", "a.pdf"]), Ok(Command::Run(_))));
     }
 
     #[test]

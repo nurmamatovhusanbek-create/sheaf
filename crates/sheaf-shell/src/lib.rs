@@ -8,12 +8,15 @@
 //! because a GUI program neither prints into a pipe nor lets the shell wait
 //! for its exit code.
 
+mod aggregate;
 mod crash;
+mod cursor;
 mod headless;
 #[cfg(windows)]
 mod selection;
 #[cfg(windows)]
 mod tray;
+mod verbs;
 
 use sheaf_app::Engines;
 use sheaf_cli::Command;
@@ -46,22 +49,70 @@ pub fn run() -> ExitCode {
             return ExitCode::from(64);
         }
     };
+    dispatch(command)
+}
+
+/// Where the processes Explorer starts for one selection leave their file lists.
+fn verbs_dir() -> PathBuf {
+    base_dir().join("verbs")
+}
+
+fn dispatch(command: Command) -> ExitCode {
     match command {
+        Command::Collected(inner) => {
+            // FLOW-EXPLORER: one action for the whole selection, however many processes Explorer started.
+            let joined = aggregate::join(
+                &verbs_dir(),
+                &inner.collect_key(),
+                inner.files(),
+                &aggregate::Timing::default(),
+            );
+            match joined {
+                Ok(aggregate::Joined::Leader(all)) => dispatch(inner.with_files(all)),
+                Ok(aggregate::Joined::Follower) => ExitCode::SUCCESS,
+                // No place to collect in: do this process's own files.
+                Err(_) => dispatch(*inner),
+            }
+        }
         Command::Window { files } => finish(sheaf_ui::run_window(ui_config(files))),
         Command::Run(request) => headless::run(&request),
         Command::Preset(run) => headless::preset(&run),
         Command::Presets => headless::presets(),
+        Command::InstallVerbs => run_verbs(true),
+        Command::UninstallVerbs => run_verbs(false),
         Command::Wheel { at, list } => {
             let files = sheaf_ui::take_file_list(&list);
-            finish(sheaf_ui::run_wheel(sheaf_ui::WheelConfig {
-                engines: Engines::discover(&[]),
-                base_dir: base_dir(),
-                config_dir: sheaf_store::config_dir().ok(),
-                at,
-                files,
-            }))
+            finish(sheaf_ui::run_wheel(wheel_config(at, files, None)))
+        }
+        Command::Card(inner) => {
+            // An Explorer verb: the work starts at once and its progress and result show in a card.
+            let job = match *inner {
+                Command::Run(request) => sheaf_ui::WheelJob::Quick(request),
+                Command::Preset(run) => sheaf_ui::WheelJob::Preset {
+                    name: run.name,
+                    files: run.files,
+                    out: run.out,
+                },
+                _ => return ExitCode::from(64),
+            };
+            finish(sheaf_ui::run_wheel(wheel_config(
+                cursor::position(),
+                job.files().to_vec(),
+                Some(job),
+            )))
         }
         Command::Tray => run_tray(),
+    }
+}
+
+fn wheel_config(at: (i32, i32), files: Vec<PathBuf>, job: Option<sheaf_ui::WheelJob>) -> sheaf_ui::WheelConfig {
+    sheaf_ui::WheelConfig {
+        engines: Engines::discover(&[]),
+        base_dir: base_dir(),
+        config_dir: sheaf_store::config_dir().ok(),
+        at,
+        files,
+        job,
     }
 }
 
@@ -73,6 +124,43 @@ fn finish(result: sheaf_ui::UiResult) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `sheaf install-verbs` / `uninstall-verbs`: the right-click menu (FLOW-EXPLORER).
+#[cfg(windows)]
+fn run_verbs(install: bool) -> ExitCode {
+    let result = if install {
+        let config = sheaf_store::config_dir().ok();
+        let lang = config
+            .as_deref()
+            .map_or("en".to_string(), |d| sheaf_store::Settings::load(d).language);
+        let presets = config.as_deref().map(sheaf_store::presets::list).unwrap_or_default();
+        std::env::current_exe()
+            .map_err(|e| sheaf_core::AppError::io("find sheaf.exe", &e))
+            .and_then(|exe| verbs::install(&exe.with_file_name("sheaf.exe"), &lang, &presets))
+    } else {
+        verbs::uninstall()
+    };
+    match result {
+        Ok(()) => {
+            say(if install {
+                "the Sheaf entry is in the right-click menu"
+            } else {
+                "the Sheaf entry is gone from the right-click menu"
+            });
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            say_err(&format!("sheaf: {e}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn run_verbs(_install: bool) -> ExitCode {
+    say_err("sheaf: the right-click menu is for Windows Explorer");
+    ExitCode::FAILURE
 }
 
 #[cfg(windows)]

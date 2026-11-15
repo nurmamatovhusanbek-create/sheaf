@@ -79,6 +79,36 @@ echo "preset list reads: $listed"
 case "$listed" in *Demo*) ;; *) echo "FAIL the dialog does not list the preset"; exit 1;; esac
 kill "$pre"; wait "$pre" 2>/dev/null || true
 
+echo "== Explorer-style selection: three processes, one merge"
+agg="$work/agg"; mkdir -p "$agg"
+for n in 1 2 3; do cargo run -q -p fixture-gen --bin write-fixture -- "$agg/m$n.pdf" "$n"; done
+pids=()
+for n in 1 2 3; do
+  "$sheaf" merge --collect "$agg/m$n.pdf" > "$agg/out$n.txt" 2>"$agg/err$n.txt" &
+  pids+=($!)
+done
+wait "${pids[@]}" || true
+printed="$(cat "$agg"/out*.txt | grep -c . || true)"
+echo "paths printed by the three processes: $printed"
+[ "$printed" -eq 1 ] || { echo "FAIL expected exactly one process to act"; cat "$agg"/out*.txt "$agg"/err*.txt; exit 1; }
+merged="$agg/m1.merged.pdf"
+[ -f "$merged" ] || { echo "FAIL no merged file beside the first input"; ls "$agg"; exit 1; }
+[ "$(stat -c %s "$merged")" -gt "$(stat -c %s "$agg/m3.pdf")" ] || { echo "FAIL the merge holds less than its largest input"; exit 1; }
+
+echo "== a verb's card: progress and result at the pointer"
+cp "$work/b.pdf" "$work/card.pdf"
+"$sheaf" compress --card "$work/card.pdf" &
+card=$!
+sleep 12
+kill -0 "$card" || { echo "FAIL the card exited before it could be read"; exit 1; }
+import -window root "$out/card.png"
+convert "$out/card.png" -crop 380x70+410+275 +repage -resize 300% -colorspace Gray -negate "$work/card-title.png"
+title="$(tesseract "$work/card-title.png" stdout --psm 6 2>/dev/null | tr -d '\n')"
+echo "card reads: $title"
+case "$title" in *Done*) ;; *) echo "FAIL the card does not say Done"; exit 1;; esac
+[ -f "$work/card.compressed.pdf" ] || { echo "FAIL the card's action made no file"; exit 1; }
+kill "$card"; wait "$card" 2>/dev/null || true
+
 echo "== action wheel on two PDFs"
 printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/list.txt"
 "$sheaf" wheel --at 600,400 --files "$work/list.txt" &

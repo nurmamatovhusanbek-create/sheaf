@@ -432,6 +432,7 @@
  "wheel.open": "Открыть в Sheaf",
  "wheel.open_result": "Открыть результат в Sheaf",
  "wheel.partial": "Готово, но есть проблемы",
+ "wheel.preset": "Пресет: {name}",
  "wheel.problem": "{name}: {why}",
  "wheel.running": "Обрабатывается {name} …",
  "wheel.show": "Показать в папке"

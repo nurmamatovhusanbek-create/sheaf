@@ -419,6 +419,7 @@
  "wheel.open": "Open in Sheaf",
  "wheel.open_result": "Open result in Sheaf",
  "wheel.partial": "Done, with problems",
+ "wheel.preset": "Preset: {name}",
  "wheel.problem": "{name}: {why}",
  "wheel.running": "Working on {name} …",
  "wheel.show": "Show in folder"

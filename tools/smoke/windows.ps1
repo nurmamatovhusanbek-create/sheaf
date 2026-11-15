@@ -7,6 +7,7 @@
 # 2. The window opens with a file, stays up, renders thumbnails through a worker,
 #    and neither it nor anything it started listens on a TCP port (TEST-SEC).
 # 3. The tray helper starts and stays up (no window of its own).
+# 4. Three processes started for one selection make one action; the right-click menu installs and goes.
 #
 # Every section runs even when an earlier one fails, so one run shows everything that is wrong.
 param(
@@ -68,6 +69,42 @@ Step "headless: sheaf preset" {
   $made = & $Cli preset "Demo scan" $Fixture
   if ($LASTEXITCODE -ne 0) { throw "preset run exited with $LASTEXITCODE" }
   Check-Output "the preset run" $made
+}
+
+Step "Explorer-style selection: three processes, one merge" {
+  $agg = Join-Path ([System.IO.Path]::GetTempPath()) "sheaf-agg"
+  Remove-Item -Recurse -Force $agg -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force -Path $agg | Out-Null
+  1..3 | ForEach-Object { Copy-Item -LiteralPath $Fixture -Destination (Join-Path $agg "m$_.pdf") }
+  $procs = 1..3 | ForEach-Object {
+    Start-Process -FilePath $Cli -ArgumentList @("merge", "--collect", "`"$(Join-Path $agg "m$_.pdf")`"") `
+      -RedirectStandardOutput (Join-Path $agg "out$_.txt") -RedirectStandardError (Join-Path $agg "err$_.txt") -PassThru
+  }
+  $procs | Wait-Process -Timeout 120
+  $printed = @(Get-ChildItem $agg -Filter "out*.txt" | Get-Content | Where-Object { $_ })
+  if ($printed.Count -ne 1) {
+    Get-ChildItem $agg -Filter "err*.txt" | Get-Content | Write-Host
+    throw "expected exactly one process to act, but $($printed.Count) paths were printed: $printed"
+  }
+  Check-Output "the collected merge" $printed
+}
+
+Step "Explorer right-click menu: install, check, remove" {
+  $base = "HKCU:\Software\Classes\SystemFileAssociations"
+  & $Cli install-verbs
+  if ($LASTEXITCODE -ne 0) { throw "install-verbs exited with $LASTEXITCODE" }
+  $cmd = (Get-ItemProperty -LiteralPath "$base\.pdf\shell\Sheaf\shell\21-compress\command").'(default)'
+  Write-Host "compress verb: $cmd"
+  if ($cmd -notmatch '--collect' -or $cmd -notmatch '--card' -or $cmd -notmatch 'sheaf\.exe') { throw "the compress verb is not what was meant: $cmd" }
+  $preset = (Get-ItemProperty -LiteralPath "$base\.pdf\shell\Sheaf\shell\50-preset0\command").'(default)'
+  if ($preset -notmatch 'preset "Demo scan"') { throw "the preset verb is missing: $preset" }
+  if (-not (Test-Path -LiteralPath "$base\.png\shell\Sheaf\shell\10-open\command")) { throw "no entry for pictures" }
+  & $Cli uninstall-verbs
+  if ($LASTEXITCODE -ne 0) { throw "uninstall-verbs exited with $LASTEXITCODE" }
+  foreach ($ext in "pdf", "png", "jpg") {
+    if (Test-Path -LiteralPath "$base\.$ext\shell\Sheaf") { throw "the entry for .$ext is still there" }
+  }
+  Write-Host "ok   installed, checked and removed"
 }
 
 Step "window with a file open" {

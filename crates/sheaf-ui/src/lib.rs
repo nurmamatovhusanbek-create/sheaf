@@ -19,7 +19,7 @@ pub mod geometry;
 pub mod i18n;
 
 pub use app::{run_window, SheafApp, UiConfig};
-pub use wheel::{run_wheel, take_file_list, WheelApp, WheelConfig};
+pub use wheel::{run_wheel, take_file_list, WheelApp, WheelConfig, WheelJob};
 
 /// What the window and wheel entry points return.
 pub type UiResult = eframe::Result;

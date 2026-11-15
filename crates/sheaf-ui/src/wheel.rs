@@ -9,7 +9,7 @@ use crate::i18n::I18n;
 use eframe::egui::{self, epaint::Mesh, pos2, vec2, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke};
 use sheaf_app::quick::{run_quick, QuickReport};
 use sheaf_app::{App, Engines};
-use sheaf_core::{classify, AppError, FileKind, QuickAction, QuickRequest};
+use sheaf_core::{classify, AppError, ErrorCode, FileKind, QuickAction, QuickRequest};
 use std::f32::consts::TAU;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -86,12 +86,36 @@ pub struct WheelConfig {
     /// Where the wheel's centre goes, in screen points.
     pub at: (i32, i32),
     pub files: Vec<PathBuf>,
+    /// Work to start at once, with no wheel to choose from: the card shows its progress and
+    /// result at `at` (an Explorer verb, FLOW-EXPLORER).
+    pub job: Option<WheelJob>,
+}
+
+/// What the card runs when there is nothing to choose.
+pub enum WheelJob {
+    Quick(QuickRequest),
+    /// A saved preset (PRESET-FORMAT) on files.
+    Preset {
+        name: String,
+        files: Vec<PathBuf>,
+        out: Option<PathBuf>,
+    },
+}
+
+impl WheelJob {
+    pub fn files(&self) -> &[PathBuf] {
+        match self {
+            WheelJob::Quick(r) => &r.files,
+            WheelJob::Preset { files, .. } => files,
+        }
+    }
 }
 
 enum Phase {
     Pick,
     Running {
-        action: QuickAction,
+        /// What is being done, in words.
+        title: String,
         name: String,
         progress: f32,
     },
@@ -152,7 +176,7 @@ impl WheelApp {
         }
     }
 
-    fn start(&mut self, ctx: &egui::Context, action: QuickAction) {
+    fn start(&mut self, ctx: &egui::Context, job: WheelJob) {
         let Some(config) = self.config.take() else { return };
         let (tx, rx) = channel();
         self.rx = Some(rx);
@@ -163,18 +187,21 @@ impl WheelApp {
             x - CARD_W / 2.0,
             y - CARD_H / 2.0,
         )));
-        let name = self
-            .files
+        let name = job
+            .files()
             .first()
             .and_then(|f| f.file_name())
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let title = match &job {
+            WheelJob::Quick(r) => self.t.t(&format!("tool.{}.name", r.action.id())),
+            WheelJob::Preset { name, .. } => self.t.tv("wheel.preset", &[("name", name)]),
+        };
         self.phase = Phase::Running {
-            action,
+            title,
             name,
             progress: 0.0,
         };
-        let request = QuickRequest::new(action, self.files.clone());
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| {
@@ -187,10 +214,24 @@ impl WheelApp {
                 }
                 let progress_tx = tx.clone();
                 let progress_ctx = ctx.clone();
-                let report = run_quick(&mut app, &request, &move |f, name| {
+                let progress = move |f: f32, name: &str| {
                     let _ = progress_tx.send(Work::Progress(f, name.to_string()));
                     progress_ctx.request_repaint();
-                });
+                };
+                let report = match &job {
+                    WheelJob::Quick(request) => run_quick(&mut app, request, &progress),
+                    WheelJob::Preset { name, files, out } => {
+                        let dir = config
+                            .config_dir
+                            .as_deref()
+                            .ok_or_else(|| AppError::new(ErrorCode::Unsupported, "presets need a config folder"))?;
+                        sheaf_store::presets::load(dir, name).and_then(|preset| {
+                            sheaf_app::preset::run_preset(&mut app, &preset, files, out.as_deref(), &progress, &|| {
+                                false
+                            })
+                        })
+                    }
+                };
                 let _ = app.close();
                 report
             })();
@@ -378,7 +419,9 @@ impl WheelApp {
         if let Some(i) = chosen {
             match SLOTS[i] {
                 Slot::Open => self.open_in_main(),
-                Slot::Quick(a) if a.applies_to(&self.kinds) && !self.files.is_empty() => self.start(ctx, a),
+                Slot::Quick(a) if a.applies_to(&self.kinds) && !self.files.is_empty() => {
+                    self.start(ctx, WheelJob::Quick(QuickRequest::new(a, self.files.clone())))
+                }
                 Slot::Quick(_) => {}
             }
         } else if resp.clicked() && pointer.is_some_and(|p| (p - center).length() > OUTER) {
@@ -397,8 +440,8 @@ impl WheelApp {
             .show(ui, |ui| {
                 ui.set_min_width(340.0);
                 match &self.phase {
-                    Phase::Running { action, name, progress } => {
-                        ui.strong(t.t(&format!("tool.{}.name", action.id())));
+                    Phase::Running { title, name, progress } => {
+                        ui.strong(title);
                         ui.label(t.tv("wheel.running", &[("name", name)]));
                         ui.add(egui::ProgressBar::new(*progress).desired_width(f32::INFINITY));
                     }
@@ -484,6 +527,10 @@ impl eframe::App for WheelApp {
                 y - OUTER - 8.0,
             )));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            // An Explorer verb names its work: no wheel to choose from, straight to the card.
+            if let Some(job) = self.config.as_mut().and_then(|c| c.job.take()) {
+                self.start(&ctx, job);
+            }
         }
         let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         // Closes when the person clicks elsewhere (focus lost after having had it), or leaves it alone.
@@ -519,13 +566,18 @@ impl eframe::App for WheelApp {
 
 /// Show the wheel at `config.at`; returns when it closes.
 pub fn run_wheel(config: WheelConfig) -> eframe::Result {
-    let size = 2.0 * OUTER + 16.0;
+    // A verb's job goes straight to the card, so the window starts card-sized.
+    let (w, h) = if config.job.is_some() {
+        (CARD_W, CARD_H)
+    } else {
+        (2.0 * OUTER + 16.0, 2.0 * OUTER + 16.0)
+    };
     let (x, y) = (config.at.0 as f32, config.at.1 as f32);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Sheaf")
-            .with_inner_size([size, size])
-            .with_position([x - size / 2.0, y - size / 2.0])
+            .with_inner_size([w, h])
+            .with_position([x - w / 2.0, y - h / 2.0])
             .with_decorations(false)
             .with_transparent(true)
             .with_always_on_top()

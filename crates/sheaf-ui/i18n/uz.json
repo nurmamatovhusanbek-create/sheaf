@@ -419,6 +419,7 @@
  "wheel.open": "Sheafda ochish",
  "wheel.open_result": "Natijani Sheafda ochish",
  "wheel.partial": "Tayyor, lekin muammolar bor",
+ "wheel.preset": "Andoza: {name}",
  "wheel.problem": "{name}: {why}",
  "wheel.running": "{name} ustida ishlanmoqda …",
  "wheel.show": "Papkada koʻrsatish"
