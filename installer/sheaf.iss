@@ -38,12 +38,21 @@ Source: "{#Stage}\sheaf-worker.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\THIRD_PARTY_LICENSES"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\vendor\*"; DestDir: "{app}\vendor"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[Tasks]
+; The action wheel needs its small helper to be running; offering to start it at sign-in makes it work with no further steps.
+Name: "wheel"; Description: "Start the action wheel when I sign in"; GroupDescription: "Quick actions:"
+
+[Registry]
+; The same value the helper's own tray menu ("Start with Windows") writes, so its check mark agrees.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Sheaf"; ValueData: """{app}\sheaf.exe"" tray"; Flags: uninsdeletevalue; Tasks: wheel
+
 [Icons]
 Name: "{autoprograms}\Sheaf"; Filename: "{app}\sheaf.exe"
 
 [Run]
 ; The right-click menu (current user). The console twin is used so that Setup waits for it.
 Filename: "{app}\sheafc.exe"; Parameters: "install-verbs"; Flags: runhidden waituntilterminated; StatusMsg: "Adding Sheaf to the right-click menu..."
+Filename: "{app}\sheaf.exe"; Parameters: "tray"; Description: "Start the action wheel now"; Flags: nowait postinstall skipifsilent; Tasks: wheel
 Filename: "{app}\sheaf.exe"; Description: "Start Sheaf"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]

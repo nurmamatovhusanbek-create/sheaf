@@ -18,7 +18,6 @@ use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 /// How the app starts.
 pub struct UiConfig {
@@ -63,6 +62,10 @@ pub enum Msg {
     RepairFiles(Vec<PathBuf>),
     /// Work for the document information dialog.
     Meta(crate::meta_ui::MetaMsg),
+    /// Work for the problem report window.
+    Report(crate::report::ReportMsg),
+    /// A helper thread's result for the welcome window.
+    Say(crate::about::Say),
 }
 
 struct ChannelEmit {
@@ -77,13 +80,6 @@ impl Emit for ChannelEmit {
     }
 }
 
-pub struct Toast {
-    pub text: String,
-    pub detail: String,
-    pub error: bool,
-    pub until: Instant,
-}
-
 pub enum Modal {
     Export(crate::dialogs::ExportForm),
     Settings(crate::dialogs::SettingsForm),
@@ -91,6 +87,11 @@ pub enum Modal {
     Scan(crate::dialogs::ScanForm),
     Presets(crate::presets_ui::PresetsForm),
     Info(crate::meta_ui::MetaForm),
+    /// Details of one error (by its id in the notification history).
+    Error(u64),
+    Report(crate::report::ReportForm),
+    About,
+    Welcome,
 }
 
 #[derive(Default)]
@@ -128,7 +129,11 @@ pub struct SheafApp {
     pub(crate) preview: crate::preview::PreviewState,
     pub(crate) side: crate::side::SideState,
     pub(crate) search: crate::search::SearchState,
-    pub(crate) toasts: Vec<Toast>,
+    pub(crate) notices: crate::notify::Notices,
+    pub(crate) help: Option<crate::help::HelpState>,
+    /// Where settings live (`None`: kept in memory only) and where scratch sessions are made.
+    pub(crate) config_dir: Option<PathBuf>,
+    pub(crate) base_dir: PathBuf,
     pub(crate) modal: Option<Modal>,
     pub(crate) locked_queue: VecDeque<SourceDto>,
     /// What the Scan dialog had last time, so the next scan starts from it.
@@ -143,6 +148,7 @@ impl SheafApp {
         let ctx = cc.egui_ctx.clone();
         let mut fatal = None;
         let mut font_path = None;
+        let (config_dir_keep, base_dir_keep) = (config.config_dir.clone(), config.base_dir.clone());
         let backend = match config.engines {
             Ok(engines) => {
                 font_path = engines.font.clone();
@@ -171,6 +177,7 @@ impl SheafApp {
             }
         };
         let settings = backend.as_ref().map(|b| b.settings());
+        let (config_dir, base_dir) = (config_dir_keep, base_dir_keep);
         let lang = settings.as_ref().map_or("en", |s| s.language.as_str()).to_string();
         let mut app = SheafApp {
             backend,
@@ -212,7 +219,10 @@ impl SheafApp {
             preview: Default::default(),
             side: Default::default(),
             search: Default::default(),
-            toasts: Vec::new(),
+            notices: Default::default(),
+            help: None,
+            config_dir: config_dir.clone(),
+            base_dir: base_dir.clone(),
             modal: None,
             locked_queue: VecDeque::new(),
             scan_prefs: Default::default(),
@@ -222,6 +232,9 @@ impl SheafApp {
         crate::theme::install_fonts(&ctx, font_path.as_deref());
         app.font_installed = true;
         crate::theme::apply(&ctx, &app.settings.theme);
+        if app.backend.is_some() && crate::about::welcome_due(app.config_dir.as_deref(), !config.files.is_empty()) {
+            app.modal = Some(Modal::Welcome);
+        }
         if app.backend.is_some() {
             app.refresh();
             if !config.files.is_empty() {
@@ -244,28 +257,6 @@ impl SheafApp {
             let _ = tx.send(work(backend));
             ctx.request_repaint();
         });
-    }
-
-    pub(crate) fn toast(&mut self, text: impl Into<String>, detail: impl Into<String>, error: bool) {
-        self.toasts.push(Toast {
-            text: text.into(),
-            detail: detail.into(),
-            error,
-            until: Instant::now() + Duration::from_secs(7),
-        });
-        if self.toasts.len() > 4 {
-            self.toasts.remove(0);
-        }
-    }
-
-    pub(crate) fn show_error(&mut self, e: &ErrorDto) {
-        let key = if e.key.starts_with("error.") {
-            e.key
-        } else {
-            "error.internal"
-        };
-        let text = self.t.t(key);
-        self.toast(text, e.msg.clone(), true);
     }
 
     /// Re-read the page list and the snapshot, coalescing bursts of events.
@@ -340,6 +331,8 @@ impl SheafApp {
                 Msg::Search(r) => self.search.on_result(r),
                 Msg::Preset(m) => self.on_preset_msg(m),
                 Msg::Meta(m) => self.on_meta_msg(m),
+                Msg::Report(m) => self.on_report_msg(m),
+                Msg::Say(m) => self.on_say(m),
                 Msg::RepairFiles(files) => self.start_job(move |b| b.repair_run(files)),
                 Msg::ScanDevices(r) => {
                     if let Some(Modal::Scan(f)) = &mut self.modal {
@@ -508,6 +501,7 @@ impl SheafApp {
             t.t("toolbar.settings"),
         );
         let (scan, presets) = (t.t("toolbar.scan"), t.t("toolbar.presets"));
+        let help_tip = format!("{}  F1", t.t("help.tooltip"));
         let ocr_off = self.settings.ocr_mode == "Off";
         let (can_undo, can_redo) = (self.can_undo, self.can_redo);
         ui.horizontal(|ui| {
@@ -547,6 +541,10 @@ impl SheafApp {
                 if icon_button(ui, Icon::Settings, &settings).clicked() {
                     self.modal = Some(Modal::Settings(crate::dialogs::SettingsForm::new(&self.settings)));
                 }
+                if icon_button(ui, Icon::Help, &help_tip).clicked() {
+                    self.toggle_help();
+                }
+                self.bell(ui);
                 ui.add_enabled_ui(!no_pages, |ui| {
                     if labeled_button(ui, Icon::Export, &export, true, "Ctrl+E").clicked() {
                         self.open_export(false);
@@ -736,49 +734,6 @@ impl SheafApp {
         }
     }
 
-    fn toasts(&mut self, ctx: &egui::Context) {
-        let now = Instant::now();
-        self.toasts.retain(|t| t.until > now);
-        if self.toasts.is_empty() {
-            return;
-        }
-        ctx.request_repaint_after(Duration::from_millis(500));
-        let mut dismiss = None;
-        egui::Area::new(egui::Id::unique("toasts"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-14.0, -56.0))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                for (i, toast) in self.toasts.iter().enumerate() {
-                    egui::Frame::popup(ui.style())
-                        .stroke(egui::Stroke::new(
-                            1.5,
-                            if toast.error {
-                                ui.visuals().error_fg_color
-                            } else {
-                                ui.visuals().selection.bg_fill
-                            },
-                        ))
-                        .show(ui, |ui| {
-                            ui.set_max_width(380.0);
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.label(&toast.text);
-                                    if !toast.detail.is_empty() {
-                                        ui.label(egui::RichText::new(&toast.detail).small().weak());
-                                    }
-                                });
-                                if ui.small_button("x").clicked() {
-                                    dismiss = Some(i);
-                                }
-                            });
-                        });
-                }
-            });
-        if let Some(i) = dismiss {
-            self.toasts.remove(i);
-        }
-    }
-
     // ---- drag and drop ----------------------------------------------------------
 
     fn drops(&mut self, ctx: &egui::Context) {
@@ -840,6 +795,9 @@ impl eframe::App for SheafApp {
             self.fatal_screen(ui);
             return;
         }
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F1)) {
+            self.toggle_help();
+        }
         self.shortcuts(&ctx);
         self.drops(&ctx);
 
@@ -873,7 +831,9 @@ impl eframe::App for SheafApp {
         egui::CentralPanel::default().show(ui, |ui| self.preview_ui(ui));
 
         self.modal_ui(&ctx);
-        self.toasts(&ctx);
+        self.help_ui(&ctx);
+        self.history_ui(&ctx);
+        self.toasts_ui(&ctx);
     }
 }
 

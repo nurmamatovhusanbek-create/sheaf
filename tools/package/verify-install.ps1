@@ -22,7 +22,9 @@ foreach ($f in "sheaf.exe", "sheafc.exe", "sheaf-worker.exe", "THIRD_PARTY_LICEN
 }
 $verb = "HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\Sheaf\shell\21-compress\command"
 if (-not (Test-Path -LiteralPath $verb)) { throw "the installer did not add the right-click menu" }
-Write-Host "ok   installed to $target, right-click menu present"
+$run = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Sheaf" -ErrorAction SilentlyContinue).Sheaf
+if (-not $run -or -not $run.EndsWith('sheaf.exe" tray')) { throw "the installer did not set the action wheel to start at sign-in (found: $run)" }
+Write-Host "ok   installed to $target, right-click menu present, action wheel starts at sign-in"
 
 Write-Host "== the installed program, through the smoke test"
 & (Join-Path $here "..\smoke\windows.ps1") -Exe (Join-Path $target "sheaf.exe") -Fixture $Fixture
@@ -41,5 +43,6 @@ $deadline = (Get-Date).AddSeconds(30)
 while ((Test-Path (Join-Path $target "sheaf.exe")) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
 if (Test-Path (Join-Path $target "sheaf.exe")) { throw "sheaf.exe is still installed after uninstalling" }
 if (Test-Path -LiteralPath "HKCU:\Software\Classes\SystemFileAssociations\.pdf\shell\Sheaf") { throw "the right-click menu is still there after uninstalling" }
-Write-Host "ok   removed, right-click menu gone"
+if (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "Sheaf" -ErrorAction SilentlyContinue) { throw "the sign-in entry is still there after uninstalling" }
+Write-Host "ok   removed, right-click menu and sign-in entry gone"
 Write-Host "`ninstall test passed"

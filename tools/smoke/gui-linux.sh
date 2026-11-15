@@ -19,6 +19,8 @@ trap 'kill $(jobs -p) 2>/dev/null || true; rm -rf "$work"' EXIT
 
 export DISPLAY=:77 LIBGL_ALWAYS_SOFTWARE=1 HOME="$work/home" XDG_CONFIG_HOME="$work/home/c" XDG_CACHE_HOME="$work/home/k"
 mkdir -p "$HOME"
+# Every step but the welcome one starts from a configuration that has already seen the welcome window.
+mkdir -p "$XDG_CONFIG_HOME/Sheaf"; touch "$XDG_CONFIG_HOME/Sheaf/welcome-seen"
 Xvfb :77 -screen 0 1400x900x24 >/dev/null 2>&1 &
 sleep 2
 
@@ -168,6 +170,47 @@ echo "colours on screen: $n"
 [ "$n" -gt 100 ] || { echo "FAIL the wheel drew almost nothing"; exit 1; }
 [ ! -e "$work/list.txt" ] || { echo "FAIL the file list was not consumed"; exit 1; }
 kill "$wheel"; wait "$wheel" 2>/dev/null || true
+
+echo "== messages and help: welcome on a first start, an error with details and a report, the help center"
+fresh="$work/fresh"; mkdir -p "$fresh"
+XDG_CONFIG_HOME="$fresh" "$sheaf" &
+wel=$!
+sleep 9
+import -window root "$out/welcome.png"
+convert "$out/welcome.png" -crop 400x40+373+195 +repage -resize 300% -colorspace Gray -negate "$work/w.png"
+read_w="$(tesseract "$work/w.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
+echo "welcome reads: $read_w"
+case "$read_w" in *Welcome*) ;; *) echo "FAIL the welcome window did not appear on a first start"; exit 1;; esac
+xdotool mousemove 850 607 click 1; sleep 2   # Get started
+[ -f "$fresh/Sheaf/welcome-seen" ] || { echo "FAIL the welcome window does not remember it was seen"; exit 1; }
+kill "$wel"; wait "$wel" 2>/dev/null || true
+
+echo "not a pdf" > "$work/bad.pdf"
+"$sheaf" open "$work/bad.pdf" &
+err=$!
+sleep 10
+import -window root "$out/error-toast.png"
+xdotool mousemove 1084 731 click 1; sleep 2   # Details, in the error toast
+import -window root "$out/error-details.png"
+convert "$out/error-details.png" -crop 470x40+403+330 +repage -resize 300% -colorspace Gray -negate "$work/e.png"
+read_e="$(tesseract "$work/e.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
+echo "error details read: $read_e"
+case "$read_e" in *"not available"*) ;; *) echo "FAIL the error details did not open"; exit 1;; esac
+xdotool mousemove 543 472 click 1; sleep 3   # Report a problem
+import -window root "$out/report.png"
+convert "$out/report.png" -crop 580x460+350+130 +repage -resize 200% -colorspace Gray -negate "$work/r.png"
+read_r="$(tesseract "$work/r.png" stdout --psm 6 2>/dev/null | tr '\n' ' ')"
+echo "report reads: $read_r"
+case "$read_r" in *"Report a problem"*) ;; *) echo "FAIL the report window did not open"; exit 1;; esac
+case "$read_r" in *Unsupported*) ;; *) echo "FAIL the report does not list the error"; exit 1;; esac
+xdotool mousemove 889 666 click 1; sleep 1   # Close
+xdotool mousemove 1214 25 click 1; sleep 3   # Help
+import -window root "$out/help.png"
+convert "$out/help.png" -crop 740x540+20+20 +repage -resize 200% -colorspace Gray -negate "$work/h.png"
+read_h="$(tesseract "$work/h.png" stdout --psm 6 2>/dev/null | tr '\n' ' ')"
+echo "help reads: $read_h"
+case "$read_h" in *"Getting started"*) ;; *) echo "FAIL the help center did not open"; exit 1;; esac
+kill "$err"; wait "$err" 2>/dev/null || true
 
 echo "== headless action"
 "$sheaf" run compress "$work/a.pdf" "$work/b.pdf" > "$out/run.txt"

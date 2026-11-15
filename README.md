@@ -65,6 +65,12 @@ split pdf2img img2pdf rotate`. Results land beside the first input under a new n
 The app finds `vendor/` next to the executable or in the checkout above it (or `SHEAF_VENDOR_DIR`).
 Settings live in `%APPDATA%\Sheaf` (the hotkey too), the session in `%LOCALAPPDATA%\Sheaf` and is deleted on exit.
 
+Help is built in (F1, or the ? in the top bar; English, Russian and Uzbek, searchable). Messages are kept under the bell;
+an error has a Details window with what to try, and "Report a problem" builds a text report on screen that you copy or
+save and send yourself: the program has no network, and the report holds no documents, file names or folder names.
+The first start shows a Welcome window (start the action wheel, add the right-click menu). The installer is not signed
+yet, so Windows may show "unknown publisher": choose More info, then Run anyway.
+
 ## Trying it
 
 ```bash

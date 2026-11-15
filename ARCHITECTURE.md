@@ -719,6 +719,10 @@ Single window. No tabs, no nested modals deeper than one level. Labels come from
 | <a id="ui-jobbar"></a> | Job bar | One row per running job, cancel, "Reveal in Explorer" | [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-REVEAL`](#cmd-reveal), [`EVT-JOB`](#evt-job) |
 | <a id="ui-shortcuts"></a> | Shortcuts | Ctrl+O open, Ctrl+Shift+S scan, Ctrl+E export, Ctrl+Z/Y undo/redo, R / Shift+R rotate, Del delete, Ctrl+D duplicate, F OCR selection, Ctrl+F search, Space preview | [`CMD-APPLY`](#cmd-apply), [`CMD-OCR-RUN`](#cmd-ocr-run) |
 | <a id="ui-wheel"></a> | Action wheel | A radial overlay at the cursor; eight fixed slots, dimmed when they do not fit the selected files; click or a digit chooses; Compress (three levels) and OCR (detect, English, Russian, Uzbek Latin, Uzbek Cyrillic) show their options in a flyout beside the ring when the pointer rests on them, marked by a small arrow; the flyout stays open while the pointer travels toward it, even across other slots, by the safe triangle (menu-aim: the triangle from where the pointer left the slot to the flyout's near edge, tolerated for under a second and only while moving; a pointer that stops follows what is under it); the same window then shows progress and the result ([`FLOW-WHEEL`](#flow-wheel)). The window is transparent; under the Direct3D 12 fallback that needs the DirectComposition swap chain (the plain window one cannot be transparent) and a window created without a redirection bitmap, or the corners show as an opaque white rectangle (seen on the Windows CI runner, which is how it was found). egui cannot ask for that, so `third_party/egui-winit` is the published 0.37.0 with one change (used through `[patch.crates-io]`, listed in `THIRD_PARTY_LICENSES`); the overlay asks for the visual swap chain and the main window does not. The Windows smoke photographs the screen before and after the overlay appears and checks that its four corners did not change | [`MOD-APP`](#mod-app) `quick` |
+| <a id="ui-notify"></a> | Notifications | Every message is a note in a history of fifty: plain ones (done, warning) show as a toast and leave by themselves, errors stay until closed; a bell in the top bar shows what has not been seen and opens the history; an error opens a details window (what happened, what to try, technical detail, Copy, Report a problem, Help). A cancelled job is a plain note, not an error. Notes hold only what the error already carries, never document text ([`SEC-LOG`](#sec-log)) | [`FLOW-ERROR`](#flow-error), [`EVT-JOB`](#evt-job) |
+| <a id="ui-report"></a> | Problem report | The program has no network ([`SEC-NONET`](#sec-nonet)), so a report is text on the screen that the person copies or saves and sends themselves: version, system, renderer, component state, settings that matter, the last ten errors, and what the person adds. Error text and the person's words are scrubbed of paths, file names and e-mail addresses first, so it holds no documents, file names or folder names; a test checks this. The place to send it is one constant in the code | [`SEC-NONET`](#sec-nonet), [`SEC-LOG`](#sec-log) |
+| <a id="ui-help"></a> | Help center | Part of the program, nothing to download: twelve topics (getting started, files and limits, pages, tools, OCR, scanning, presets, wheel, right-click menu, shortcuts, privacy, trouble) in English, Russian and Uzbek, searchable, opened by F1, the top bar, the About window or the Help link on any error (each error code points to a topic; tests check that every topic exists and that the numbers in the text are the ones the program uses) | [`ADR-I18N`](#adr-i18n), [`UI-NOTIFY`](#ui-notify) |
+| <a id="ui-about"></a> | About and Welcome | About: version, component state, where settings and scratch files live, the licence file, links to Help and Report. Welcome: shown once, on a first start with no file to open (a marker file in the settings folder), with the two things that are not obvious: start the action wheel, add the right-click menu. The installer also offers to start the wheel helper at sign-in (a task, on by default), using the same registry value as the helper's own menu | [`ADR-WHEEL`](#adr-wheel), [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs) |
 
 Keyboard map: [`UI-SHORTCUTS`](#ui-shortcuts). Accessibility: full keyboard path for every action, visible focus, no information by color alone (badges also carry text/icons), respects OS text scale and dark mode. On Windows the window exposes itself to screen readers through UI Automation (AccessKit); on other systems that part is not built, because its Linux backend would bring in a D-Bus stack with an async runtime ([`SEC-NONET`](#sec-nonet)).
 
@@ -755,6 +759,7 @@ Born-digital PDF with text; scanned PDF without text (Uzbek Latin, Uzbek Cyrilli
 | <a id="test-sec"></a> | No listening ports; non-local requests blocked; command-layer checks (bad ids, huge ranges); hostile inputs through the real import and render path (48 deterministic mutations of a valid PDF, crafted page trees and page sizes, PNG decompression bombs): an answer within a time bound, never a crash or hang, and the next ordinary file still opens; the Job Object kills what is in it; a changed bundled file stops every mode; path traversal, device names, ADS; oversized inputs rejected; session dir removed on exit; bounded reads of the file lists handed between processes (size, count, path length); the Windows job's limits read back from the system |
 | <a id="test-ui"></a> | The three language files have the same keys, placeholders and plural forms and every key the code asks for exists; crop geometry round-trips through every rotation; job result sentences; and `tools/smoke/gui-linux.sh` starts the real window with a file and the real wheel on two PDFs under Xvfb, checks that real content was drawn and that a headless `run` writes its output |
 | <a id="test-wheel"></a> | The wheel: the safe-triangle logic with a path that crosses another item (it stays open), a path away (it follows), a stop or a long wobble (it follows), leaving the window; the flyout layout (clear of the ring, inside the window, facing the ring, no overlap) and which slots have options; the Linux smoke drives the real wheel with mouse moves across the gap beside the ring and reads the lit option off the screen, then stops in the gap and sees it close; sector hit-testing, which slots apply to which files, the file list read once and removed; quick actions through the real worker (merge order and naming, compress, split, rotate, pictures, OCR, bad inputs, locked files, no overwrite); the argument grammar including every bad input; and the Windows smoke script ([`RISK-WIN-SHELL`](#risk-win-shell)) |
+| <a id="test-messages"></a> | Messages, report, help, welcome: the notification list (toasts leave, errors stay, the bell counts, the history is bounded, newest toasts shown), every error code has a message, a hint and a help topic in every language, the report scrubber (paths, file names, e-mail addresses out; ordinary words kept) and the report content (what is needed in, nothing personal), help topics exist in every language and quote the numbers the program really uses, help search in each language, the welcome window shows once; the Linux smoke reads the welcome window, an error's details, the report and the help center off the screen | [`UI-NOTIFY`](#ui-notify), [`UI-REPORT`](#ui-report), [`UI-HELP`](#ui-help), [`UI-ABOUT`](#ui-about) |
 | <a id="test-merge"></a> | Page count and order; untouched pages byte-identical objects where possible; forms behavior documented |
 | <a id="test-split"></a> | Each [`DATA-SPLITRULE`](#data-splitrule); names from [`DATA-NAMEPATTERN`](#data-namepattern); no page lost or duplicated |
 | <a id="test-pageops"></a> | Extract, remove, reorder, rotate produce expected page sequence and `/Rotate` |
@@ -871,8 +876,8 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | ID | Kind | Referenced by |
 |---|---|---|
 | [`ADR-APP-CRATE`](#adr-app-crate) | ADR | [`MOD-APP`](#mod-app) |
-| [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs) | ADR | [`CLI-GRAMMAR`](#cli-grammar), [`DOC-BUILD`](#doc-build) |
-| [`ADR-I18N`](#adr-i18n) | ADR | [`DOC-UI`](#doc-ui), [`MOD-UI`](#mod-ui), [`PH-4`](#ph-4) |
+| [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs) | ADR | [`CLI-GRAMMAR`](#cli-grammar), [`DOC-BUILD`](#doc-build), [`UI-ABOUT`](#ui-about) |
+| [`ADR-I18N`](#adr-i18n) | ADR | [`DOC-UI`](#doc-ui), [`MOD-UI`](#mod-ui), [`PH-4`](#ph-4), [`UI-HELP`](#ui-help) |
 | [`ADR-NATIVE-UI`](#adr-native-ui) | ADR | [`ADR-TAURI`](#adr-tauri), [`ADR-VANILLA-UI`](#adr-vanilla-ui), [`DOC-BUILD`](#doc-build), [`MOD-UI`](#mod-ui), [`RISK-WEBVIEW2`](#risk-webview2), [`RISK-WIN-SHELL`](#risk-win-shell), [`SEC-NONET`](#sec-nonet), [`TOOL-HTML2PDF`](#tool-html2pdf) |
 | [`ADR-NO-OVERWRITE`](#adr-no-overwrite) | ADR | [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-TOOLS`](#doc-tools), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`FLOW-PRESET`](#flow-preset), [`FLOW-WHEEL`](#flow-wheel), [`SEC-PATHS`](#sec-paths) |
 | [`ADR-NO-VLM-DEFAULT`](#adr-no-vlm-default) | ADR | [`OCR-ENGINES`](#ocr-engines) |
@@ -884,7 +889,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`ADR-TESS-SIDECAR`](#adr-tess-sidecar) | ADR | [`OCR-ENGINES`](#ocr-engines), [`PERF-OCR`](#perf-ocr) |
 | [`ADR-UI-REORDER`](#adr-ui-reorder) | ADR | [`DOC-UI`](#doc-ui) |
 | [`ADR-VANILLA-UI`](#adr-vanilla-ui) | ADR | (nothing; entry point or leaf) |
-| [`ADR-WHEEL`](#adr-wheel) | ADR | [`CLI-GRAMMAR`](#cli-grammar), [`FLOW-WHEEL`](#flow-wheel), [`GOAL-WHEEL`](#goal-wheel), [`MOD-CORE`](#mod-core), [`PH-4`](#ph-4) |
+| [`ADR-WHEEL`](#adr-wheel) | ADR | [`CLI-GRAMMAR`](#cli-grammar), [`FLOW-WHEEL`](#flow-wheel), [`GOAL-WHEEL`](#goal-wheel), [`MOD-CORE`](#mod-core), [`PH-4`](#ph-4), [`UI-ABOUT`](#ui-about) |
 | [`ADR-WIA`](#adr-wia) | ADR | [`MOD-SCAN`](#mod-scan) |
 | [`ADR-WORKER-PROCS`](#adr-worker-procs) | ADR | [`PERF-PARALLEL`](#perf-parallel), [`RISK-PDFIUM-THREADS`](#risk-pdfium-threads), [`SEC-ISOLATE`](#sec-isolate) |
 | [`CLI-GRAMMAR`](#cli-grammar) | CLI | [`ADR-EXPLORER-VERBS`](#adr-explorer-verbs), [`DOC-BUILD`](#doc-build), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`MOD-CLI`](#mod-cli), [`PRESET-FORMAT`](#preset-format), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi) |
@@ -948,12 +953,12 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`EVT-ENGINES`](#evt-engines) | EVT | (nothing; entry point or leaf) |
 | [`EVT-ERROR`](#evt-error) | EVT | [`DOC-AGENT-RULES`](#doc-agent-rules), [`FLOW-ERROR`](#flow-error), [`SCAN-FAILURES`](#scan-failures) |
 | [`EVT-IMPORT`](#evt-import) | EVT | (nothing; entry point or leaf) |
-| [`EVT-JOB`](#evt-job) | EVT | [`DOC-IPC`](#doc-ipc), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-APP`](#mod-app), [`UI-JOBBAR`](#ui-jobbar) |
+| [`EVT-JOB`](#evt-job) | EVT | [`DOC-IPC`](#doc-ipc), [`FLOW-SCAN-LIVE`](#flow-scan-live), [`FLOW-TOOL-RUN`](#flow-tool-run), [`MOD-APP`](#mod-app), [`UI-JOBBAR`](#ui-jobbar), [`UI-NOTIFY`](#ui-notify) |
 | [`EVT-PAGE-READY`](#evt-page-ready) | EVT | [`FLOW-SCAN-LIVE`](#flow-scan-live), [`OCR-PIPELINE`](#ocr-pipeline) |
 | [`EVT-PAGES`](#evt-pages) | EVT | [`FLOW-EDIT`](#flow-edit), [`FLOW-IMPORT`](#flow-import) |
 | [`EVT-SCAN-PAGE`](#evt-scan-page) | EVT | [`FLOW-SCAN-LIVE`](#flow-scan-live) |
 | [`FLOW-EDIT`](#flow-edit) | FLOW | (nothing; entry point or leaf) |
-| [`FLOW-ERROR`](#flow-error) | FLOW | [`DOC-AGENT-RULES`](#doc-agent-rules), [`FLOW-WHEEL`](#flow-wheel) |
+| [`FLOW-ERROR`](#flow-error) | FLOW | [`DOC-AGENT-RULES`](#doc-agent-rules), [`FLOW-WHEEL`](#flow-wheel), [`UI-NOTIFY`](#ui-notify) |
 | [`FLOW-EXPLORER`](#flow-explorer) | FLOW | [`CLI-GRAMMAR`](#cli-grammar), [`MOD-CLI`](#mod-cli), [`PH-6`](#ph-6), [`RISK-EXPLORER-MULTI`](#risk-explorer-multi) |
 | [`FLOW-EXPORT`](#flow-export) | FLOW | (nothing; entry point or leaf) |
 | [`FLOW-IMPORT`](#flow-import) | FLOW | [`FLOW-EXPLORER`](#flow-explorer) |
@@ -1041,8 +1046,8 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`SEC-IPC`](#sec-ipc) | SEC | [`DOC-IPC`](#doc-ipc), [`MOD-APP`](#mod-app), [`PROC-UI`](#proc-ui) |
 | [`SEC-ISOLATE`](#sec-isolate) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules), [`GOAL-SECURE`](#goal-secure), [`MOD-JOBS`](#mod-jobs) |
 | [`SEC-LIMITS`](#sec-limits) | SEC | [`FLOW-IMPORT`](#flow-import), [`MOD-SCAN`](#mod-scan), [`RISK-LARGE-SCANS`](#risk-large-scans), [`SCAN-FAILURES`](#scan-failures) |
-| [`SEC-LOG`](#sec-log) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules) |
-| [`SEC-NONET`](#sec-nonet) | SEC | [`ADR-OFFLINE-ASSETS`](#adr-offline-assets), [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-BUILD`](#doc-build), [`DOC-UI`](#doc-ui), [`GOAL-SECURE`](#goal-secure), [`SCAN-BACKEND`](#scan-backend) |
+| [`SEC-LOG`](#sec-log) | SEC | [`DOC-AGENT-RULES`](#doc-agent-rules), [`UI-NOTIFY`](#ui-notify), [`UI-REPORT`](#ui-report) |
+| [`SEC-NONET`](#sec-nonet) | SEC | [`ADR-OFFLINE-ASSETS`](#adr-offline-assets), [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-BUILD`](#doc-build), [`DOC-UI`](#doc-ui), [`GOAL-SECURE`](#goal-secure), [`SCAN-BACKEND`](#scan-backend), [`UI-REPORT`](#ui-report) |
 | [`SEC-PATHS`](#sec-paths) | SEC | [`CLI-GRAMMAR`](#cli-grammar), [`DATA-WORKERPROTO`](#data-workerproto), [`DOC-AGENT-RULES`](#doc-agent-rules), [`DOC-IPC`](#doc-ipc), [`FLOW-IMPORT`](#flow-import), [`MOD-STORE`](#mod-store), [`PROC-TRAY`](#proc-tray) |
 | [`SEC-SECRETS`](#sec-secrets) | SEC | [`DOC-TOOLS`](#doc-tools), [`MOD-APP`](#mod-app), [`PRESET-FORMAT`](#preset-format) |
 | [`SEC-SIGN`](#sec-sign) | SEC | [`DOC-BUILD`](#doc-build), [`MOD-SHELL`](#mod-shell), [`RISK-SMARTSCREEN`](#risk-smartscreen) |
@@ -1061,6 +1066,7 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`TEST-JOBS`](#test-jobs) | TEST | [`DOC-TRACE`](#doc-trace), [`MOD-JOBS`](#mod-jobs), [`PH-1`](#ph-1), [`SEC-ISOLATE`](#sec-isolate) |
 | [`TEST-MATRIX`](#test-matrix) | TEST | [`DOC-BUILD`](#doc-build), [`NG-XPLAT`](#ng-xplat), [`SCAN-BACKEND`](#scan-backend) |
 | [`TEST-MERGE`](#test-merge) | TEST | [`DOC-TRACE`](#doc-trace), [`TOOL-MERGE`](#tool-merge) |
+| [`TEST-MESSAGES`](#test-messages) | TEST | (nothing; entry point or leaf) |
 | [`TEST-METADATA`](#test-metadata) | TEST | [`DOC-TRACE`](#doc-trace), [`PH-7`](#ph-7), [`TOOL-METADATA`](#tool-metadata) |
 | [`TEST-OCR`](#test-ocr) | TEST | [`ADR-NO-VLM-DEFAULT`](#adr-no-vlm-default), [`DOC-TRACE`](#doc-trace), [`MOD-OCR`](#mod-ocr), [`OCR-ENGINES`](#ocr-engines), [`OCR-LANGS`](#ocr-langs), [`PH-2`](#ph-2), [`RISK-OCR-ACCURACY`](#risk-ocr-accuracy), [`TOOL-OCR`](#tool-ocr) |
 | [`TEST-OPS`](#test-ops) | TEST | [`DATA-OP`](#data-op), [`DOC-TRACE`](#doc-trace), [`MOD-CORE`](#mod-core), [`PH-1`](#ph-1) |
@@ -1098,12 +1104,16 @@ Every ID, what it is, and everything that references it. Generated by `tools/lin
 | [`TOOL-SPLIT`](#tool-split) | TOOL | [`DATA-SPLITRULE`](#data-splitrule), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`FLOW-EXPORT`](#flow-export), [`PH-3`](#ph-3) |
 | [`TOOL-UNLOCK`](#tool-unlock) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`NG-CRACK`](#ng-crack), [`PH-3`](#ph-3), [`RISK-LOPDF-ENC`](#risk-lopdf-enc) |
 | [`TOOL-WATERMARK`](#tool-watermark) | TOOL | [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`MOD-PDF`](#mod-pdf), [`PH-3`](#ph-3) |
+| [`UI-ABOUT`](#ui-about) | UI | [`TEST-MESSAGES`](#test-messages) |
 | [`UI-DRAWER`](#ui-drawer) | UI | [`CMD-TOOL-RUN`](#cmd-tool-run), [`CMD-UNLOCK-PW`](#cmd-unlock-pw), [`DOC-TOOLS`](#doc-tools), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`FLOW-TOOL-RUN`](#flow-tool-run), [`GOAL-COMPACT`](#goal-compact) |
 | [`UI-EXPORTDLG`](#ui-exportdlg) | UI | [`CMD-EXPORT`](#cmd-export), [`DOC-TRACE`](#doc-trace), [`FLOW-EXPORT`](#flow-export) |
+| [`UI-HELP`](#ui-help) | UI | [`TEST-MESSAGES`](#test-messages) |
 | [`UI-JOBBAR`](#ui-jobbar) | UI | [`CMD-JOB-CANCEL`](#cmd-job-cancel), [`CMD-REVEAL`](#cmd-reveal), [`CMD-SCAN-CANCEL`](#cmd-scan-cancel), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`FLOW-TOOL-RUN`](#flow-tool-run) |
+| [`UI-NOTIFY`](#ui-notify) | UI | [`TEST-MESSAGES`](#test-messages), [`UI-HELP`](#ui-help) |
 | [`UI-OCRPANEL`](#ui-ocrpanel) | UI | [`CMD-OCR-RESULT`](#cmd-ocr-result), [`CMD-OCR-RUN`](#cmd-ocr-run), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`FLOW-OCR-MANUAL`](#flow-ocr-manual), [`OCR-CONF-UI`](#ocr-conf-ui) |
 | [`UI-PRESETS`](#ui-presets) | UI | [`CMD-PRESETS`](#cmd-presets), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`PRESET-FORMAT`](#preset-format) |
 | [`UI-PREVIEW`](#ui-preview) | UI | [`CMD-APPLY`](#cmd-apply), [`CMD-OCR-RESULT`](#cmd-ocr-result), [`CMD-RENDER`](#cmd-render), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui) |
+| [`UI-REPORT`](#ui-report) | UI | [`TEST-MESSAGES`](#test-messages) |
 | [`UI-SCANDLG`](#ui-scandlg) | UI | [`CMD-SCAN-DEVICES`](#cmd-scan-devices), [`CMD-SCAN-START`](#cmd-scan-start), [`DOC-TRACE`](#doc-trace), [`DOC-UI`](#doc-ui), [`PH-5`](#ph-5) |
 | [`UI-SEARCH`](#ui-search) | UI | [`CMD-SEARCH`](#cmd-search), [`DOC-TRACE`](#doc-trace) |
 | [`UI-SETTINGS`](#ui-settings) | UI | [`CMD-SETTINGS`](#cmd-settings) |

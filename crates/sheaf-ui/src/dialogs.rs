@@ -136,14 +136,22 @@ impl SheafApp {
             }
         }
         let Some(modal) = self.modal.take() else { return };
-        self.modal = match modal {
+        // A dialog may open another one (Details -> Report); the new one is not overwritten by the old one closing.
+        let next = match modal {
             Modal::Export(f) => self.export_dialog(ctx, f).map(Modal::Export),
             Modal::Settings(f) => self.settings_dialog(ctx, f).map(Modal::Settings),
             Modal::Password(f) => self.password_dialog(ctx, f).map(Modal::Password),
             Modal::Scan(f) => self.scan_dialog(ctx, f).map(Modal::Scan),
             Modal::Presets(f) => self.presets_dialog(ctx, f).map(Modal::Presets),
             Modal::Info(f) => self.info_dialog(ctx, f).map(Modal::Info),
+            Modal::Error(id) => self.error_dialog(ctx, id).map(Modal::Error),
+            Modal::Report(f) => self.report_dialog(ctx, f).map(Modal::Report),
+            Modal::About => self.about_dialog(ctx).then_some(Modal::About),
+            Modal::Welcome => self.welcome_dialog(ctx).then_some(Modal::Welcome),
         };
+        if self.modal.is_none() {
+            self.modal = next;
+        }
     }
 
     fn password_dialog(&mut self, ctx: &egui::Context, mut f: PasswordForm) -> Option<PasswordForm> {
@@ -208,6 +216,7 @@ impl SheafApp {
     fn settings_dialog(&mut self, ctx: &egui::Context, mut f: SettingsForm) -> Option<SettingsForm> {
         let mut close = false;
         let mut save = false;
+        let mut about = false;
         egui::Modal::new(egui::Id::unique("settings")).show(ctx, |ui| {
             ui.set_width(420.0);
             ui.heading(self.t.t("settings.title"));
@@ -306,11 +315,16 @@ impl SheafApp {
                     self.t.t("settings.font_missing"),
                 );
             });
-            ui.label(
-                RichText::new(self.t.tv("settings.about", &[("version", &self.version)]))
-                    .weak()
-                    .small(),
-            );
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(self.t.tv("settings.about", &[("version", &self.version)]))
+                        .weak()
+                        .small(),
+                );
+                if ui.small_button(self.t.t("about.title")).clicked() {
+                    about = true;
+                }
+            });
             ui.horizontal(|ui| {
                 if ui
                     .add(egui::Button::new(self.t.t("common.save")).fill(ui.visuals().selection.bg_fill))
@@ -325,6 +339,10 @@ impl SheafApp {
         });
         if ui_escape(ctx) {
             close = true;
+        }
+        if about {
+            self.open_about();
+            return None;
         }
         if save {
             let patch = SettingsPatch {
@@ -539,7 +557,7 @@ impl SheafApp {
     }
 }
 
-fn ui_escape(ctx: &egui::Context) -> bool {
+pub(crate) fn ui_escape(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.key_pressed(egui::Key::Escape))
 }
 
