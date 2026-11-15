@@ -1,5 +1,6 @@
 //! MOD-UI: native egui views (ADR-NATIVE-UI): the main window and the action wheel.
 
+mod aim;
 mod app;
 mod appicon;
 mod dialogs;

@@ -56,6 +56,13 @@ pub enum Joined {
 
 const STEP: Duration = Duration::from_millis(20);
 
+/// The drop folder is the user's own, but anything running as the user can write to it, so what is read
+/// from it is bounded: a list file larger than this is ignored, as are paths past the count and
+/// any path that is absurdly long.
+const MAX_LIST_BYTES: u64 = 1 << 20;
+const MAX_COLLECTED: usize = 2_000;
+const MAX_PATH_CHARS: usize = 4_096;
+
 /// A name that no other process picks: process id, clock and a counter.
 fn token() -> String {
     static N: AtomicU64 = AtomicU64::new(0);
@@ -117,9 +124,17 @@ fn write_list(dir: &Path, files: &[PathBuf]) -> io::Result<PathBuf> {
 fn read_all(lists: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = Vec::new();
     for list in lists {
-        if let Ok(text) = fs::read_to_string(list) {
-            files.extend(text.lines().filter(|l| !l.is_empty()).map(PathBuf::from));
+        let small = fs::metadata(list).is_ok_and(|m| m.is_file() && m.len() <= MAX_LIST_BYTES);
+        if small {
+            if let Ok(text) = fs::read_to_string(list) {
+                files.extend(
+                    text.lines()
+                        .filter(|l| !l.is_empty() && l.chars().count() <= MAX_PATH_CHARS)
+                        .map(PathBuf::from),
+                );
+            }
         }
+        // Read or not, a list is consumed: an oversized one must not be found again by the next batch.
         let _ = fs::remove_file(list);
     }
     // Name order, without regard to case; the same file named twice counts once.
@@ -130,6 +145,7 @@ fn read_all(lists: &BTreeSet<PathBuf>) -> Vec<PathBuf> {
         )
     });
     files.dedup();
+    files.truncate(MAX_COLLECTED);
     files
 }
 
@@ -334,6 +350,36 @@ mod tests {
             got,
             Joined::Leader(vec!["s.pdf".into()]),
             "does its own files after a while"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn what_is_read_from_the_folder_is_bounded() {
+        let root = scratch("caps");
+        let dir = root.join("k");
+        fs::create_dir_all(&dir).expect("dir");
+        // A list that is far too large, a list of far too many paths, and a path that is far too long.
+        fs::write(dir.join("huge.list"), vec![b'x'; (MAX_LIST_BYTES + 1) as usize]).expect("write");
+        let many: String = (0..MAX_COLLECTED + 500).map(|i| format!("/in/f{i:05}.pdf\n")).collect();
+        fs::write(dir.join("many.list"), many).expect("write");
+        fs::write(
+            dir.join("long.list"),
+            format!("{}\n/in/ok.pdf\n", "a".repeat(MAX_PATH_CHARS + 1)),
+        )
+        .expect("write");
+        let got = join(&root, "k", &["/in/mine.pdf".into()], &quick()).expect("join");
+        let Joined::Leader(files) = got else {
+            panic!("a lone launch leads")
+        };
+        assert_eq!(files.len(), MAX_COLLECTED, "capped");
+        assert!(!files.iter().any(|f| f.to_string_lossy().len() > MAX_PATH_CHARS));
+        assert!(
+            fs::read_dir(&dir)
+                .expect("dir")
+                .filter_map(|e| e.ok())
+                .all(|e| e.path().extension().is_none_or(|x| x != "list")),
+            "every list was consumed, the oversized one too"
         );
         let _ = fs::remove_dir_all(root);
     }

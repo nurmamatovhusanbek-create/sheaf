@@ -16,6 +16,17 @@ use std::sync::mpsc::{channel, Receiver};
 
 pub const OUTER: f32 = 200.0;
 pub const INNER: f32 = 66.0;
+/// A flyout (the options of a slot) opens beside the ring, a little apart from it, which is what the
+/// safe triangle ([`crate::aim`]) is for.
+const FLY_GAP: f32 = 14.0;
+const FLY_W: f32 = 176.0;
+const ITEM_H: f32 = 36.0;
+/// The window holds the ring and a flyout on either side.
+const WIN_W: f32 = 2.0 * (OUTER + FLY_GAP + FLY_W) + 16.0;
+const WIN_H: f32 = 2.0 * OUTER + 16.0;
+/// Bounds on the file list handed over by the tray helper.
+const MAX_LIST_BYTES: u64 = 1 << 20;
+const MAX_LIST_FILES: usize = 2_000;
 const CARD_W: f32 = 380.0;
 const CARD_H: f32 = 250.0;
 
@@ -38,6 +49,66 @@ pub const SLOTS: [Slot; 8] = [
     Slot::Quick(QuickAction::Rotate),
     Slot::Open,
 ];
+
+/// One choice in a slot's flyout.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Choice {
+    Level(sheaf_core::CompressLevel),
+    /// OCR languages; `None` detects them.
+    Langs(Option<Vec<String>>),
+}
+
+/// The options a slot offers, as (translation key or plain text, choice). A key starts with `@`.
+pub fn options_of(slot: Slot) -> Vec<(&'static str, Choice)> {
+    use sheaf_core::CompressLevel::{Extreme, Low, Recommended};
+    let langs = |codes: &[&str]| Choice::Langs(Some(codes.iter().map(|c| c.to_string()).collect()));
+    match slot {
+        Slot::Quick(QuickAction::Compress) => vec![
+            ("@presets.compress_Low", Choice::Level(Low)),
+            ("@presets.compress_Recommended", Choice::Level(Recommended)),
+            ("@presets.compress_Extreme", Choice::Level(Extreme)),
+        ],
+        Slot::Quick(QuickAction::Ocr) => vec![
+            ("@wheel.lang_auto", Choice::Langs(None)),
+            ("English", langs(&["eng"])),
+            ("Русский", langs(&["rus"])),
+            ("Oʻzbekcha", langs(&["uzb"])),
+            ("Ўзбекча", langs(&["uzb_cyrl"])),
+        ],
+        _ => Vec::new(),
+    }
+}
+
+/// Where the flyout of slot `i` goes: one rectangle per option, and the edge facing the ring (its
+/// two corners), which is the far side of the safe triangle. Right-hand slots open to the right,
+/// left-hand slots to the left; the list is centred on the slot and kept inside the window.
+pub fn flyout_layout(center: Pos2, i: usize, n_slots: usize, options: usize) -> (Vec<Rect>, (Pos2, Pos2)) {
+    let a = i as f32 * TAU / n_slots as f32;
+    let dir = vec2(a.sin(), -a.cos());
+    let anchor = center + dir * OUTER;
+    let right = dir.x >= 0.0;
+    let total = options as f32 * ITEM_H;
+    let top = (anchor.y - total / 2.0).clamp(center.y - WIN_H / 2.0 + 4.0, center.y + WIN_H / 2.0 - 4.0 - total);
+    // Clear of the ring over the whole height of the list: the ring is widest at the row of the list
+    // that is nearest the centre, so the gap starts beyond that.
+    let (dy_top, dy_bottom) = (top - center.y, top + total - center.y);
+    let nearest = if dy_top <= 0.0 && dy_bottom >= 0.0 {
+        0.0
+    } else {
+        dy_top.abs().min(dy_bottom.abs())
+    };
+    let reach = (OUTER * OUTER - nearest * nearest).max(0.0).sqrt();
+    let near_x = if right {
+        center.x + reach + FLY_GAP
+    } else {
+        center.x - reach - FLY_GAP
+    };
+    let x0 = if right { near_x } else { near_x - FLY_W };
+    let rects = (0..options)
+        .map(|k| Rect::from_min_size(pos2(x0, top + k as f32 * ITEM_H), vec2(FLY_W, ITEM_H - 3.0)))
+        .collect();
+    (rects, (pos2(near_x, top), pos2(near_x, top + total)))
+}
 
 impl Slot {
     pub fn enabled(self, kinds: &[FileKind]) -> bool {
@@ -146,6 +217,8 @@ pub struct WheelApp {
     hover: Option<usize>,
     closing: bool,
     had_focus: bool,
+    /// Which slot's options are showing, decided with the safe triangle.
+    aim: crate::aim::Aim,
 }
 
 impl WheelApp {
@@ -173,6 +246,7 @@ impl WheelApp {
             hover: None,
             closing: false,
             had_focus: false,
+            aim: Default::default(),
         }
     }
 
@@ -296,7 +370,27 @@ impl WheelApp {
         let resp = ui.interact(rect, ui.scope_id().with("wheel"), Sense::click());
         let pointer = ctx.input(|i| i.pointer.hover_pos());
         let n = SLOTS.len();
-        self.hover = pointer.and_then(|p| sector_at(center, p, INNER, OUTER, n));
+        let under = pointer.and_then(|p| sector_at(center, p, INNER, OUTER, n));
+        // The options of the slot the pointer rests on, with the safe triangle between the slot
+        // and its options so that crossing a neighbouring slot on the way does not close them.
+        let layout = |i: usize| flyout_layout(center, i, n, options_of(SLOTS[i]).len());
+        let open_layout = self.aim.open().map(layout);
+        let over_flyout = pointer
+            .zip(open_layout.as_ref())
+            .is_some_and(|(p, (rects, _))| rects.iter().any(|r| r.contains(p)));
+        let kinds = self.kinds.clone();
+        let has_files = !self.files.is_empty();
+        let offers = move |i: usize| SLOTS[i].enabled(&kinds) && has_files && !options_of(SLOTS[i]).is_empty();
+        let open = self.aim.step(&crate::aim::Frame {
+            time: ctx.input(|i| i.time),
+            pointer,
+            item: under,
+            over_submenu: over_flyout,
+            has_submenu: &offers,
+            near_edge: open_layout.as_ref().map(|(_, edge)| *edge),
+        });
+        // While aiming, the slot that owns the options stays lit instead of the one being crossed.
+        self.hover = if self.aim.aiming() || over_flyout { open } else { under };
         let dark = ui.visuals().dark_mode;
         let (base, hot, off) = if dark {
             (
@@ -392,10 +486,71 @@ impl WheelApp {
             );
         }
 
+        // The options of the open slot.
+        let mut picked: Option<Choice> = None;
+        if let Some(i) = open {
+            let options = options_of(SLOTS[i]);
+            let (rects, _) = flyout_layout(center, i, n, options.len());
+            for ((label, choice), rect) in options.iter().zip(&rects) {
+                let hot_item = pointer.is_some_and(|p| rect.contains(p));
+                painter.rect_filled(*rect, 9.0, if hot_item { hot } else { base });
+                painter.rect_stroke(
+                    *rect,
+                    9.0,
+                    Stroke::new(1.0, text.gamma_multiply(0.18)),
+                    egui::StrokeKind::Inside,
+                );
+                let words = match label.strip_prefix('@') {
+                    Some(key) => self.t.t(key),
+                    None => label.to_string(),
+                };
+                painter.text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    words,
+                    FontId::proportional(14.0),
+                    if hot_item { Color32::WHITE } else { text },
+                );
+                if resp.clicked() && hot_item {
+                    picked = Some(choice.clone());
+                }
+            }
+        }
+        // A small mark on the slots that have options, at the outer edge of their sector.
+        for (i, slot) in SLOTS.iter().enumerate() {
+            if options_of(*slot).is_empty() || !slot.enabled(&self.kinds) {
+                continue;
+            }
+            let a = i as f32 * step;
+            let dir = vec2(a.sin(), -a.cos());
+            let tip = center + dir * (OUTER - 10.0);
+            let side = vec2(-dir.y, dir.x);
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    tip + dir * 6.0,
+                    tip - dir * 3.0 + side * 5.0,
+                    tip - dir * 3.0 - side * 5.0,
+                ],
+                text.gamma_multiply(0.55),
+                Stroke::NONE,
+            ));
+        }
+
         // Choose.
         let mut chosen = None;
-        if resp.clicked() {
+        if resp.clicked() && picked.is_none() {
             chosen = self.hover;
+        }
+        if let (Some(choice), Some(i)) = (picked, open) {
+            if let Slot::Quick(a) = SLOTS[i] {
+                let mut request = QuickRequest::new(a, self.files.clone());
+                match choice {
+                    Choice::Level(level) => request.level = level,
+                    Choice::Langs(langs) => request.langs = langs,
+                }
+                self.start(ctx, WheelJob::Quick(request));
+                return;
+            }
         }
         ctx.input(|i| {
             for (k, key) in [
@@ -424,7 +579,7 @@ impl WheelApp {
                 }
                 Slot::Quick(_) => {}
             }
-        } else if resp.clicked() && pointer.is_some_and(|p| (p - center).length() > OUTER) {
+        } else if resp.clicked() && pointer.is_some_and(|p| (p - center).length() > OUTER) && !over_flyout {
             self.closing = true;
         }
     }
@@ -523,8 +678,8 @@ impl eframe::App for WheelApp {
             // The window was created at an approximate place; the exact one is known now.
             let (x, y) = self.center_pt;
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(
-                x - OUTER - 8.0,
-                y - OUTER - 8.0,
+                x - WIN_W / 2.0,
+                y - WIN_H / 2.0,
             )));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             // An Explorer verb names its work: no wheel to choose from, straight to the card.
@@ -570,7 +725,7 @@ pub fn run_wheel(config: WheelConfig) -> eframe::Result {
     let (w, h) = if config.job.is_some() {
         (CARD_W, CARD_H)
     } else {
-        (2.0 * OUTER + 16.0, 2.0 * OUTER + 16.0)
+        (WIN_W, WIN_H)
     };
     let (x, y) = (config.at.0 as f32, config.at.1 as f32);
     let options = crate::renderer::options(
@@ -593,11 +748,18 @@ pub fn run_wheel(config: WheelConfig) -> eframe::Result {
 
 /// Read the file list the helper left for the overlay: one path per line, then delete the file.
 pub fn take_file_list(list: &Path) -> Vec<PathBuf> {
-    let text = std::fs::read_to_string(list).unwrap_or_default();
+    // The list is a private file the helper just wrote, but it is read like any input: bounded.
+    let small = std::fs::metadata(list).is_ok_and(|m| m.is_file() && m.len() <= MAX_LIST_BYTES);
+    let text = if small {
+        std::fs::read_to_string(list).unwrap_or_default()
+    } else {
+        String::new()
+    };
     let _ = std::fs::remove_file(list);
     text.lines()
         .map(str::trim)
-        .filter(|l| !l.is_empty())
+        .filter(|l| !l.is_empty() && l.chars().count() <= 4_096)
+        .take(MAX_LIST_FILES)
         .map(PathBuf::from)
         .collect()
 }
@@ -685,5 +847,75 @@ mod tests {
         assert!(!list.exists());
         assert!(take_file_list(&list).is_empty());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn flyouts_sit_clear_of_the_ring_inside_the_window_and_open_outward() {
+        let window = Rect::from_center_size(C, vec2(WIN_W, WIN_H));
+        for (i, slot) in SLOTS.iter().enumerate() {
+            let options = options_of(*slot);
+            if options.is_empty() {
+                continue;
+            }
+            let (rects, (a, b)) = flyout_layout(C, i, SLOTS.len(), options.len());
+            assert_eq!(rects.len(), options.len());
+            for r in &rects {
+                assert!(window.contains_rect(*r), "slot {i}: {r:?} is outside the window");
+                // No corner of any item is inside the ring, and the nearest is at least the gap away.
+                for corner in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
+                    assert!(
+                        (corner - C).length() >= OUTER + FLY_GAP - 0.5,
+                        "slot {i}: {corner:?} touches the ring"
+                    );
+                }
+            }
+            // The near edge is the side that faces the wheel, and spans the whole list.
+            assert_eq!(a.x, b.x);
+            let facing = if slot_dir(i).x >= 0.0 {
+                rects[0].left()
+            } else {
+                rects[0].right()
+            };
+            assert!((facing - a.x).abs() < 0.01, "slot {i}");
+            assert!(a.y <= rects[0].top() + 0.01 && b.y >= rects.last().expect("items").bottom());
+            // Items do not overlap each other.
+            for w in rects.windows(2) {
+                assert!(w[0].bottom() <= w[1].top());
+            }
+        }
+    }
+
+    fn slot_dir(i: usize) -> egui::Vec2 {
+        let a = i as f32 * TAU / SLOTS.len() as f32;
+        vec2(a.sin(), -a.cos())
+    }
+
+    #[test]
+    fn only_compress_and_ocr_have_options_and_each_choice_means_something() {
+        let with: Vec<usize> = SLOTS
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| !options_of(**s).is_empty())
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(with, [1, 2], "Compress and OCR");
+        let compress = options_of(SLOTS[1]);
+        assert_eq!(compress.len(), 3);
+        assert!(compress.iter().all(|(_, c)| matches!(c, Choice::Level(_))));
+        let ocr = options_of(SLOTS[2]);
+        assert!(
+            matches!(ocr[0].1, Choice::Langs(None)),
+            "the first option detects the language"
+        );
+        // Every language named is one whose data is bundled (vendor/tessdata).
+        for (_, c) in &ocr[1..] {
+            let Choice::Langs(Some(codes)) = c else { panic!("{c:?}") };
+            assert!(
+                codes
+                    .iter()
+                    .all(|l| ["eng", "rus", "uzb", "uzb_cyrl"].contains(&l.as_str())),
+                "{codes:?}"
+            );
+        }
     }
 }

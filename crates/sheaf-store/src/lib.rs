@@ -8,7 +8,7 @@ pub mod presets;
 pub mod session;
 pub mod settings;
 
-pub use harden::harden_process;
+pub use harden::{harden_process, harden_worker};
 pub use paths::{
     allow_input, allow_output, check_output_dir, create_output_dir, publish, sanitize_file_name, AllowedInput,
 };

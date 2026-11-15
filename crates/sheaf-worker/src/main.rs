@@ -30,6 +30,7 @@ const USAGE: &str =
 
 fn main() -> ExitCode {
     sheaf_store::harden_process();
+    sheaf_store::harden_worker();
     let mut session = None;
     let mut pdfium = None;
     let mut tesseract = None;

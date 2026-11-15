@@ -16,6 +16,17 @@ pub fn harden_process() {
     win::apply();
 }
 
+/// Further restrictions for a worker, which only parses and renders documents and has no use for the
+/// things they take away: legacy extension points (global hooks and the like), invalid-handle use
+/// (a crash instead of silent misbehaviour) and generating code at run time (so a memory bug in a
+/// parser cannot be turned into new executable code). Applied by `sheaf-worker` after
+/// [`harden_process`]. Failures are ignored. Not applied: a lock-down of the window system (PDFium
+/// draws text through GDI) and a ban on child processes (Tesseract is one).
+pub fn harden_worker() {
+    #[cfg(windows)]
+    win::worker();
+}
+
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod win {
@@ -23,8 +34,41 @@ mod win {
     use windows::Win32::System::LibraryLoader::{
         SetDefaultDllDirectories, SetDllDirectoryW, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
     };
-    use windows::Win32::System::SystemServices::PROCESS_MITIGATION_IMAGE_LOAD_POLICY;
-    use windows::Win32::System::Threading::{ProcessImageLoadPolicy, SetProcessMitigationPolicy};
+    use windows::Win32::System::SystemServices::{
+        PROCESS_MITIGATION_DYNAMIC_CODE_POLICY, PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY,
+        PROCESS_MITIGATION_IMAGE_LOAD_POLICY, PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY,
+    };
+    use windows::Win32::System::Threading::{
+        ProcessDynamicCodePolicy, ProcessExtensionPointDisablePolicy, ProcessImageLoadPolicy,
+        ProcessStrictHandleCheckPolicy, SetProcessMitigationPolicy,
+    };
+
+    pub fn worker() {
+        // SAFETY: as in `apply`: plain flag words, structures that live through the call.
+        unsafe {
+            let mut extension = PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY::default();
+            extension.Anonymous.Flags = 0b1; // DisableExtensionPoints
+            let _ = SetProcessMitigationPolicy(
+                ProcessExtensionPointDisablePolicy,
+                (&raw const extension).cast(),
+                std::mem::size_of::<PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY>(),
+            );
+            let mut handles = PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY::default();
+            handles.Anonymous.Flags = 0b11; // RaiseExceptionOnInvalidHandleReference | HandleExceptionsPermanentlyEnabled
+            let _ = SetProcessMitigationPolicy(
+                ProcessStrictHandleCheckPolicy,
+                (&raw const handles).cast(),
+                std::mem::size_of::<PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY>(),
+            );
+            let mut code = PROCESS_MITIGATION_DYNAMIC_CODE_POLICY::default();
+            code.Anonymous.Flags = 0b1; // ProhibitDynamicCode
+            let _ = SetProcessMitigationPolicy(
+                ProcessDynamicCodePolicy,
+                (&raw const code).cast(),
+                std::mem::size_of::<PROCESS_MITIGATION_DYNAMIC_CODE_POLICY>(),
+            );
+        }
+    }
 
     pub fn apply() {
         // SAFETY: documented process-wide settings taking plain values or pointers to

@@ -130,6 +130,32 @@ cleaned="$("$sheaf" info "$edited" --strip 2>"$out/info-strip.txt")"
 grep -q "xmp: no" "$out/info-strip.txt" || { echo "FAIL strip left the XMP packet"; cat "$out/info-strip.txt"; exit 1; }
 ! grep -aq "Smoke test" "$cleaned" || { echo "FAIL the title is still in the stripped file"; exit 1; }
 
+echo "== wheel options: the safe triangle keeps a flyout open on the way to it"
+printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/aim-list.txt"
+"$sheaf" wheel --at 600,400 --files "$work/aim-list.txt" &
+aimwheel=$!
+sleep 9
+kill -0 "$aimwheel" || { echo "FAIL the wheel exited early"; exit 1; }
+blue() { convert "$1" -format '%[fx:int(255*p{805,293}.b)-int(255*p{805,293}.r)]' info:; }
+xdotool mousemove 695 330; sleep 0.5            # low in the Compress slot
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do         # across the gap beside the ring to "Smallest"
+  xdotool mousemove $((695 + i*185/12)) $((330 - i*37/12)); sleep 0.03
+done
+sleep 0.4
+import -window root "$out/wheel-aimed.png"
+diff="$(blue "$out/wheel-aimed.png")"
+echo "blue over red at the Smallest option: $diff"
+[ "$diff" -gt 60 ] || { echo "FAIL the flyout closed on the way: the safe triangle did not hold"; exit 1; }
+# Standing still in the gap is not aiming: the flyout goes.
+xdotool mousemove 20 20; sleep 0.5
+xdotool mousemove 695 330; sleep 0.4
+for i in 1 2 3 4 5 6; do xdotool mousemove $((695 + i*92/6)) $((330 - i*19/6)); sleep 0.03; done
+sleep 0.9
+import -window root "$out/wheel-stopped.png"
+diff="$(blue "$out/wheel-stopped.png")"
+[ "$diff" -lt 20 ] || { echo "FAIL the flyout stayed open for a pointer that stopped"; exit 1; }
+kill "$aimwheel"; wait "$aimwheel" 2>/dev/null || true
+
 echo "== action wheel on two PDFs"
 printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/list.txt"
 "$sheaf" wheel --at 600,400 --files "$work/list.txt" &

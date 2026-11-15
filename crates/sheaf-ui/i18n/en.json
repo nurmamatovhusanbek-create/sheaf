@@ -432,6 +432,7 @@
   "{n} files"
  ],
  "wheel.hint": "Click an action or press its number. Esc closes.",
+ "wheel.lang_auto": "Detect language",
  "wheel.made": [
   "Made {n} file or folder",
   "Made {n} files and folders"
