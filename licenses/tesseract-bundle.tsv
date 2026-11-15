@@ -1,0 +1,66 @@
+# What is inside the bundled Tesseract build (vendor/tesseract/win-x64/, extracted from the UB Mannheim installer
+# listed in vendor/manifest.tsv). One row per extracted file, in the order of vendor/extract.tsv's basenames sorted.
+# Columns: file <TAB> library <TAB> licence (SPDX expression; for a dual licence the option relied on is in the note)
+#          <TAB> upstream <TAB> note
+# The licence of each library was assigned from what that library is known to be released under and must be
+# confirmed against the copyright files of the exact package versions before a release (see the open item in
+# THIRD_PARTY_LICENSES). "copyleft" marks what carries conditions beyond keeping a notice.
+AUTHORS	Tesseract authors list	Apache-2.0	https://github.com/tesseract-ocr/tesseract	
+LICENSE	Tesseract licence text	Apache-2.0	https://github.com/tesseract-ocr/tesseract	
+tesseract.exe	Tesseract OCR	Apache-2.0	https://github.com/tesseract-ocr/tesseract	run as a separate process by the app
+libtesseract-5.dll	Tesseract OCR engine	Apache-2.0	https://github.com/tesseract-ocr/tesseract	
+libleptonica-6.dll	Leptonica	BSD-2-Clause	http://www.leptonica.org/	
+libLerc.dll	Esri LERC	Apache-2.0	https://github.com/Esri/lerc	
+libarchive-13.dll	libarchive	BSD-2-Clause	https://www.libarchive.org/	
+libb2-1.dll	BLAKE2	CC0-1.0	https://github.com/BLAKE2/libb2	also available under OpenSSL or Apache-2.0; CC0 relied on
+libbrotlicommon.dll	Brotli	MIT	https://github.com/google/brotli	
+libbrotlidec.dll	Brotli	MIT	https://github.com/google/brotli	
+libbz2-1.dll	bzip2	bzip2-1.0.6	https://sourceware.org/bzip2/	
+libcairo-2.dll	cairo	MPL-1.1	https://www.cairographics.org/	dual LGPL-2.1-only or MPL-1.1; MPL-1.1 relied on (file-level copyleft)
+libcrypto-3-x64.dll	OpenSSL	Apache-2.0	https://www.openssl.org/	
+libcurl-4.dll	curl	curl	https://curl.se/	
+libdatrie-1.dll	libdatrie	LGPL-2.1-or-later	https://github.com/tlwg/libdatrie	copyleft: LGPL
+libdeflate.dll	libdeflate	MIT	https://github.com/ebiggers/libdeflate	
+libexpat-1.dll	Expat	MIT	https://libexpat.github.io/	
+libffi-8.dll	libffi	MIT	https://github.com/libffi/libffi	
+libfontconfig-1.dll	Fontconfig	HPND-sell-variant	https://www.freedesktop.org/wiki/Software/fontconfig/	
+libfreetype-6.dll	FreeType	FTL	https://freetype.org/	dual FTL or GPL-2.0-or-later; FTL relied on (attribution)
+libfribidi-0.dll	GNU FriBidi	LGPL-2.1-or-later	https://github.com/fribidi/fribidi	copyleft: LGPL
+libgcc_s_seh-1.dll	GCC runtime (libgcc)	GPL-3.0-or-later WITH GCC-exception-3.1	https://gcc.gnu.org/	runtime library exception applies
+libgif-7.dll	giflib	MIT	https://giflib.sourceforge.net/	
+libgio-2.0-0.dll	GLib (GIO)	LGPL-2.1-or-later	https://gitlab.gnome.org/GNOME/glib	copyleft: LGPL
+libglib-2.0-0.dll	GLib	LGPL-2.1-or-later	https://gitlab.gnome.org/GNOME/glib	copyleft: LGPL
+libgmodule-2.0-0.dll	GLib (GModule)	LGPL-2.1-or-later	https://gitlab.gnome.org/GNOME/glib	copyleft: LGPL
+libgobject-2.0-0.dll	GLib (GObject)	LGPL-2.1-or-later	https://gitlab.gnome.org/GNOME/glib	copyleft: LGPL
+libgraphite2.dll	Graphite2	MPL-1.1	https://github.com/silnrsi/graphite	tri-licensed GPL-2.0-or-later, LGPL-2.1-or-later or MPL-1.1; MPL-1.1 relied on
+libharfbuzz-0.dll	HarfBuzz	MIT	https://github.com/harfbuzz/harfbuzz	
+libiconv-2.dll	GNU libiconv	LGPL-2.1-or-later	https://www.gnu.org/software/libiconv/	copyleft: LGPL
+libicudt75.dll	ICU (data)	Unicode-3.0	https://icu.unicode.org/	
+libicuin75.dll	ICU (i18n)	Unicode-3.0	https://icu.unicode.org/	
+libicuuc75.dll	ICU (common)	Unicode-3.0	https://icu.unicode.org/	
+libidn2-0.dll	GNU libidn2	LGPL-3.0-or-later	https://www.gnu.org/software/libidn/	dual LGPL-3.0-or-later or GPL-2.0-or-later; LGPL relied on; copyleft: LGPL
+libintl-8.dll	GNU gettext runtime	LGPL-2.1-or-later	https://www.gnu.org/software/gettext/	copyleft: LGPL
+libjbig-0.dll	JBIG-KIT	GPL-2.0-or-later	https://www.cl.cam.ac.uk/~mgk25/jbigkit/	copyleft: GPL; a library of the TIFF reader that Tesseract starts with; see the notes in THIRD_PARTY_LICENSES
+libjpeg-8.dll	libjpeg-turbo	IJG	https://libjpeg-turbo.org/	also BSD-3-Clause and zlib parts
+liblz4.dll	LZ4	BSD-2-Clause	https://github.com/lz4/lz4	
+liblzma-5.dll	XZ Utils (liblzma)	0BSD	https://tukaani.org/xz/	
+libopenjp2-7.dll	OpenJPEG	BSD-2-Clause	https://www.openjpeg.org/	
+libpango-1.0-0.dll	Pango	LGPL-2.0-or-later	https://www.pango.org/	copyleft: LGPL
+libpangocairo-1.0-0.dll	Pango (Cairo)	LGPL-2.0-or-later	https://www.pango.org/	copyleft: LGPL
+libpangoft2-1.0-0.dll	Pango (FreeType)	LGPL-2.0-or-later	https://www.pango.org/	copyleft: LGPL
+libpangowin32-1.0-0.dll	Pango (Win32)	LGPL-2.0-or-later	https://www.pango.org/	copyleft: LGPL
+libpcre2-8-0.dll	PCRE2	BSD-3-Clause	https://github.com/PCRE2Project/pcre2	with the PCRE2 exception for binary distribution
+libpixman-1-0.dll	Pixman	MIT	https://www.pixman.org/	
+libpng16-16.dll	libpng	libpng-2.0	http://www.libpng.org/pub/png/libpng.html	
+libpsl-5.dll	libpsl	MIT	https://github.com/rockdaboot/libpsl	
+libsharpyuv-0.dll	libwebp (sharpyuv)	BSD-3-Clause	https://chromium.googlesource.com/webm/libwebp	
+libssh2-1.dll	libssh2	BSD-3-Clause	https://libssh2.org/	
+libstdc++-6.dll	GNU C++ standard library	GPL-3.0-or-later WITH GCC-exception-3.1	https://gcc.gnu.org/	runtime library exception applies
+libthai-0.dll	libthai	LGPL-2.1-or-later	https://github.com/tlwg/libthai	copyleft: LGPL
+libtiff-6.dll	libtiff	libtiff	http://www.libtiff.org/	
+libunistring-5.dll	GNU libunistring	LGPL-3.0-or-later	https://www.gnu.org/software/libunistring/	dual LGPL-3.0-or-later or GPL-2.0-or-later; LGPL relied on; copyleft: LGPL
+libwebp-7.dll	libwebp	BSD-3-Clause	https://chromium.googlesource.com/webm/libwebp	
+libwebpmux-3.dll	libwebp (mux)	BSD-3-Clause	https://chromium.googlesource.com/webm/libwebp	
+libwinpthread-1.dll	winpthreads (MinGW-w64)	MIT	https://www.mingw-w64.org/	
+libzstd.dll	Zstandard	BSD-3-Clause	https://github.com/facebook/zstd	dual BSD-3-Clause or GPL-2.0-only; BSD relied on
+zlib1.dll	zlib	Zlib	https://zlib.net/	

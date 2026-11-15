@@ -94,6 +94,8 @@ jobs:
         run: cargo run --release --locked -p fixture-gen --bin write-fixture -- "$RUNNER_TEMP/smoke.pdf" 4
       - name: Smoke test
         shell: pwsh
+        env:
+          SHEAF_SMOKE_SHOTS: ${{ github.workspace }}\dist\screens
         run: ./tools/smoke/windows.ps1 -Exe target/release/sheaf.exe -Fixture "$env:RUNNER_TEMP/smoke.pdf"
       # PH-7: the installer, built from exactly what ships, installed on this clean runner, run through
       # the same smoke test, and removed again. These steps run even when the smoke test above failed,
@@ -101,17 +103,34 @@ jobs:
       - name: Installer (Inno Setup)
         if: success() || failure()
         shell: pwsh
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
         run: |
           choco install innosetup -y --no-progress
           ./tools/package/stage.ps1 -Out dist\stage
+          # Signs when a certificate is configured (repository secrets); otherwise says so and goes on.
+          ./tools/package/sign.ps1 -Files dist\stage\sheaf.exe, dist\stage\sheafc.exe, dist\stage\sheaf-worker.exe
           $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq "sheaf-shell").version
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\sheaf.iss "/DVersion=$version" "/DStage=$PWD\dist\stage" "/O$PWD\dist"
           if ($LASTEXITCODE -ne 0) { throw "ISCC exited with $LASTEXITCODE" }
           Get-ChildItem dist\Sheaf-Setup-*.exe | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+          ./tools/package/sign.ps1 -Files (Get-ChildItem dist\Sheaf-Setup-*.exe).FullName
       - name: Clean install, smoke test of the installed program, uninstall
         if: success() || failure()
         shell: pwsh
         run: ./tools/package/verify-install.ps1 -Setup (Get-ChildItem dist\Sheaf-Setup-*.exe | Select-Object -First 1).FullName -Fixture "$env:RUNNER_TEMP/smoke.pdf"
+      - name: Signing pipeline (throw-away certificate)
+        if: success() || failure()
+        shell: pwsh
+        run: ./tools/package/test-signing.ps1 -Files target\release\sheaf.exe, target\release\sheafc.exe
+      - name: Keep the screenshots
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshots
+          path: dist/screens/*.png
+          if-no-files-found: ignore
       - name: Keep the installer
         if: success() || failure()
         uses: actions/upload-artifact@v4

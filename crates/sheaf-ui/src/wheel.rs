@@ -738,6 +738,7 @@ pub fn run_wheel(config: WheelConfig) -> eframe::Result {
             .with_always_on_top()
             .with_taskbar(false)
             .with_resizable(false),
+        true,
     );
     eframe::run_native(
         "Sheaf wheel",

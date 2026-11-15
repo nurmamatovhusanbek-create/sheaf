@@ -134,6 +134,49 @@ Step "Explorer right-click menu: install, check, remove" {
   Write-Host "ok   installed, checked and removed"
 }
 
+Step "wheel overlay: transparent through Direct3D 12" {
+  # The overlay has see-through corners. Draw it through the Direct3D 12 renderer (the fallback used when
+  # OpenGL is unusable), photograph the screen, and compare: the corner must show the desktop, the hub must not.
+  Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+  $shots = if ($env:SHEAF_SMOKE_SHOTS) { $env:SHEAF_SMOKE_SHOTS } else { [System.IO.Path]::GetTempPath() }
+  New-Item -ItemType Directory -Force -Path $shots | Out-Null
+  $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $cx = [int]($screen.Width / 2); $cy = [int]($screen.Height / 2)
+  Write-Host "screen $($screen.Width)x$($screen.Height)"
+  $list = Join-Path ([System.IO.Path]::GetTempPath()) "sheaf-wheel-list.txt"
+  Set-Content -LiteralPath $list -Value $Fixture -Encoding ascii
+  $env:SHEAF_RENDERER = "wgpu"
+  try {
+    $wheel = Start-Process -FilePath $Exe -ArgumentList @("wheel", "--at", "$cx,$cy", "--files", "`"$list`"") -PassThru
+  } finally { Remove-Item Env:\SHEAF_RENDERER -ErrorAction SilentlyContinue }
+  try {
+    Start-Sleep -Seconds 10
+    if ($wheel.HasExited) { throw "the wheel exited early with code $($wheel.ExitCode)" }
+    $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+    $g.Dispose()
+    $bmp.Save((Join-Path $shots "wheel-direct3d.png"))
+    # The window is 796 by 416 around the centre; its corner is far outside the ring.
+    $corner = $bmp.GetPixel($cx - 385, $cy - 200)
+    $desktop = $bmp.GetPixel(10, 10)
+    $hub = $bmp.GetPixel($cx, $cy + 30)
+    Write-Host ("corner {0},{1},{2}  desktop {3},{4},{5}  hub {6},{7},{8}" -f $corner.R, $corner.G, $corner.B, $desktop.R, $desktop.G, $desktop.B, $hub.R, $hub.G, $hub.B)
+    function Near($a, $b, $tolerance) { [math]::Abs($a.R - $b.R) -le $tolerance -and [math]::Abs($a.G - $b.G) -le $tolerance -and [math]::Abs($a.B - $b.B) -le $tolerance }
+    $dark = ($desktop.R + $desktop.G + $desktop.B) -lt 40
+    if ($dark -and ($hub.R + $hub.G + $hub.B) -lt 40) {
+      Write-Host "inconclusive: the capture is black (no desktop to see through, or the runner cannot capture it)"
+    }
+    elseif (Near $hub $desktop 10) { throw "nothing is drawn where the hub should be" }
+    elseif ($dark) {
+      Write-Host "inconclusive: the desktop is black, so a transparent corner cannot be told from an opaque one"
+    }
+    elseif (Near $corner $desktop 12) { Write-Host "ok   the corner shows the desktop: the overlay is transparent" }
+    else { throw "the overlay's corner is not the desktop: the window is opaque through Direct3D 12" }
+  }
+  finally { Stop-Tree $wheel.Id }
+}
+
 Step "window with a file open" {
   $proc = Start-Process -FilePath $Exe -ArgumentList @("open", $Fixture) -PassThru
   try {

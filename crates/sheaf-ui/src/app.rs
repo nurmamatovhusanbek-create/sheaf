@@ -890,6 +890,7 @@ pub fn run_window(config: UiConfig) -> eframe::Result {
                 height: 64,
             })
             .with_drag_and_drop(true),
+        false,
     );
     eframe::run_native(
         sheaf_core::APP_NAME,

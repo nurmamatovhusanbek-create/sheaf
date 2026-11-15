@@ -125,6 +125,159 @@ fn licence_files(dir: &Path) -> Vec<(String, String)> {
     found
 }
 
+/// One row of `licenses/tesseract-bundle.tsv`.
+struct Lib {
+    file: String,
+    name: String,
+    licence: String,
+    url: String,
+    note: String,
+}
+
+fn bundle_rows(root: &Path) -> Vec<Lib> {
+    let text = std::fs::read_to_string(root.join("licenses/tesseract-bundle.tsv"))
+        .unwrap_or_else(|e| fail(&format!("cannot read licenses/tesseract-bundle.tsv: {e}")));
+    text.lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            if c.len() < 4 {
+                fail(&format!(
+                    "a row of licenses/tesseract-bundle.tsv has too few columns: {l}"
+                ));
+            }
+            Lib {
+                file: c[0].to_string(),
+                name: c[1].to_string(),
+                licence: c[2].to_string(),
+                url: c[3].to_string(),
+                note: c.get(4).copied().unwrap_or("").to_string(),
+            }
+        })
+        .collect()
+}
+
+/// The files that the pinned extraction list takes out of the Tesseract installer.
+fn extracted_tesseract_files(root: &Path) -> BTreeSet<String> {
+    let text = std::fs::read_to_string(root.join("vendor/extract.tsv"))
+        .unwrap_or_else(|e| fail(&format!("cannot read vendor/extract.tsv: {e}")));
+    text.lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            (c.len() >= 3 && c[0].contains("tesseract")).then(|| c[2].rsplit('/').next().unwrap_or("").to_string())
+        })
+        .collect()
+}
+
+/// The licence ids named in an SPDX expression.
+fn spdx_ids(expr: &str) -> Vec<String> {
+    expr.replace(['(', ')'], " ")
+        .split_whitespace()
+        .filter(|w| !["OR", "AND", "WITH"].contains(w))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The text file for a licence id (`-or-later` and `-only` share a text).
+fn spdx_text(root: &Path, id: &str) -> Option<String> {
+    let base = id.replace("-or-later", "-only");
+    std::fs::read_to_string(root.join("licenses/spdx").join(format!("{base}.txt")))
+        .ok()
+        .map(|t| t.replace("\r\n", "\n"))
+}
+
+/// What is inside the bundled Tesseract: every file, its library and licence, the conditions that come
+/// with the copyleft ones, and the licence texts. Fails when a file of the pinned build has no row (or a
+/// row names a file that is not in the build) or when a licence named has no text.
+fn tesseract_section(root: &Path) -> String {
+    let rows = bundle_rows(root);
+    let extracted = extracted_tesseract_files(root);
+    let listed: BTreeSet<String> = rows.iter().map(|r| r.file.clone()).collect();
+    let missing: Vec<&String> = extracted.difference(&listed).collect();
+    if !missing.is_empty() {
+        fail(&format!(
+            "in the bundled Tesseract build but without a row in licenses/tesseract-bundle.tsv: {}",
+            missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    let stale: Vec<&String> = listed.difference(&extracted).collect();
+    if !stale.is_empty() {
+        fail(&format!(
+            "licenses/tesseract-bundle.tsv lists files that vendor/extract.tsv does not extract: {}",
+            stale.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        ));
+    }
+    let mut out = format!(
+        "{}\nLIBRARIES INSIDE THE BUNDLED TESSERACT BUILD ({} files)\n{}\n\n",
+        rule(),
+        rows.len(),
+        rule()
+    );
+    out.push_str("Tesseract for Windows is started as a separate program (tesseract.exe) beside its libraries.\n");
+    out.push_str("Each file, the library it belongs to, the licence it is used under and where it comes from:\n\n");
+    let mut texts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for r in &rows {
+        out.push_str(&format!("  {} - {} - {} - {}", r.file, r.name, r.licence, r.url));
+        if !r.note.is_empty() {
+            out.push_str(&format!(" ({})", r.note));
+        }
+        out.push('\n');
+        for id in spdx_ids(&r.licence) {
+            texts.entry(id).or_default().push(r.file.clone());
+        }
+    }
+    let lgpl: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.note.contains("copyleft: LGPL"))
+        .map(|r| r.file.as_str())
+        .collect();
+    let gpl: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.note.contains("copyleft: GPL"))
+        .map(|r| r.file.as_str())
+        .collect();
+    out.push_str("\nConditions that come with some of these:\n\n");
+    out.push_str(&format!(
+        "  LGPL libraries ({}): shipped unmodified as separate files that can be replaced by a build of the\n  same library; their source is available from the projects named above.\n",
+        lgpl.join(", ")
+    ));
+    out.push_str("  OPEN: a written offer of the corresponding source of the exact versions shipped, with a contact, is\n  to be added before a release.\n\n");
+    out.push_str(&format!(
+        "  GPL library ({}): JBIG-KIT is GPL-2.0-or-later and is loaded by the TIFF reader that Tesseract\n  starts with. Whether that puts tesseract.exe's distribution under the GPL is a legal question this file\n  does not answer.\n",
+        gpl.join(", ")
+    ));
+    out.push_str("  OPEN: decide between shipping a Tesseract build without JBIG support and meeting the GPL for that\n  library, before a release.\n\n");
+    out.push_str(
+        "  The GNU runtime libraries (libgcc, libstdc++) are under the GPL with the GCC runtime library exception.\n\n",
+    );
+    out.push_str(&format!(
+        "{}\nLICENCE TEXTS FOR THE BUNDLED TESSERACT BUILD\n{}\n\n",
+        rule(),
+        rule()
+    ));
+    out.push_str(
+        "The standard wordings (SPDX licence list); the copyright notices of each project are in that project.\n\n",
+    );
+    // One text per file, even when several ids (-or-later and -only) share it.
+    let mut by_text: BTreeMap<String, (Vec<String>, Vec<String>)> = BTreeMap::new();
+    for (id, files) in texts {
+        let text = spdx_text(root, &id).unwrap_or_else(|| fail(&format!("licenses/spdx has no text for {id}")));
+        let entry = by_text.entry(text.trim_end().to_string()).or_default();
+        entry.0.push(id);
+        entry.1.extend(files);
+    }
+    let mut grouped: Vec<_> = by_text.into_iter().collect();
+    grouped.sort_by(|a, b| a.1 .0.cmp(&b.1 .0));
+    for (text, (ids, files)) in grouped {
+        let mut files = files;
+        files.sort();
+        files.dedup();
+        out.push_str(&format!("--- {}: {}\n\n{text}\n\n", ids.join(", "), files.join(", ")));
+    }
+    out
+}
+
 fn rule() -> String {
     "=".repeat(78)
 }
@@ -186,7 +339,7 @@ fn render(root: &Path) -> String {
             }
         }
     }
-    out.push_str("OPEN: the licence texts of the libraries inside the Tesseract Windows installer (Leptonica, libpng,\nlibjpeg, libtiff, zlib and others) must be added from the unpacked build before a release.\n\n");
+    out.push_str(&tesseract_section(root));
 
     // Rust crates, grouped by identical licence text.
     out.push_str(&format!(
@@ -250,5 +403,42 @@ fn main() {
     } else {
         std::fs::write(&path, &text).unwrap_or_else(|e| fail(&format!("cannot write {}: {e}", path.display())));
         println!("licenses: wrote {} ({} bytes)", path.display(), text.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn licence_expressions_are_split_into_ids() {
+        assert_eq!(spdx_ids("MIT"), ["MIT"]);
+        assert_eq!(
+            spdx_ids("GPL-3.0-or-later WITH GCC-exception-3.1"),
+            ["GPL-3.0-or-later", "GCC-exception-3.1"]
+        );
+        assert_eq!(
+            spdx_ids("(MIT OR Apache-2.0) AND Unicode-3.0"),
+            ["MIT", "Apache-2.0", "Unicode-3.0"]
+        );
+    }
+
+    #[test]
+    fn every_licence_the_table_names_has_a_text_and_the_table_covers_the_build() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let rows = bundle_rows(&root);
+        assert!(rows.len() > 50);
+        for r in &rows {
+            for id in spdx_ids(&r.licence) {
+                assert!(
+                    spdx_text(&root, &id).is_some_and(|t| t.len() > 200),
+                    "{} needs a text for {id}",
+                    r.file
+                );
+            }
+            assert!(r.url.starts_with("http"), "{} has no upstream", r.file);
+        }
+        let listed: BTreeSet<String> = rows.iter().map(|r| r.file.clone()).collect();
+        assert_eq!(listed, extracted_tesseract_files(&root));
     }
 }

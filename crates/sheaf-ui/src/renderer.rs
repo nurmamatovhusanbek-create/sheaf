@@ -25,16 +25,18 @@ pub fn opengl_unusable(result: &eframe::Result) -> bool {
 }
 
 /// Window options for the renderer in use.
-pub(crate) fn options(viewport: eframe::egui::ViewportBuilder) -> eframe::NativeOptions {
+/// `transparent` is for the wheel overlay, whose window has see-through corners.
+pub(crate) fn options(viewport: eframe::egui::ViewportBuilder, transparent: bool) -> eframe::NativeOptions {
     #[cfg(windows)]
     if std::env::var(RENDERER_ENV).is_ok_and(|v| v == "wgpu") {
         return eframe::NativeOptions {
             viewport,
             renderer: eframe::Renderer::Wgpu,
-            wgpu_options: software_capable(),
+            wgpu_options: software_capable(transparent),
             ..Default::default()
         };
     }
+    let _ = transparent;
     eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Glow,
@@ -46,11 +48,16 @@ pub(crate) fn options(viewport: eframe::egui::ViewportBuilder) -> eframe::Native
 /// software renderer last. (Without this a machine whose only adapter is the software one
 /// would be refused.)
 #[cfg(windows)]
-fn software_capable() -> egui_wgpu::WgpuConfiguration {
+fn software_capable(transparent: bool) -> egui_wgpu::WgpuConfiguration {
     use egui_wgpu::{WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
     use std::sync::Arc;
     let mut setup = WgpuSetupCreateNew::without_display_handle();
     setup.instance_descriptor.backends = wgpu::Backends::DX12;
+    if transparent {
+        // A swapchain made straight from the window handle cannot be see-through; presenting through
+        // a DirectComposition visual can, and the wheel overlay needs transparent corners.
+        setup.instance_descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+    }
     setup.native_adapter_selector = Some(Arc::new(|adapters, surface| {
         let rank = |t: wgpu::DeviceType| match t {
             wgpu::DeviceType::DiscreteGpu => 0,
