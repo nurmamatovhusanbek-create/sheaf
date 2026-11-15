@@ -136,13 +136,25 @@ Step "Explorer right-click menu: install, check, remove" {
 
 Step "wheel overlay: transparent through Direct3D 12" {
   # The overlay has see-through corners. Draw it through the Direct3D 12 renderer (the fallback used when
-  # OpenGL is unusable), photograph the screen, and compare: the corner must show the desktop, the hub must not.
+  # OpenGL is unusable) and photograph the screen before and after it appears: where the window's corners
+  # are, the picture must not change; where its hub is, it must.
   Add-Type -AssemblyName System.Drawing, System.Windows.Forms
   $shots = if ($env:SHEAF_SMOKE_SHOTS) { $env:SHEAF_SMOKE_SHOTS } else { [System.IO.Path]::GetTempPath() }
   New-Item -ItemType Directory -Force -Path $shots | Out-Null
   $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   $cx = [int]($screen.Width / 2); $cy = [int]($screen.Height / 2)
   Write-Host "screen $($screen.Width)x$($screen.Height)"
+  function Snap {
+    $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+    $g.Dispose()
+    $bmp
+  }
+  function Near($a, $b, $tolerance) { [math]::Abs($a.R - $b.R) -le $tolerance -and [math]::Abs($a.G - $b.G) -le $tolerance -and [math]::Abs($a.B - $b.B) -le $tolerance }
+  # The window is 796 by 416 around the centre; these four points are inside it, in its corners, far outside the ring.
+  $corners = @(@(-385, -195), @(385, -195), @(-385, 195), @(385, 195))
+  $before = Snap
   $list = Join-Path ([System.IO.Path]::GetTempPath()) "sheaf-wheel-list.txt"
   Set-Content -LiteralPath $list -Value $Fixture -Encoding ascii
   $env:SHEAF_RENDERER = "wgpu"
@@ -152,27 +164,21 @@ Step "wheel overlay: transparent through Direct3D 12" {
   try {
     Start-Sleep -Seconds 10
     if ($wheel.HasExited) { throw "the wheel exited early with code $($wheel.ExitCode)" }
-    $bmp = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-    $g = [System.Drawing.Graphics]::FromImage($bmp)
-    $g.CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-    $g.Dispose()
-    $bmp.Save((Join-Path $shots "wheel-direct3d.png"))
-    # The window is 796 by 416 around the centre; its corner is far outside the ring.
-    $corner = $bmp.GetPixel($cx - 385, $cy - 200)
-    $desktop = $bmp.GetPixel(10, 10)
-    $hub = $bmp.GetPixel($cx, $cy + 30)
-    Write-Host ("corner {0},{1},{2}  desktop {3},{4},{5}  hub {6},{7},{8}" -f $corner.R, $corner.G, $corner.B, $desktop.R, $desktop.G, $desktop.B, $hub.R, $hub.G, $hub.B)
-    function Near($a, $b, $tolerance) { [math]::Abs($a.R - $b.R) -le $tolerance -and [math]::Abs($a.G - $b.G) -le $tolerance -and [math]::Abs($a.B - $b.B) -le $tolerance }
-    $dark = ($desktop.R + $desktop.G + $desktop.B) -lt 40
-    if ($dark -and ($hub.R + $hub.G + $hub.B) -lt 40) {
-      Write-Host "inconclusive: the capture is black (no desktop to see through, or the runner cannot capture it)"
+    $after = Snap
+    $after.Save((Join-Path $shots "wheel-direct3d.png"))
+    $same = 0; $white = 0
+    foreach ($c in $corners) {
+      $b = $before.GetPixel($cx + $c[0], $cy + $c[1]); $a = $after.GetPixel($cx + $c[0], $cy + $c[1])
+      Write-Host ("corner {0},{1}: before {2},{3},{4}  after {5},{6},{7}" -f $c[0], $c[1], $b.R, $b.G, $b.B, $a.R, $a.G, $a.B)
+      if (Near $a $b 12) { $same++ }
+      if ($b.R -gt 240 -and $b.G -gt 240 -and $b.B -gt 240) { $white++ }
     }
-    elseif (Near $hub $desktop 10) { throw "nothing is drawn where the hub should be" }
-    elseif ($dark) {
-      Write-Host "inconclusive: the desktop is black, so a transparent corner cannot be told from an opaque one"
-    }
-    elseif (Near $corner $desktop 12) { Write-Host "ok   the corner shows the desktop: the overlay is transparent" }
-    else { throw "the overlay's corner is not the desktop: the window is opaque through Direct3D 12" }
+    $hubBefore = $before.GetPixel($cx, $cy + 30); $hubAfter = $after.GetPixel($cx, $cy + 30)
+    Write-Host ("hub: before {0},{1},{2}  after {3},{4},{5}" -f $hubBefore.R, $hubBefore.G, $hubBefore.B, $hubAfter.R, $hubAfter.G, $hubAfter.B)
+    if (Near $hubAfter $hubBefore 10) { throw "nothing was drawn where the hub should be" }
+    if ($white -ge 3) { Write-Host "inconclusive: the screen is white where the corners are, so see-through cannot be told from white" }
+    elseif ($same -ge 3) { Write-Host "ok   the corners show what was on the screen before: the overlay is transparent" }
+    else { throw "the overlay's corners changed the picture ($same of 4 unchanged): the window is opaque through Direct3D 12" }
   }
   finally { Stop-Tree $wheel.Id }
 }

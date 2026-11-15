@@ -25,7 +25,10 @@ foreach ($c in $copies) {
 # One changed byte must break the signature.
 $victim = $copies[0]
 $bytes = [System.IO.File]::ReadAllBytes($victim)
-$bytes[$bytes.Length - 1] = $bytes[$bytes.Length - 1] -bxor 0xFF
+# A byte in the middle of the file is program code, which the signature covers. (The last bytes are the
+# signature itself; damaging those gives "unknown error", not "changed file".)
+$at = [int]($bytes.Length / 2)
+$bytes[$at] = $bytes[$at] -bxor 0xFF
 [System.IO.File]::WriteAllBytes($victim, $bytes)
 $after = Get-AuthenticodeSignature -LiteralPath $victim
 if ($after.Status -ne "HashMismatch") { throw "a changed file still verifies: $($after.Status)" }

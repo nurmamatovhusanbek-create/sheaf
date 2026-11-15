@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["crates/*", "tools/*"]
 # tools/smoke holds scripts, not a crate.
-exclude = ["tools/smoke", "tools/package"]
+exclude = ["tools/smoke", "tools/package", "third_party/egui-winit"]
 
 [workspace.package]
 version = "0.0.0"
@@ -27,3 +27,8 @@ regex = { version = "1", default-features = false, features = ["std", "perf", "u
 zeroize = "1"
 tiff = "0.11"
 getrandom = "0.4"
+
+# One change to egui-winit (see third_party/egui-winit/README-SHEAF.md): a transparent window drawn through
+# DirectComposition needs to be created without a redirection bitmap.
+[patch.crates-io]
+egui-winit = { path = "third_party/egui-winit" }

@@ -64,8 +64,9 @@ fn compiled() -> BTreeSet<(String, String)> {
     }
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        // Our own crates print their folder in parentheses; registry crates print nothing.
-        .filter(|l| !l.contains("(/") && !l.contains("(\\") && !l.contains(":\\"))
+        // Our own crates print their folder in parentheses; registry crates print nothing. A patched copy of
+        // someone else's crate (third_party/) also prints its folder, and is not ours.
+        .filter(|l| is_vendored_copy(l) || (!l.contains("(/") && !l.contains("(\\") && !l.contains(":\\")))
         .filter_map(|l| {
             let mut words = l.split_whitespace();
             let name = words.next()?;
@@ -75,12 +76,17 @@ fn compiled() -> BTreeSet<(String, String)> {
         .collect()
 }
 
+/// A copy of someone else's crate kept in `third_party/` (with a change), used through `[patch]`.
+fn is_vendored_copy(text: &str) -> bool {
+    text.contains("/third_party/") || text.contains("\\third_party\\")
+}
+
 fn shipped(meta: &Value) -> Vec<Krate> {
     let wanted = compiled();
     let packages = meta["packages"].as_array().unwrap_or_else(|| fail("no packages"));
     let mut out: Vec<Krate> = packages
         .iter()
-        .filter(|p| p["source"].is_string())
+        .filter(|p| p["source"].is_string() || is_vendored_copy(p["manifest_path"].as_str().unwrap_or("")))
         .filter(|p| {
             wanted.contains(&(
                 p["name"].as_str().unwrap_or("").to_string(),
@@ -409,6 +415,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_patched_copy_in_third_party_is_listed_like_a_registry_crate() {
+        assert!(is_vendored_copy(
+            "egui-winit v0.37.0 (/work/sheaf/third_party/egui-winit)"
+        ));
+        assert!(is_vendored_copy(r"D:\a\sheaf\third_party\egui-winit\Cargo.toml"));
+        assert!(!is_vendored_copy("sheaf-ui v0.0.0 (/work/sheaf/crates/sheaf-ui)"));
+    }
 
     #[test]
     fn licence_expressions_are_split_into_ids() {
