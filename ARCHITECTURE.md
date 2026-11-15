@@ -366,7 +366,7 @@ Depends on: [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store), [`MOD-JOBS`](#mo
 
 ### <a id="mod-shell"></a>MOD-SHELL (`sheaf-shell`)
 
-The `sheaf` executable. One binary, four modes chosen by [`MOD-CLI`](#mod-cli): the main window, headless quick actions (`sheaf run`), the resident tray helper (`sheaf tray`) and the wheel overlay (`sheaf wheel`). The tray helper (Windows only, [`NG-XPLAT`](#ng-xplat)) owns the tray icon and menu (open, start with Windows, quit), the global hotkey from [`DATA-SETTINGS`](#data-settings) (default Ctrl+Alt+Space) and the selection reader: the shell's COM interfaces (`IShellWindows`, the active view's `IFolderView2`) answer which items are selected in the Explorer window in front or on the desktop. That is the only `unsafe` code in the app ([`DOC-AGENT-RULES`](#doc-agent-rules) rule 5), in `selection.rs`, `tray.rs` and nowhere else. Not built yet: single-instance aggregation ([`PH-6`](#ph-6)), Explorer verbs and the installer ([`PH-7`](#ph-7)), the window icon and window state.
+The `sheaf` executables: `sheaf.exe` (a Windows GUI program) and `sheafc.exe` (the same code built for the console, for scripts and Explorer verbs). Four modes chosen by [`MOD-CLI`](#mod-cli): the main window, headless quick actions (`sheaf run`), the resident tray helper (`sheaf tray`) and the wheel overlay (`sheaf wheel`). The tray helper (Windows only, [`NG-XPLAT`](#ng-xplat)) owns the tray icon and menu (open, start with Windows, quit), the global hotkey from [`DATA-SETTINGS`](#data-settings) (default Ctrl+Alt+Space) and the selection reader: the shell's COM interfaces (`IShellWindows`, the active view's `IFolderView2`) answer which items are selected in the Explorer window in front or on the desktop. That is the only `unsafe` code in the app ([`DOC-AGENT-RULES`](#doc-agent-rules) rule 5), in `selection.rs`, `tray.rs` and nowhere else. Not built yet: single-instance aggregation ([`PH-6`](#ph-6)), Explorer verbs and the installer ([`PH-7`](#ph-7)), the window icon and window state.
 
 Depends on: [`MOD-UI`](#mod-ui), [`MOD-APP`](#mod-app), [`MOD-CLI`](#mod-cli), [`MOD-CORE`](#mod-core), [`MOD-STORE`](#mod-store).
 
@@ -501,6 +501,7 @@ sheaf.exe tray                                   the resident helper: tray icon,
 sheaf.exe wheel --at X,Y --files LIST            the wheel overlay (started by the helper)
 actions: merge compress ocr split pdf2img img2pdf rotate
 run prints one output path per line; exit code 0 all done / 2 partly / 1 nothing; never overwrites
+scripts and Explorer verbs call sheafc.exe, the console twin of sheaf.exe (a GUI program has no stdout to script and no exit code to wait for)
 ```
 
 Explorer verbs ([`ADR-EXPLORER-VERBS`](#adr-explorer-verbs)) are written under `HKCU\Software\Classes\SystemFileAssociations\.pdf\shell\Sheaf.*` (and image extensions) by the installer; each runs `sheaf.exe <subcommand> "%1"`. All arguments are untrusted input ([`SEC-PATHS`](#sec-paths)). On Windows 11 these appear under "Show more options". The wheel ([`ADR-WHEEL`](#adr-wheel)) is the same quick actions reached from a hotkey instead of a menu. Grammar: [`MOD-CLI`](#mod-cli); aggregation: [`MOD-CLI`](#mod-cli); flow: [`FLOW-EXPLORER`](#flow-explorer).

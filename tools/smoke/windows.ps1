@@ -1,6 +1,7 @@
 # Windows smoke test of the real executable (CI; also runnable by hand).
 #
 #   ./tools/smoke/windows.ps1 -Exe target\release\sheaf.exe -Fixture some.pdf
+#   (the console twin, sheafc.exe beside it, is used for the headless step)
 #
 # 1. A headless quick action runs through the real worker and writes its output.
 # 2. The window opens with a file, stays up, renders thumbnails through a worker,
@@ -12,10 +13,11 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $Exe = (Resolve-Path $Exe).Path
+$Cli = Join-Path (Split-Path $Exe) "sheafc.exe"
 $Fixture = (Resolve-Path $Fixture).Path
 
 Write-Host "== headless: sheaf run compress"
-$out = & $Exe run compress $Fixture
+$out = & $Cli run compress $Fixture
 if ($LASTEXITCODE -ne 0) { throw "run compress exited with $LASTEXITCODE" }
 if (-not $out -or -not (Test-Path ($out | Select-Object -First 1))) { throw "no output file was written: $out" }
 Write-Host "ok   $out"

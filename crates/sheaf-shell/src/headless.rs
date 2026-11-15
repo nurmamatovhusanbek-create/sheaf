@@ -16,7 +16,7 @@ pub fn run(request: &QuickRequest) -> ExitCode {
     let mut app = match started {
         Ok(app) => app,
         Err(e) => {
-            eprintln!("sheaf: {e}");
+            crate::say_err(&format!("sheaf: {e}"));
             return ExitCode::FAILURE;
         }
     };
@@ -25,19 +25,19 @@ pub fn run(request: &QuickRequest) -> ExitCode {
     match result {
         Ok(report) => {
             for out in &report.outputs {
-                println!("{}", out.display());
+                crate::say(&out.display().to_string());
             }
             for (file, e) in &report.failures {
                 let name = file
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                eprintln!("sheaf: {name}: {:?}", e.code);
+                crate::say_err(&format!("sheaf: {name}: {:?}", e.code));
             }
             ExitCode::from(report.exit_code())
         }
         Err(e) => {
-            eprintln!("sheaf: {e}");
+            crate::say_err(&format!("sheaf: {e}"));
             ExitCode::FAILURE
         }
     }

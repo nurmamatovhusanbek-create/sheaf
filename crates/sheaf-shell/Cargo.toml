@@ -9,9 +9,17 @@ publish = false
 [lints]
 workspace = true
 
+[lib]
+name = "sheaf_shell"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sheaf"
 path = "src/main.rs"
+
+[[bin]]
+name = "sheafc"
+path = "src/bin/sheafc.rs"
 
 [dependencies]
 sheaf-app = { path = "../sheaf-app" }
