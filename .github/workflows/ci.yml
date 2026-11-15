@@ -95,6 +95,30 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: ./tools/smoke/windows.ps1 -Exe target/release/sheaf.exe -Fixture "$env:RUNNER_TEMP/smoke.pdf"
+      # PH-7: the installer, built from exactly what ships, installed on this clean runner, run through
+      # the same smoke test, and removed again. These steps run even when the smoke test above failed,
+      # so one run shows everything that is wrong.
+      - name: Installer (Inno Setup)
+        if: success() || failure()
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          ./tools/package/stage.ps1 -Out dist\stage
+          $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq "sheaf-shell").version
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\sheaf.iss "/DVersion=$version" "/DStage=$PWD\dist\stage" "/O$PWD\dist"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC exited with $LASTEXITCODE" }
+          Get-ChildItem dist\Sheaf-Setup-*.exe | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+      - name: Clean install, smoke test of the installed program, uninstall
+        if: success() || failure()
+        shell: pwsh
+        run: ./tools/package/verify-install.ps1 -Setup (Get-ChildItem dist\Sheaf-Setup-*.exe | Select-Object -First 1).FullName -Fixture "$env:RUNNER_TEMP/smoke.pdf"
+      - name: Keep the installer
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheaf-installer
+          path: dist/Sheaf-Setup-*.exe
+          if-no-files-found: ignore
 
   supply-chain:
     name: cargo-deny + cargo-audit
