@@ -1,6 +1,7 @@
 //! MOD-UI: native egui views (ADR-NATIVE-UI): the main window and the action wheel.
 
 mod app;
+mod appicon;
 mod dialogs;
 mod icons;
 mod jobs;
@@ -19,6 +20,7 @@ pub mod geometry;
 pub mod i18n;
 
 pub use app::{run_window, SheafApp, UiConfig};
+pub use appicon::rgba as app_icon_rgba;
 pub use wheel::{run_wheel, take_file_list, WheelApp, WheelConfig, WheelJob};
 
 /// What the window and wheel entry points return.

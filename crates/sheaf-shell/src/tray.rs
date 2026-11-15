@@ -104,34 +104,9 @@ fn set_autostart(on: bool) {
     }
 }
 
-/// A 32 by 32 wheel, drawn here so no image file has to ship.
+/// The app's icon (the same wheel as the window's), drawn in code so no image file has to ship.
 fn icon() -> Icon {
-    let n = 32usize;
-    let mut rgba = vec![0u8; n * n * 4];
-    for y in 0..n {
-        for x in 0..n {
-            let (dx, dy) = (x as f32 - 15.5, y as f32 - 15.5);
-            let r = (dx * dx + dy * dy).sqrt();
-            if !(8.0..=15.0).contains(&r) {
-                continue;
-            }
-            let angle = dx.atan2(-dy).rem_euclid(std::f32::consts::TAU);
-            let sector = (angle / (std::f32::consts::TAU / 8.0)) as usize;
-            // A thin gap between sectors.
-            let within = (angle % (std::f32::consts::TAU / 8.0)) * r;
-            if within < 1.0 {
-                continue;
-            }
-            let shade = if sector.is_multiple_of(2) {
-                [0x1f, 0x5f, 0xd6]
-            } else {
-                [0x4a, 0x7d, 0xe8]
-            };
-            let i = (y * n + x) * 4;
-            rgba[i..i + 4].copy_from_slice(&[shade[0], shade[1], shade[2], 255]);
-        }
-    }
-    Icon::from_rgba(rgba, n as u32, n as u32)
+    Icon::from_rgba(sheaf_ui::app_icon_rgba(32), 32, 32)
         .unwrap_or_else(|_| Icon::from_rgba(vec![0x1f, 0x5f, 0xd6, 255], 1, 1).expect("1x1 icon"))
 }
 

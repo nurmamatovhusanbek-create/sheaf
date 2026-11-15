@@ -865,6 +865,11 @@ pub fn run_window(config: UiConfig) -> eframe::Result {
             .with_title(sheaf_core::APP_NAME)
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 560.0])
+            .with_icon(egui::IconData {
+                rgba: crate::appicon::rgba(64),
+                width: 64,
+                height: 64,
+            })
             .with_drag_and_drop(true),
         ..Default::default()
     };
