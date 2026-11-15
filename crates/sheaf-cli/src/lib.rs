@@ -77,6 +77,50 @@ impl Command {
         }
     }
 
+    /// The arguments that make [`parse`] return this command again, for starting the program a
+    /// second time (the renderer fallback). Only the commands that open a window have any;
+    /// `--collect` is left out because by then the files have been collected.
+    pub fn to_args(&self) -> Option<Vec<OsString>> {
+        let os = |s: &str| OsString::from(s);
+        let files = |v: &[PathBuf]| v.iter().map(|f| f.as_os_str().to_owned()).collect::<Vec<_>>();
+        match self {
+            Command::Window { files: f } => Some([vec![os("open")], files(f)].concat()),
+            Command::Run(r) => {
+                let mut a = vec![os(r.action.id())];
+                a.extend(files(&r.files));
+                if let Some(out) = &r.out {
+                    a.extend([os("--out"), out.as_os_str().to_owned()]);
+                }
+                a.extend([
+                    os("--level"),
+                    os(match r.level {
+                        CompressLevel::Low => "low",
+                        CompressLevel::Recommended => "recommended",
+                        CompressLevel::Extreme => "extreme",
+                    }),
+                ]);
+                if let Some(langs) = &r.langs {
+                    a.extend([os("--langs"), os(&langs.join("+"))]);
+                }
+                Some(a)
+            }
+            Command::Preset(p) => {
+                let mut a = vec![os("preset"), os(&p.name)];
+                a.extend(files(&p.files));
+                if let Some(out) = &p.out {
+                    a.extend([os("--out"), out.as_os_str().to_owned()]);
+                }
+                Some(a)
+            }
+            Command::Card(inner) => {
+                let mut a = inner.to_args()?;
+                a.push(os("--card"));
+                Some(a)
+            }
+            _ => None,
+        }
+    }
+
     /// The same command on other files.
     pub fn with_files(mut self, new: Vec<PathBuf>) -> Command {
         match &mut self {
@@ -549,6 +593,23 @@ mod tests {
         ] {
             assert!(p(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn a_command_can_be_written_back_as_arguments_that_parse_to_the_same_command() {
+        for args in [
+            &["open", "a.pdf", "b.png"][..],
+            &["compress", "a.pdf", "--out", "o", "--level", "extreme"],
+            &["ocr", "s.pdf", "--langs", "eng+rus", "--level", "low"],
+            &["preset", "Contract scan", "a.pdf", "--out", "o"],
+            &["merge", "a.pdf", "b.pdf", "--card"],
+            &["preset", "X", "a.pdf", "--card"],
+        ] {
+            let command = p(args).expect("parses");
+            let back = command.to_args().expect("has arguments");
+            assert_eq!(parse(&back), Ok(command.clone()), "{args:?} -> {back:?}");
+        }
+        assert!(Command::Tray.to_args().is_none() && Command::Presets.to_args().is_none());
     }
 
     #[test]

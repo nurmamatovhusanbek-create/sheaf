@@ -879,8 +879,8 @@ impl eframe::App for SheafApp {
 
 /// Open the main window and run until it closes (FLOW-LIFECYCLE).
 pub fn run_window(config: UiConfig) -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+    let options = crate::renderer::options(
+        egui::ViewportBuilder::default()
             .with_title(sheaf_core::APP_NAME)
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 560.0])
@@ -890,8 +890,7 @@ pub fn run_window(config: UiConfig) -> eframe::Result {
                 height: 64,
             })
             .with_drag_and_drop(true),
-        ..Default::default()
-    };
+    );
     eframe::run_native(
         sheaf_core::APP_NAME,
         options,

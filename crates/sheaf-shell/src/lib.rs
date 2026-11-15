@@ -74,7 +74,10 @@ fn dispatch(command: Command) -> ExitCode {
                 Err(_) => dispatch(*inner),
             }
         }
-        Command::Window { files } => finish(sheaf_ui::run_window(ui_config(files))),
+        Command::Window { files } => {
+            let again = Command::Window { files: files.clone() };
+            finish_or_retry(sheaf_ui::run_window(ui_config(files)), &again)
+        }
         Command::Run(request) => headless::run(&request),
         Command::Preset(run) => headless::preset(&run),
         Command::Presets => headless::presets(),
@@ -84,7 +87,21 @@ fn dispatch(command: Command) -> ExitCode {
         Command::UninstallVerbs => run_verbs(false),
         Command::Wheel { at, list } => {
             let files = sheaf_ui::take_file_list(&list);
-            finish(sheaf_ui::run_wheel(wheel_config(at, files, None)))
+            let result = sheaf_ui::run_wheel(wheel_config(at, files.clone(), None));
+            if sheaf_ui::opengl_unusable(&result) {
+                // The list was taken when the wheel started: a fresh one for the second start.
+                return match write_list(&files) {
+                    Some(list) => relaunch(&[
+                        "wheel".into(),
+                        "--at".into(),
+                        format!("{},{}", at.0, at.1).into(),
+                        "--files".into(),
+                        list.into_os_string(),
+                    ]),
+                    None => finish(result),
+                };
+            }
+            finish(result)
         }
         Command::Card(inner) => {
             // An Explorer verb: the work starts at once and its progress and result show in a card.
@@ -97,11 +114,20 @@ fn dispatch(command: Command) -> ExitCode {
                 },
                 _ => return ExitCode::from(64),
             };
-            finish(sheaf_ui::run_wheel(wheel_config(
-                cursor::position(),
-                job.files().to_vec(),
-                Some(job),
-            )))
+            let files = job.files().to_vec();
+            let at = cursor::position();
+            let again = match &job {
+                sheaf_ui::WheelJob::Quick(r) => Command::Run(r.clone()),
+                sheaf_ui::WheelJob::Preset { name, files, out } => Command::Preset(sheaf_cli::PresetRun {
+                    name: name.clone(),
+                    files: files.clone(),
+                    out: out.clone(),
+                }),
+            };
+            finish_or_retry(
+                sheaf_ui::run_wheel(wheel_config(at, files, Some(job))),
+                &Command::Card(Box::new(again)),
+            )
         }
         Command::Tray => run_tray(),
     }
@@ -116,6 +142,45 @@ fn wheel_config(at: (i32, i32), files: Vec<PathBuf>, job: Option<sheaf_ui::Wheel
         files,
         job,
     }
+}
+
+/// Finish a window, and when OpenGL could not be used start the same command again drawing
+/// through Direct3D 12 (once: the second program sees the variable and does not ask again).
+fn finish_or_retry(result: sheaf_ui::UiResult, command: &Command) -> ExitCode {
+    if sheaf_ui::opengl_unusable(&result) {
+        if let Some(args) = command.to_args() {
+            return relaunch(&args);
+        }
+    }
+    finish(result)
+}
+
+/// Start this program again with the same arguments and the fallback renderer, and wait for it.
+fn relaunch(args: &[std::ffi::OsString]) -> ExitCode {
+    let Ok(exe) = std::env::current_exe() else {
+        return ExitCode::FAILURE;
+    };
+    match std::process::Command::new(exe)
+        .args(args)
+        .env(sheaf_ui::RENDERER_ENV, "wgpu")
+        .status()
+    {
+        Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
+        Err(_) => ExitCode::FAILURE,
+    }
+}
+
+/// A private list of files for a second start of the wheel overlay.
+fn write_list(files: &[PathBuf]) -> Option<PathBuf> {
+    let dir = base_dir();
+    std::fs::create_dir_all(&dir).ok()?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let path = dir.join(format!("wheel-{}-retry-{nanos:x}.txt", std::process::id()));
+    let text: String = files.iter().map(|f| format!("{}\n", f.display())).collect();
+    std::fs::write(&path, text).ok()?;
+    Some(path)
 }
 
 fn finish(result: sheaf_ui::UiResult) -> ExitCode {

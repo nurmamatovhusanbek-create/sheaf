@@ -573,8 +573,8 @@ pub fn run_wheel(config: WheelConfig) -> eframe::Result {
         (2.0 * OUTER + 16.0, 2.0 * OUTER + 16.0)
     };
     let (x, y) = (config.at.0 as f32, config.at.1 as f32);
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+    let options = crate::renderer::options(
+        egui::ViewportBuilder::default()
             .with_title("Sheaf")
             .with_inner_size([w, h])
             .with_position([x - w / 2.0, y - h / 2.0])
@@ -583,8 +583,7 @@ pub fn run_wheel(config: WheelConfig) -> eframe::Result {
             .with_always_on_top()
             .with_taskbar(false)
             .with_resizable(false),
-        ..Default::default()
-    };
+    );
     eframe::run_native(
         "Sheaf wheel",
         options,
