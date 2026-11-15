@@ -7,7 +7,7 @@
 //! Needs `bash tools/fetch-vendor`, Tesseract, and the `sheaf-worker` binary.
 
 use fixture_gen::{char_error_rate, Scratch};
-use harness::{App, Engines, OcrOutcome};
+use harness::{App, OcrOutcome};
 use sheaf_core::{ErrorCode, NormRect, OcrState, Op, PageId, Rot};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -97,7 +97,7 @@ fn fixtures() -> &'static Fixtures {
 }
 
 fn app(base: &Scratch) -> App {
-    let engines = Engines::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
+    let engines = harness::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
     App::start(&engines, &base.path().join("sessions"), 2).expect("app starts")
 }
 
@@ -437,7 +437,7 @@ fn ocr_failures_stay_on_their_page() {
 fn without_an_engine_ocr_fails_cleanly() {
     let fx = fixtures();
     let base = Scratch::new("ocr-noengine");
-    let mut engines = Engines::vendored().expect("engines");
+    let mut engines = harness::vendored().expect("engines");
     engines.tesseract = None;
     let mut app = App::start(&engines, &base.path().join("sessions"), 1).expect("app starts");
     let id = import_one(&mut app, &fx.path("eng.png"));

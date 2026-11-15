@@ -76,6 +76,10 @@ impl Workspace {
     pub fn source_mut(&mut self, id: SourceId) -> Option<&mut Source> {
         self.sources.get_mut(&id)
     }
+    /// Every registered source, by id.
+    pub fn sources(&self) -> impl Iterator<Item = &Source> {
+        self.sources.values()
+    }
 
     /// Apply an op. On error the workspace is unchanged.
     pub fn apply(&mut self, op: Op) -> Result<u64> {

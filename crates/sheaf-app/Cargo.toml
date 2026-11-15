@@ -1,0 +1,22 @@
+[package]
+name = "sheaf-app"
+description = "MOD-APP: the main-process application core behind MOD-SHELL: workspace, jobs, commands (no window toolkit)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sheaf-core = { path = "../sheaf-core" }
+sheaf-store = { path = "../sheaf-store" }
+sheaf-jobs = { path = "../sheaf-jobs" }
+sheaf-ocr = { path = "../sheaf-ocr" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+# Tests only: synthetic documents and the vendored engines of a checkout.
+fixture-gen = { path = "../../tools/fixture-gen" }

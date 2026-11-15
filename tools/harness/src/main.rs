@@ -9,7 +9,7 @@
 //! Exit code 0 ok, 2 partial (some pages failed), 1 failed, 64 usage.
 //! Flag `--workers N` applies to all.
 
-use harness::{App, Engines, OcrOutcome};
+use harness::{App, OcrOutcome};
 use sheaf_core::{AppError, Op, PageId, Result, Rot};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -87,7 +87,7 @@ fn parse() -> std::result::Result<Args, String> {
 
 fn start(a: &Args) -> Result<App> {
     let base = std::env::temp_dir().join("sheaf-harness");
-    App::start(&Engines::vendored()?, &base, a.workers)
+    App::start(&harness::vendored()?, &base, a.workers)
 }
 
 fn probe(a: &Args) -> Result<()> {

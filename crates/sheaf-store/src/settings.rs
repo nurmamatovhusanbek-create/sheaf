@@ -20,6 +20,9 @@ pub struct Settings {
     pub workers: Option<usize>,
     /// `Fast` or `Accurate`.
     pub ocr_quality: String,
+    /// DATA-OCRPOLICY mode: `Auto` recognizes pages without text as they
+    /// arrive, `Manual` only on command, `Off` never (and hides the prompts).
+    pub ocr_mode: String,
     /// `system`, `light` or `dark`.
     pub theme: String,
     pub recent_folders: Vec<PathBuf>,
@@ -33,6 +36,7 @@ impl Default for Settings {
             default_preset: None,
             workers: None,
             ocr_quality: "Fast".into(),
+            ocr_mode: "Manual".into(),
             theme: "system".into(),
             recent_folders: Vec::new(),
         }
@@ -67,6 +71,9 @@ impl Settings {
         }
         if !["Fast", "Accurate"].contains(&self.ocr_quality.as_str()) {
             self.ocr_quality = d.ocr_quality;
+        }
+        if !["Auto", "Manual", "Off"].contains(&self.ocr_mode.as_str()) {
+            self.ocr_mode = d.ocr_mode;
         }
         if !["system", "light", "dark"].contains(&self.theme.as_str()) {
             self.theme = d.theme;

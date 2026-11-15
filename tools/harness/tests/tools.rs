@@ -4,7 +4,7 @@
 //! Needs `bash tools/fetch-vendor` and the `sheaf-worker` binary.
 
 use fixture_gen::{PageDef, Scratch};
-use harness::{App, Engines, ExportSpec};
+use harness::{App, ExportSpec};
 use sheaf_core::proto::ImageFormat;
 use sheaf_core::{
     ColorMode, CompressLevel, ErrorCode, Filter, ImageFit, NormRect, Op, PageId, Password, Protect, SplitRule, Stamp,
@@ -12,7 +12,7 @@ use sheaf_core::{
 use std::path::{Path, PathBuf};
 
 fn app(base: &Scratch) -> App {
-    let engines = Engines::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
+    let engines = harness::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
     App::start(&engines, &base.path().join("sessions"), 2).expect("app starts")
 }
 
@@ -584,7 +584,7 @@ fn stamps_through_export() {
     );
 
     // Without the bundled font, stamping fails cleanly; plain export still works.
-    let mut engines = Engines::vendored().expect("engines");
+    let mut engines = harness::vendored().expect("engines");
     engines.font = None;
     let mut bare = App::start(&engines, &base.path().join("sessions-nofont"), 1).expect("app");
     bare.import(&base.path().join("doc.pdf")).expect("import");
@@ -705,7 +705,7 @@ fn protect_then_unlock() {
     };
     let restricted = app.export_pdf(out.path(), &spec).expect("export restricted").remove(0);
     let mut fresh = App::start(
-        &Engines::vendored().expect("engines"),
+        &harness::vendored().expect("engines"),
         &base.path().join("sessions2"),
         1,
     )

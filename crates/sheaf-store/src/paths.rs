@@ -161,6 +161,12 @@ fn checked_out_dir(dir: &Path) -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Validate a folder the user picked for outputs: it must exist, be a
+/// directory and pass the Windows path rules (SEC-PATHS). Returns it canonical.
+pub fn check_output_dir(dir: &Path) -> Result<PathBuf> {
+    checked_out_dir(dir).map(simplify_verbatim)
+}
+
 /// A path in `dir` for `name` that does not exist right now; collisions get
 /// `-2`, `-3`, … This is advisory: [`publish`] is what guarantees no overwrite.
 pub fn allow_output(dir: &Path, name: &str) -> Result<PathBuf> {

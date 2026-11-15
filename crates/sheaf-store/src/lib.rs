@@ -6,7 +6,9 @@ pub mod paths;
 pub mod session;
 pub mod settings;
 
-pub use paths::{allow_input, allow_output, create_output_dir, publish, AllowedInput};
+pub use paths::{
+    allow_input, allow_output, check_output_dir, create_output_dir, publish, sanitize_file_name, AllowedInput,
+};
 pub use session::{default_base_dir, sweep_stale, Session};
 pub use settings::{config_dir, Settings};
 

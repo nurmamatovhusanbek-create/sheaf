@@ -9,7 +9,7 @@ use harness::App;
 use sheaf_core::{ErrorCode, Op, PageId, Rot};
 
 fn app(base: &Scratch) -> App {
-    let engines = harness::Engines::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
+    let engines = harness::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
     App::start(&engines, &base.path().join("sessions"), 2).expect("app starts")
 }
 

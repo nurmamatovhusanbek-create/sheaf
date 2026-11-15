@@ -162,8 +162,15 @@ impl Pool {
 
     /// Submit and block until the job ends.
     pub fn run(&self, spec: JobSpec) -> Result<Value> {
+        self.run_notify(spec, |_| {})
+    }
+
+    /// Like [`Pool::run`], and tells the caller the job's id as soon as it is
+    /// queued, so another thread can [`Pool::cancel`] it.
+    pub fn run_notify(&self, spec: JobSpec, queued: impl FnOnce(JobId)) -> Result<Value> {
         let (tx, rx) = mpsc::channel();
-        self.enqueue(spec, Some(tx));
+        let id = self.enqueue(spec, Some(tx));
+        queued(id);
         rx.recv()
             .unwrap_or_else(|_| Err(AppError::new(ErrorCode::Cancelled, "pool shut down")))
     }

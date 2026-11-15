@@ -38,13 +38,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
       - name: Fetch and verify vendored assets
         run: bash tools/fetch-vendor
+      # MOD-SHELL (src-tauri) is Windows-only (ADR-TAURI, NG-XPLAT): it needs the
+      # GTK/WebKit toolchain elsewhere, which nothing here ships.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked ${{ runner.os == 'Linux' && '--exclude sheaf-shell' || '' }} -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked ${{ runner.os == 'Linux' && '--exclude sheaf-shell' || '' }}
       - name: Perf budgets (PERF-BUDGETS)
         run: |
-          cargo build --workspace --release --locked
+          cargo build --workspace --release --locked ${{ runner.os == 'Linux' && '--exclude sheaf-shell' || '' }}
           ./target/release/sheaf-harness bench --enforce
 
   supply-chain:
