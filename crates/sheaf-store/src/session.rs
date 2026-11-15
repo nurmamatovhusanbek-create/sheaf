@@ -13,11 +13,7 @@ const PREFIX: &str = "session-";
 /// Where session dirs live: `%LOCALAPPDATA%\Sheaf` on Windows, the XDG cache
 /// dir elsewhere (non-Windows builds exist for tests, NG-XPLAT).
 pub fn default_base_dir() -> Result<PathBuf> {
-    let var = |k: &str| {
-        std::env::var_os(k)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
+    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     let base = if cfg!(windows) {
         var("LOCALAPPDATA")
     } else {
@@ -45,31 +41,21 @@ impl Session {
         let base = crate::paths::simplify_verbatim(base);
         let dir = base.join(format!("{PREFIX}{}-{}", std::process::id(), token()));
         create_private_dir(&dir)?;
-        let lock = File::create(dir.join(LOCK_FILE))
-            .map_err(|e| AppError::io("create session lock", &e))?;
+        let lock = File::create(dir.join(LOCK_FILE)).map_err(|e| AppError::io("create session lock", &e))?;
         lock.try_lock()
             .map_err(|_| AppError::new(ErrorCode::Io, "session lock is already held"))?;
-        let session = Session {
-            dir,
-            lock: Some(lock),
-        };
+        let session = Session { dir, lock: Some(lock) };
         for sub in ["thumbs", "cache", "render", "results", "scans"] {
-            fs::create_dir(session.dir.join(sub))
-                .map_err(|e| AppError::io("create session subdir", &e))?;
+            fs::create_dir(session.dir.join(sub)).map_err(|e| AppError::io("create session subdir", &e))?;
         }
         Ok(session)
     }
 
     /// Use an existing session dir without owning it (worker side).
     pub fn attach(dir: &Path) -> Result<Session> {
-        let dir = dir
-            .canonicalize()
-            .map_err(|e| AppError::io("open session dir", &e))?;
+        let dir = dir.canonicalize().map_err(|e| AppError::io("open session dir", &e))?;
         if !dir.join(LOCK_FILE).is_file() {
-            return Err(AppError::new(
-                ErrorCode::PathRejected,
-                "not a session directory",
-            ));
+            return Err(AppError::new(ErrorCode::PathRejected, "not a session directory"));
         }
         Ok(Session { dir, lock: None })
     }
@@ -84,9 +70,7 @@ impl Session {
         let p = Path::new(rel);
         let plain = !rel.is_empty()
             && !rel.contains(['\\', ':', '\0'])
-            && rel
-                .split('/')
-                .all(|seg| !seg.is_empty() && seg != "." && seg != "..")
+            && rel.split('/').all(|seg| !seg.is_empty() && seg != "." && seg != "..")
             && p.components().all(|c| matches!(c, Component::Normal(_)));
         if !plain {
             return Err(AppError::new(
@@ -129,9 +113,7 @@ fn create_private_dir(dir: &Path) -> Result<()> {
     // already grants access to the owning user, SYSTEM and administrators only.
     #[cfg(not(unix))]
     let builder = fs::DirBuilder::new();
-    builder
-        .create(dir)
-        .map_err(|e| AppError::io("create session dir", &e))
+    builder.create(dir).map_err(|e| AppError::io("create session dir", &e))
 }
 
 /// Remove session dirs left behind by processes that are gone. A live
@@ -144,10 +126,7 @@ pub fn sweep_stale(base: &Path) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let dir = entry.path();
-        let named = entry
-            .file_name()
-            .to_str()
-            .is_some_and(|n| n.starts_with(PREFIX));
+        let named = entry.file_name().to_str().is_some_and(|n| n.starts_with(PREFIX));
         let real_dir = entry.file_type().is_ok_and(|t| t.is_dir());
         if !named || !real_dir {
             continue;

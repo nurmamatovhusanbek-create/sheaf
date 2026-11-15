@@ -23,8 +23,7 @@ fn main() -> ExitCode {
             other => path = Some(PathBuf::from(other)),
         }
     }
-    let path = path
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ARCHITECTURE.md"));
+    let path = path.unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ARCHITECTURE.md"));
 
     let mut doc = match std::fs::read_to_string(&path) {
         Ok(d) => d,

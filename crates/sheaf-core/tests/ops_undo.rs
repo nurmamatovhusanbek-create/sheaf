@@ -60,11 +60,7 @@ fn pick_ids(rng: &mut Rng, ws: &Workspace) -> Vec<PageId> {
 }
 
 fn random_op(rng: &mut Rng, ws: &Workspace, src: SourceId) -> Op {
-    let kind = if ws.is_empty() {
-        rng.below(2)
-    } else {
-        rng.below(8)
-    };
+    let kind = if ws.is_empty() { rng.below(2) } else { rng.below(8) };
     match kind {
         0 => Op::Insert {
             at: rng.below(ws.len() + 1),
@@ -82,9 +78,7 @@ fn random_op(rng: &mut Rng, ws: &Workspace, src: SourceId) -> Op {
             at: rng.below(ws.len() + 1),
             size: (595.0, 842.0),
         },
-        2 => Op::Delete {
-            ids: pick_ids(rng, ws),
-        },
+        2 => Op::Delete { ids: pick_ids(rng, ws) },
         3 => {
             let ids = pick_ids(rng, ws);
             let to = rng.below(ws.len() - ids.len() + 1);
@@ -111,9 +105,7 @@ fn random_op(rng: &mut Rng, ws: &Workspace, src: SourceId) -> Op {
                 ..Default::default()
             },
         },
-        _ => Op::Duplicate {
-            ids: pick_ids(rng, ws),
-        },
+        _ => Op::Duplicate { ids: pick_ids(rng, ws) },
     }
 }
 
@@ -252,10 +244,7 @@ fn page_ops_produce_the_expected_sequence() {
             .collect()
     };
 
-    ws.apply(Op::Delete {
-        ids: vec![id(&ws, 1)],
-    })
-    .expect("delete");
+    ws.apply(Op::Delete { ids: vec![id(&ws, 1)] }).expect("delete");
     assert_eq!(order(&ws), [0, 2, 3, 4]);
 
     // Lift pages "4" and "0" (given out of order) and drop them after "2".
@@ -266,10 +255,7 @@ fn page_ops_produce_the_expected_sequence() {
     .expect("move");
     assert_eq!(order(&ws), [2, 0, 4, 3]);
 
-    ws.apply(Op::Duplicate {
-        ids: vec![id(&ws, 0)],
-    })
-    .expect("duplicate");
+    ws.apply(Op::Duplicate { ids: vec![id(&ws, 0)] }).expect("duplicate");
     assert_eq!(order(&ws), [2, 2, 0, 4, 3]);
     assert_ne!(id(&ws, 0), id(&ws, 1));
 
@@ -314,10 +300,7 @@ fn invalid_ops_are_rejected_and_change_nothing() {
             at: 3,
             pages: vec![page],
         },
-        Op::Insert {
-            at: 0,
-            pages: vec![],
-        },
+        Op::Insert { at: 0, pages: vec![] },
         Op::Insert {
             at: 0,
             pages: vec![NewPage {
@@ -388,11 +371,7 @@ fn invalid_ops_are_rejected_and_change_nothing() {
         assert_eq!(snapshot(&ws), before);
         assert_eq!(ws.rev(), rev);
     }
-    assert_eq!(
-        ws.undo(),
-        Some(rev + 1),
-        "history is intact: only the insert is undone"
-    );
+    assert_eq!(ws.undo(), Some(rev + 1), "history is intact: only the insert is undone");
     assert!(ws.is_empty());
 }
 
@@ -406,14 +385,10 @@ fn ocr_state_updates_bump_rev_without_touching_history() {
     .expect("valid op");
     let id = ws.pages(0..1)[0].id;
     let rev = ws.rev();
-    assert_eq!(
-        ws.set_ocr_state(id, OcrState::Queued).expect("page exists"),
-        rev + 1
-    );
+    assert_eq!(ws.set_ocr_state(id, OcrState::Queued).expect("page exists"), rev + 1);
     assert_eq!(ws.find(id).map(|p| p.ocr.clone()), Some(OcrState::Queued));
     assert!(ws.set_has_text(PageId(404), true).is_err());
-    ws.undo()
-        .expect("the insert is still the last undoable step");
+    ws.undo().expect("the insert is still the last undoable step");
     assert!(ws.is_empty());
 }
 
@@ -438,8 +413,7 @@ fn ops_and_protocol_round_trip_through_json() {
         resp.outcome(),
         Outcome::Failed(AppError::new(ErrorCode::ParseError, "bad xref"))
     );
-    let done =
-        serde_json::to_string(&Response::done(1, serde_json::json!({"k": 1}))).expect("serialize");
+    let done = serde_json::to_string(&Response::done(1, serde_json::json!({"k": 1}))).expect("serialize");
     assert_eq!(done, r#"{"id":1,"ok":true,"result":{"k":1}}"#);
     let progress: Response = serde_json::from_str(r#"{"id":17,"progress":0.4}"#).expect("parse");
     assert_eq!(progress.outcome(), Outcome::Progress(0.4));

@@ -44,9 +44,7 @@ fn wait_for(rx: &Receiver<JobEvent>, mut pred: impl FnMut(&JobEvent) -> bool) ->
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let left = deadline.saturating_duration_since(Instant::now());
-        let event = rx
-            .recv_timeout(left)
-            .expect("expected event did not arrive");
+        let event = rx.recv_timeout(left).expect("expected event did not arrive");
         if pred(&event) {
             return event;
         }
@@ -96,9 +94,7 @@ fn worker_errors_pass_through_and_the_worker_is_kept() {
         ErrorCode::ParseError
     );
     assert_eq!(
-        pool.run(job("nope", json!({})))
-            .expect_err("unknown op")
-            .code,
+        pool.run(job("nope", json!({}))).expect_err("unknown op").code,
         ErrorCode::InvalidArg
     );
     assert_eq!(
@@ -108,9 +104,7 @@ fn worker_errors_pass_through_and_the_worker_is_kept() {
     );
     // A worker cannot make the pool believe it timed out or was cancelled.
     assert_eq!(
-        pool.run(job("claim_timeout", json!({})))
-            .expect_err("claim")
-            .code,
+        pool.run(job("claim_timeout", json!({}))).expect_err("claim").code,
         ErrorCode::Internal
     );
     // Lines for other jobs are ignored rather than misattributed.
@@ -131,9 +125,7 @@ fn a_crashed_worker_is_replaced() {
     let after = assert_alive(&pool);
     assert_ne!(before, after, "a new process took over");
     assert_eq!(
-        pool.run(job("garbage", json!({})))
-            .expect_err("garbage")
-            .code,
+        pool.run(job("garbage", json!({}))).expect_err("garbage").code,
         ErrorCode::WorkerCrashed
     );
     assert_eq!(
@@ -168,23 +160,13 @@ fn a_worker_over_its_memory_limit_is_killed() {
     let (pool, _rx) = pool(1);
     let before = assert_alive(&pool);
     let err = pool
-        .run(with_limits(
-            "alloc",
-            json!({"mb": 300, "ms": 5000}),
-            20_000,
-            100,
-        ))
+        .run(with_limits("alloc", json!({"mb": 300, "ms": 5000}), 20_000, 100))
         .expect_err("alloc");
     assert_eq!(err.code, ErrorCode::LimitExceeded);
     assert_ne!(assert_alive(&pool), before);
     // Under the cap the same op is fine.
-    pool.run(with_limits(
-        "alloc",
-        json!({"mb": 20, "ms": 0}),
-        20_000,
-        400,
-    ))
-    .expect("small allocation");
+    pool.run(with_limits("alloc", json!({"mb": 20, "ms": 0}), 20_000, 400))
+        .expect("small allocation");
 }
 
 #[test]
@@ -236,19 +218,14 @@ fn higher_priority_jobs_start_first() {
             order.push(id);
         }
     }
-    assert_eq!(
-        order,
-        [visible, visible2, selection, scan, background, background2]
-    );
+    assert_eq!(order, [visible, visible2, selection, scan, background, background2]);
 }
 
 #[test]
 fn work_is_spread_over_several_workers() {
     let (pool, rx) = pool(3);
     let t = Instant::now();
-    let ids: Vec<JobId> = (0..3)
-        .map(|_| pool.submit(job("sleep", json!({"ms": 600}))))
-        .collect();
+    let ids: Vec<JobId> = (0..3).map(|_| pool.submit(job("sleep", json!({"ms": 600})))).collect();
     let mut done = 0;
     while done < ids.len() {
         if matches!(
@@ -278,9 +255,7 @@ fn shutdown_cancels_everything_and_kills_workers() {
     assert!(events.contains(&JobEvent::Cancelled { id: running }));
     assert!(events.contains(&JobEvent::Cancelled { id: queued }));
     assert_eq!(
-        pool.run(job("echo", json!(1)))
-            .expect_err("after shutdown")
-            .code,
+        pool.run(job("echo", json!(1))).expect_err("after shutdown").code,
         ErrorCode::Cancelled
     );
 }
@@ -302,9 +277,7 @@ fn a_missing_worker_binary_fails_the_job_not_the_app() {
         ErrorCode::EngineMissing
     );
     assert_eq!(
-        pool.run(job("echo", json!(1)))
-            .expect_err("still none")
-            .code,
+        pool.run(job("echo", json!(1))).expect_err("still none").code,
         ErrorCode::EngineMissing
     );
     drop(rx);

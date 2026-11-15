@@ -139,13 +139,7 @@ fn verify_items_in(line: &str) -> Vec<String> {
     out
 }
 
-fn replace_block(
-    doc: &str,
-    begin: &str,
-    end: &str,
-    body: &str,
-    errors: &mut Vec<String>,
-) -> String {
+fn replace_block(doc: &str, begin: &str, end: &str, body: &str, errors: &mut Vec<String>) -> String {
     let (Some(b), Some(e)) = (doc.find(begin), doc.find(end)) else {
         errors.push(format!("missing generated-block markers: {begin}"));
         return doc.to_string();
@@ -165,14 +159,11 @@ pub fn check(doc: &str) -> Report {
     for (n, line) in doc.lines().enumerate() {
         for a in anchors_in(line) {
             if !anchors.insert(a) {
-                rep.errors
-                    .push(format!("line {}: duplicate anchor `{a}`", n + 1));
+                rep.errors.push(format!("line {}: duplicate anchor `{a}`", n + 1));
             }
             if a != a.to_ascii_lowercase() || a.contains(' ') {
-                rep.errors.push(format!(
-                    "line {}: anchor `{a}` must be lower-case, no spaces",
-                    n + 1
-                ));
+                rep.errors
+                    .push(format!("line {}: anchor `{a}` must be lower-case, no spaces", n + 1));
             }
         }
     }
@@ -196,18 +187,12 @@ pub fn check(doc: &str) -> Report {
         if !in_fence && line.starts_with('#') && !here.is_empty() {
             heading_ctx = here.clone();
         }
-        let ctx: Vec<&str> = if here.is_empty() {
-            heading_ctx.clone()
-        } else {
-            here
-        };
+        let ctx: Vec<&str> = if here.is_empty() { heading_ctx.clone() } else { here };
 
         let mut targets: Vec<&str> = Vec::new();
         if in_fence {
             // Diagrams and sketches name IDs as bare text.
-            for tok in
-                line.split(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-'))
-            {
+            for tok in line.split(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-')) {
                 let lower = tok.to_ascii_lowercase();
                 if let Some(a) = anchors.get(lower.as_str()) {
                     if tok.contains('-') {
@@ -219,19 +204,15 @@ pub fn check(doc: &str) -> Report {
             for (text, target) in links_in(line) {
                 rep.links += 1;
                 let Some(a) = anchors.get(target) else {
-                    rep.errors.push(format!(
-                        "line {}: link to missing anchor `#{target}`",
-                        n + 1
-                    ));
+                    rep.errors
+                        .push(format!("line {}: link to missing anchor `#{target}`", n + 1));
                     continue;
                 };
                 if is_id_text(text) {
                     let named = text.trim_matches('`').to_ascii_lowercase();
                     if named != *a {
-                        rep.errors.push(format!(
-                            "line {}: link text {text} points at `#{target}`",
-                            n + 1
-                        ));
+                        rep.errors
+                            .push(format!("line {}: link text {text} points at `#{target}`", n + 1));
                     }
                     targets.push(a);
                 }
@@ -285,9 +266,8 @@ pub fn check(doc: &str) -> Report {
     let with_a = replace_block(doc, BEGIN_A, END_A, &a, &mut rep.errors);
     rep.regenerated = replace_block(&with_a, BEGIN_B, END_B, &b, &mut rep.errors);
     if rep.errors.is_empty() && rep.regenerated != doc {
-        rep.errors.push(
-            "generated appendices are stale; run `cargo run -p link-check -- --write`".to_string(),
-        );
+        rep.errors
+            .push("generated appendices are stale; run `cargo run -p link-check -- --write`".to_string());
     }
     rep
 }
@@ -307,7 +287,8 @@ mod tests {
 
     #[test]
     fn clean_document_passes_after_regeneration() {
-        let r = fresh("## <a id=\"doc-x\"></a>X\nsee [`MOD-Y`](#mod-y)\n| <a id=\"mod-y\"></a> | y ([`DOC-X`](#doc-x)) |");
+        let r =
+            fresh("## <a id=\"doc-x\"></a>X\nsee [`MOD-Y`](#mod-y)\n| <a id=\"mod-y\"></a> | y ([`DOC-X`](#doc-x)) |");
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(r
             .regenerated
@@ -320,10 +301,7 @@ mod tests {
     #[test]
     fn missing_anchor_is_an_error() {
         let r = check(&doc("[`MOD-Z`](#mod-z)"));
-        assert!(r
-            .errors
-            .iter()
-            .any(|e| e.contains("missing anchor `#mod-z`")));
+        assert!(r.errors.iter().any(|e| e.contains("missing anchor `#mod-z`")));
     }
 
     #[test]
@@ -346,17 +324,15 @@ mod tests {
 
     #[test]
     fn verify_only_counts_inside_parentheses() {
-        let r = fresh("## <a id=\"doc-x\"></a>X\n**VERIFY** marks a claim.\nfast (VERIFY by bench, [`DOC-X`](#doc-x)).");
+        let r =
+            fresh("## <a id=\"doc-x\"></a>X\n**VERIFY** marks a claim.\nfast (VERIFY by bench, [`DOC-X`](#doc-x)).");
         assert_eq!(r.verify_items, 1);
-        assert!(r
-            .regenerated
-            .contains("| [`DOC-X`](#doc-x) | VERIFY by bench, DOC-X |"));
+        assert!(r.regenerated.contains("| [`DOC-X`](#doc-x) | VERIFY by bench, DOC-X |"));
     }
 
     #[test]
     fn code_fences_count_bare_ids() {
-        let r =
-            fresh("## <a id=\"doc-x\"></a>X\n```\nbox MOD-Y here\n```\n### <a id=\"mod-y\"></a>Y");
+        let r = fresh("## <a id=\"doc-x\"></a>X\n```\nbox MOD-Y here\n```\n### <a id=\"mod-y\"></a>Y");
         assert!(r
             .regenerated
             .contains("| [`MOD-Y`](#mod-y) | MOD | [`DOC-X`](#doc-x) |"));

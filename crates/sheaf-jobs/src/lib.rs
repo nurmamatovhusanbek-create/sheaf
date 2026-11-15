@@ -85,9 +85,7 @@ impl PartialOrd for Queued {
 impl Ord for Queued {
     /// Highest priority first; within a priority, first come first served.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority
-            .cmp(&other.priority)
-            .then(other.seq.cmp(&self.seq))
+        self.priority.cmp(&other.priority).then(other.seq.cmp(&self.seq))
     }
 }
 
@@ -112,9 +110,7 @@ struct Inner {
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
         // A panicking callback must not take the whole pool down with it.
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     /// Report the end of a job to the callback and to whoever waits in `run`.
@@ -229,17 +225,12 @@ impl Pool {
             for flag in st.running.values() {
                 flag.store(true, Ordering::SeqCst);
             }
-            std::mem::take(&mut st.queue)
-                .into_iter()
-                .map(|q| q.id)
-                .collect()
+            std::mem::take(&mut st.queue).into_iter().map(|q| q.id).collect()
         };
         self.inner.wake.notify_all();
         for id in queued {
-            self.inner.finish(
-                id,
-                Err(AppError::new(ErrorCode::Cancelled, "pool shut down")),
-            );
+            self.inner
+                .finish(id, Err(AppError::new(ErrorCode::Cancelled, "pool shut down")));
         }
         for t in self.threads.drain(..) {
             let _ = t.join();
@@ -268,10 +259,7 @@ fn slot_loop(inner: &Inner) {
                     st.running.insert(job.id, Arc::clone(&cancel));
                     break (job, cancel);
                 }
-                st = inner
-                    .wake
-                    .wait(st)
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                st = inner.wake.wait(st).unwrap_or_else(|poisoned| poisoned.into_inner());
             }
         };
         (inner.on_event)(JobEvent::Started { id: job.id });
@@ -287,26 +275,17 @@ fn slot_loop(inner: &Inner) {
 fn kills_worker(code: ErrorCode) -> bool {
     matches!(
         code,
-        ErrorCode::WorkerCrashed
-            | ErrorCode::Timeout
-            | ErrorCode::Cancelled
-            | ErrorCode::LimitExceeded
+        ErrorCode::WorkerCrashed | ErrorCode::Timeout | ErrorCode::Cancelled | ErrorCode::LimitExceeded
     )
 }
 
-fn run_job(
-    inner: &Inner,
-    worker: &mut Option<WorkerProc>,
-    job: &Queued,
-    cancel: &AtomicBool,
-) -> Result<Value> {
+fn run_job(inner: &Inner, worker: &mut Option<WorkerProc>, job: &Queued, cancel: &AtomicBool) -> Result<Value> {
     let request = Request {
         id: job.id.0,
         op: job.spec.op.clone(),
         args: job.spec.args.clone(),
     };
-    let line = serde_json::to_string(&request)
-        .map_err(|e| AppError::internal(format!("encode request: {e}")))?;
+    let line = serde_json::to_string(&request).map_err(|e| AppError::internal(format!("encode request: {e}")))?;
 
     // A worker may have died while idle; one fresh process gets a second try.
     let mut sent = false;
@@ -336,41 +315,23 @@ fn run_job(
         match proc.recv(TICK) {
             Line::Text(text) => match serde_json::from_str::<Response>(&text) {
                 Ok(resp) if resp.id == job.id.0 => match resp.outcome() {
-                    Outcome::Progress(progress) => (inner.on_event)(JobEvent::Progress {
-                        id: job.id,
-                        progress,
-                    }),
+                    Outcome::Progress(progress) => (inner.on_event)(JobEvent::Progress { id: job.id, progress }),
                     Outcome::Done(value) => return Ok(value),
                     // Whatever the worker claims, these codes are the pool's to give.
-                    Outcome::Failed(e) if kills_worker(e.code) => {
-                        return Err(AppError::internal(e.msg))
-                    }
+                    Outcome::Failed(e) if kills_worker(e.code) => return Err(AppError::internal(e.msg)),
                     Outcome::Failed(e) => return Err(e),
                 },
                 Ok(_) => {} // stale line from an earlier job
-                Err(_) => {
-                    return Err(AppError::new(
-                        ErrorCode::WorkerCrashed,
-                        "worker broke the protocol",
-                    ))
-                }
+                Err(_) => return Err(AppError::new(ErrorCode::WorkerCrashed, "worker broke the protocol")),
             },
-            Line::Closed => {
-                return Err(AppError::new(
-                    ErrorCode::WorkerCrashed,
-                    "worker exited during the job",
-                ))
-            }
+            Line::Closed => return Err(AppError::new(ErrorCode::WorkerCrashed, "worker exited during the job")),
             Line::Nothing => {}
         }
         if cancel.load(Ordering::SeqCst) {
             return Err(AppError::new(ErrorCode::Cancelled, "cancelled"));
         }
         if Instant::now() >= deadline {
-            return Err(AppError::new(
-                ErrorCode::Timeout,
-                "job exceeded its time limit",
-            ));
+            return Err(AppError::new(ErrorCode::Timeout, "job exceeded its time limit"));
         }
         ticks += 1;
         if ticks.is_multiple_of(4) && proc.rss_mb().is_some_and(|mb| mb > job.spec.limits.rss_mb) {

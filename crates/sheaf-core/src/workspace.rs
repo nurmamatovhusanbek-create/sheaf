@@ -48,12 +48,7 @@ impl Workspace {
     pub fn pages(&self, range: Range<usize>) -> Vec<Page> {
         let end = range.end.min(self.pages.len());
         let start = range.start.min(end);
-        self.pages
-            .iter()
-            .skip(start)
-            .take(end - start)
-            .cloned()
-            .collect()
+        self.pages.iter().skip(start).take(end - start).cloned().collect()
     }
     pub fn all_pages(&self) -> impl Iterator<Item = &Page> {
         self.pages.iter()
@@ -85,8 +80,7 @@ impl Workspace {
     /// Apply an op. On error the workspace is unchanged.
     pub fn apply(&mut self, op: Op) -> Result<u64> {
         let next = self.applied(&op)?;
-        self.undo
-            .push_back(std::mem::replace(&mut self.pages, next));
+        self.undo.push_back(std::mem::replace(&mut self.pages, next));
         if self.undo.len() > MAX_UNDO {
             self.undo.pop_front();
         }
@@ -104,8 +98,7 @@ impl Workspace {
 
     pub fn redo(&mut self) -> Option<u64> {
         let next = self.redo.pop()?;
-        self.undo
-            .push_back(std::mem::replace(&mut self.pages, next));
+        self.undo.push_back(std::mem::replace(&mut self.pages, next));
         self.rev += 1;
         Some(self.rev)
     }
@@ -121,9 +114,7 @@ impl Workspace {
     }
 
     fn update_page(&mut self, id: PageId, f: impl FnOnce(&mut Page)) -> Result<u64> {
-        let i = self
-            .index_of(id)
-            .ok_or_else(|| AppError::not_found("page"))?;
+        let i = self.index_of(id).ok_or_else(|| AppError::not_found("page"))?;
         if let Some(p) = self.pages.get_mut(i) {
             f(p);
         }
@@ -169,18 +160,12 @@ impl Workspace {
     fn check_content(&self, content: &PageContent) -> Result<()> {
         match *content {
             PageContent::Source { src, index } => {
-                let source = self
-                    .sources
-                    .get(&src)
-                    .ok_or_else(|| AppError::not_found("source"))?;
+                let source = self.sources.get(&src).ok_or_else(|| AppError::not_found("source"))?;
                 if index >= source.page_count {
                     return Err(AppError::invalid("page index past the end of its source"));
                 }
             }
-            PageContent::Blank {
-                width_pt,
-                height_pt,
-            } => {
+            PageContent::Blank { width_pt, height_pt } => {
                 if !BLANK_SIDE_PT.contains(&width_pt) || !BLANK_SIDE_PT.contains(&height_pt) {
                     return Err(AppError::invalid("blank page size out of range"));
                 }

@@ -34,12 +34,7 @@ impl WorkerProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|_| {
-                AppError::new(
-                    ErrorCode::EngineMissing,
-                    "worker process could not be started",
-                )
-            })?;
+            .map_err(|_| AppError::new(ErrorCode::EngineMissing, "worker process could not be started"))?;
         let (stdin, stdout) = match (child.stdin.take(), child.stdout.take()) {
             (Some(i), Some(o)) => (i, o),
             _ => {
@@ -66,11 +61,7 @@ impl WorkerProc {
                 }
             }
         });
-        Ok(WorkerProc {
-            child,
-            stdin,
-            lines,
-        })
+        Ok(WorkerProc { child, stdin, lines })
     }
 
     pub(crate) fn send(&mut self, line: &str) -> std::io::Result<()> {
@@ -91,8 +82,7 @@ impl WorkerProc {
     pub(crate) fn rss_mb(&self) -> Option<u64> {
         #[cfg(target_os = "linux")]
         {
-            let status =
-                std::fs::read_to_string(format!("/proc/{}/status", self.child.id())).ok()?;
+            let status = std::fs::read_to_string(format!("/proc/{}/status", self.child.id())).ok()?;
             let kb: u64 = status
                 .lines()
                 .find_map(|l| l.strip_prefix("VmRSS:"))?

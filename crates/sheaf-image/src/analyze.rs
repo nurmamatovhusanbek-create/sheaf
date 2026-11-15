@@ -8,11 +8,7 @@ pub fn otsu_threshold(gray: &GrayImage) -> u8 {
         hist[p[0] as usize] += 1;
     }
     let total = gray.as_raw().len() as f64;
-    let sum_all: f64 = hist
-        .iter()
-        .enumerate()
-        .map(|(i, &n)| i as f64 * n as f64)
-        .sum();
+    let sum_all: f64 = hist.iter().enumerate().map(|(i, &n)| i as f64 * n as f64).sum();
     let (mut w_bg, mut sum_bg, mut best, mut best_t) = (0f64, 0f64, -1f64, 127u8);
     for (t, &n) in hist.iter().enumerate() {
         w_bg += n as f64;
@@ -60,19 +56,13 @@ pub fn binarize_sauvola(gray: &GrayImage, window: u32, k: f32) -> GrayImage {
         for x in 0..wu {
             let (x0, x1) = (x.saturating_sub(r), (x + r + 1).min(wu));
             let area = ((y1 - y0) * (x1 - x0)) as f64;
-            let rect = |t: &[f64]| {
-                t[y1 * stride + x1] - t[y0 * stride + x1] - t[y1 * stride + x0]
-                    + t[y0 * stride + x0]
-            };
+            let rect =
+                |t: &[f64]| t[y1 * stride + x1] - t[y0 * stride + x1] - t[y1 * stride + x0] + t[y0 * stride + x0];
             let mean = rect(&sum) / area;
             let var = (rect(&sq) / area - mean * mean).max(0.0);
             let threshold = mean * (1.0 + f64::from(k) * (var.sqrt() / 128.0 - 1.0));
             let v = f64::from(gray.as_raw()[y * wu + x]);
-            out.put_pixel(
-                x as u32,
-                y as u32,
-                Luma([if v <= threshold { 0 } else { 255 }]),
-            );
+            out.put_pixel(x as u32, y as u32, Luma([if v <= threshold { 0 } else { 255 }]));
         }
     }
     out
@@ -112,8 +102,7 @@ fn to_gray(img: &RgbaImage) -> GrayImage {
     for (dst, src) in out.pixels_mut().zip(img.pixels()) {
         // Transparent counts as paper.
         let a = u32::from(src[3]);
-        let luma =
-            (u32::from(src[0]) * 299 + u32::from(src[1]) * 587 + u32::from(src[2]) * 114) / 1000;
+        let luma = (u32::from(src[0]) * 299 + u32::from(src[1]) * 587 + u32::from(src[2]) * 114) / 1000;
         dst[0] = ((luma * a + 255 * (255 - a)) / 255) as u8;
     }
     out

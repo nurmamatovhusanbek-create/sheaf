@@ -6,6 +6,7 @@
 
 use crate::error::{AppError, ErrorCode};
 use crate::model::{Filter, NormRect, Rot, SourceKind};
+use crate::tools::{CompressLevel, ImageFit, Password, Protect, Stamp};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -69,13 +70,12 @@ impl Response {
     pub fn outcome(self) -> Outcome {
         match (self.ok, self.progress) {
             (Some(true), _) => Outcome::Done(self.result.unwrap_or(Value::Null)),
-            (Some(false), _) => Outcome::Failed(self.error.unwrap_or_else(|| {
-                AppError::new(ErrorCode::Internal, "worker sent no error body")
-            })),
+            (Some(false), _) => Outcome::Failed(
+                self.error
+                    .unwrap_or_else(|| AppError::new(ErrorCode::Internal, "worker sent no error body")),
+            ),
             (None, Some(p)) => Outcome::Progress(p.clamp(0.0, 1.0)),
-            (None, None) => {
-                Outcome::Failed(AppError::new(ErrorCode::Internal, "malformed worker line"))
-            }
+            (None, None) => Outcome::Failed(AppError::new(ErrorCode::Internal, "malformed worker line")),
         }
     }
 }
@@ -89,6 +89,9 @@ pub mod ops {
     pub const BUILD: &str = "build";
     pub const OCR_PAGE: &str = "ocr_page";
     pub const PAGE_TEXT: &str = "page_text";
+    pub const PAGE_FACTS: &str = "page_facts";
+    pub const EXPORT_IMAGES: &str = "export_images";
+    pub const EXTRACT_IMAGES: &str = "extract_images";
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,11 +99,16 @@ pub struct SourceRef {
     /// Absolute, already validated by the main process.
     pub path: String,
     pub kind: SourceKind,
+    /// Opens a locked PDF (CMD-UNLOCK-PW). Sent once per request, never stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<Password>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProbeArgs {
     pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<Password>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +116,14 @@ pub struct ProbeResult {
     pub kind: SourceKind,
     pub page_count: u32,
     pub encrypted: bool,
+    /// The file opens without a password but an owner password restricts
+    /// printing, copying or editing.
+    #[serde(default)]
+    pub restricted: bool,
+    /// The document has fillable form fields. They do not survive page
+    /// import as fields; see `PageSpec::flatten_forms` (RISK-FORMS-MERGE).
+    #[serde(default)]
+    pub has_forms: bool,
     /// Per page: does it carry a text layer? Empty when the file is locked.
     pub has_text: Vec<bool>,
     /// Per page: width and height in PDF points, as displayed.
@@ -136,6 +152,13 @@ pub struct PageSpec {
     /// replaced: the old text layer must not survive under the new one.
     #[serde(default)]
     pub rasterize: bool,
+    /// Apply `crop` as a CropBox on an untouched PDF page instead of
+    /// rasterizing: the rest of the page is hidden, not removed (TOOL-CROP).
+    #[serde(default)]
+    pub crop_hide_only: bool,
+    /// Draw form fields into the page so their values stay visible after import.
+    #[serde(default)]
+    pub flatten_forms: bool,
 }
 
 /// `thumb` and `render`: draw one page into a PNG inside the session dir.
@@ -160,6 +183,14 @@ pub struct BuildArgs {
     pub pages: Vec<PageSpec>,
     /// Session-relative output path; the main process publishes it afterwards.
     pub out: String,
+    #[serde(default)]
+    pub stamps: Vec<Stamp>,
+    #[serde(default)]
+    pub image_fit: ImageFit,
+    #[serde(default)]
+    pub compress: Option<CompressLevel>,
+    #[serde(default)]
+    pub protect: Option<Protect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -173,6 +204,27 @@ pub struct BuildResult {
     /// Pages that received an OCR text layer.
     #[serde(default)]
     pub text_layers: u32,
+    /// JPEG files embedded byte for byte.
+    #[serde(default)]
+    pub jpeg_passthrough: u32,
+    #[serde(default)]
+    pub stamps: u32,
+    /// Pages whose form fields were drawn into the page.
+    #[serde(default)]
+    pub flattened: u32,
+    /// Size of the finished file.
+    #[serde(default)]
+    pub bytes: u64,
+    /// Size before compression, when compression was asked for.
+    #[serde(default)]
+    pub bytes_before_compress: Option<u64>,
+    /// Compression could not make the file smaller, so the uncompressed
+    /// result was kept (TOOL-COMPRESS: never return a bigger file).
+    #[serde(default)]
+    pub compress_kept_original: bool,
+    /// What protection was actually applied, e.g. `AES-256` (SEC-HONESTY).
+    #[serde(default)]
+    pub encryption: Option<String>,
 }
 
 /// `ocr_page`: OCR-PIPELINE for one page.
@@ -216,4 +268,54 @@ pub struct PageTextArgs {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PageTextResult {
     pub text: String,
+}
+
+/// `page_facts`: what the split planner needs to know about a page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FactsArgs {
+    pub page: PageSpec,
+    pub blank: bool,
+    pub text: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct FactsResult {
+    pub blank: bool,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImageFormat {
+    Png,
+    Jpg,
+}
+
+/// `export_images` (TOOL-PDF2IMG): one image file per page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExportImagesArgs {
+    pub pages: Vec<PageSpec>,
+    pub format: ImageFormat,
+    pub dpi: u32,
+    /// JPEG quality, 1 to 100.
+    pub quality: u8,
+    /// Session-relative directory, created by the worker.
+    pub out_dir: String,
+}
+
+/// `extract_images` (TOOL-PDF2IMG, alternative mode): the images embedded in
+/// one PDF page, unchanged where the format allows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtractImagesArgs {
+    pub source: SourceRef,
+    pub index: u32,
+    pub out_dir: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FilesResult {
+    /// Session-relative paths, in page order.
+    pub files: Vec<String>,
+    /// Images that could not be written in a common format and were left out.
+    #[serde(default)]
+    pub skipped: u32,
 }

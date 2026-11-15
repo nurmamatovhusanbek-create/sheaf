@@ -41,11 +41,7 @@ impl Default for Settings {
 
 /// `%APPDATA%\Sheaf` on Windows, the XDG config dir elsewhere.
 pub fn config_dir() -> Result<PathBuf> {
-    let var = |k: &str| {
-        std::env::var_os(k)
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
+    let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     let base = if cfg!(windows) {
         var("APPDATA")
     } else {

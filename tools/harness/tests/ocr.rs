@@ -67,36 +67,25 @@ fn fixtures() -> &'static Fixtures {
         let engine = sheaf_pdf::Engine::load(&fixture_gen::vendored_pdfium_dir())
             .expect("PDFium loads (run `bash tools/fetch-vendor` first)");
         let font = fixture_gen::noto_font();
-        for (name, lines) in [
-            ("eng", ENG),
-            ("rus", RUS),
-            ("uzb", UZB),
-            ("uzb_cyrl", UZB_CYRL),
-        ] {
+        for (name, lines) in [("eng", ENG), ("rus", RUS), ("uzb", UZB), ("uzb_cyrl", UZB_CYRL)] {
             let pdf = dir.path().join(format!("{name}.pdf"));
             let mut builder = engine.builder().expect("builder");
             builder.text_page(lines, &font, 13.0).expect("text page");
             builder.save(&pdf).expect("save text pdf");
             let img = engine
-                .render(&pdf, 0, (10_000, 10_000))
+                .render(sheaf_pdf::Src::plain(&pdf), 0, (10_000, 10_000))
                 .expect("render at 300 dpi");
-            dir.file(
-                &format!("{name}.png"),
-                &sheaf_image::encode_png(&img).expect("png"),
-            );
+            dir.file(&format!("{name}.png"), &sheaf_image::encode_png(&img).expect("png"));
             if name == "eng" {
                 // The same page scanned sideways: content turned 90° clockwise.
                 let sideways = sheaf_image::rotate_quarter(img.clone(), Rot::R90);
-                dir.file(
-                    "eng-sideways.png",
-                    &sheaf_image::encode_png(&sideways).expect("png"),
-                );
+                dir.file("eng-sideways.png", &sheaf_image::encode_png(&sideways).expect("png"));
             }
             if name == "rus" {
                 // A scan inside a PDF whose page carries its own /Rotate, so it displays upside down.
                 let mut builder = engine.builder().expect("builder");
                 builder
-                    .image_page(&img, 300, Rot::R180, None)
+                    .image_page(&img, 300, Rot::R180, None, Default::default())
                     .expect("image page");
                 builder
                     .save(&dir.path().join("rus-upside-down.pdf"))
@@ -108,8 +97,7 @@ fn fixtures() -> &'static Fixtures {
 }
 
 fn app(base: &Scratch) -> App {
-    let engines =
-        Engines::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
+    let engines = Engines::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
     App::start(&engines, &base.path().join("sessions"), 2).expect("app starts")
 }
 
@@ -141,12 +129,7 @@ fn truth(lines: &[&str]) -> String {
 /// text extracted from that spot of the exported page is that word, and an
 /// empty part of the page yields nothing. `upright_px` is the size of the
 /// image the engine read, after any orientation fix.
-fn assert_text_layer_aligned(
-    app: &App,
-    pdf: &Path,
-    result: &sheaf_core::OcrResult,
-    upright_px: (f32, f32),
-) {
+fn assert_text_layer_aligned(app: &App, pdf: &Path, result: &sheaf_core::OcrResult, upright_px: (f32, f32)) {
     let mut checked = 0;
     for word in result
         .words
@@ -163,11 +146,7 @@ fn assert_text_layer_aligned(
             y1: (top + height * 0.75) / upright_px.1,
         };
         let found = app.file_text(pdf, 0, Some(rect)).expect("text in region");
-        let clean = |s: &str| {
-            s.chars()
-                .filter(|c| c.is_alphanumeric())
-                .collect::<String>()
-        };
+        let clean = |s: &str| s.chars().filter(|c| c.is_alphanumeric()).collect::<String>();
         assert_eq!(
             clean(found.trim()),
             clean(&word.text),
@@ -184,9 +163,7 @@ fn assert_text_layer_aligned(
         y1: 0.95,
     };
     assert_eq!(
-        app.file_text(pdf, 0, Some(empty))
-            .expect("text in region")
-            .trim(),
+        app.file_text(pdf, 0, Some(empty)).expect("text in region").trim(),
         "",
         "nothing in the empty part"
     );
@@ -212,10 +189,7 @@ fn character_error_rate_and_language_choice() {
             !r.cached && r.rotate == 0 && r.engine.starts_with("tesseract"),
             "{name}: {r:?}"
         );
-        assert_eq!(
-            r.langs, langs,
-            "{name}: script detection picks the language pair"
-        );
+        assert_eq!(r.langs, langs, "{name}: script detection picks the language pair");
         let result = app.ocr_result(id).expect("result from cache");
         let cer = char_error_rate(&truth(lines), &result.text());
         eprintln!(
@@ -230,14 +204,8 @@ fn character_error_rate_and_language_choice() {
             max_cer * 100.0,
             result.text()
         );
-        assert!(
-            result.mean_conf > 70.0,
-            "{name}: mean confidence {}",
-            result.mean_conf
-        );
-        assert!(
-            matches!(app.ws.find(id).map(|p| &p.ocr), Some(OcrState::Done { langs: l, .. }) if l == langs)
-        );
+        assert!(result.mean_conf > 70.0, "{name}: mean confidence {}", result.mean_conf);
+        assert!(matches!(app.ws.find(id).map(|p| &p.ocr), Some(OcrState::Done { langs: l, .. }) if l == langs));
     }
 
     // CMD-SEARCH over what was just recognized.
@@ -254,24 +222,16 @@ fn character_error_rate_and_language_choice() {
         Some(pages[1]),
         "apostrophe variants match"
     );
-    assert_eq!(
-        app.search("тўққизинчи").first().map(|h| h.page),
-        Some(pages[3])
-    );
+    assert_eq!(app.search("тўққизинчи").first().map(|h| h.page), Some(pages[3]));
     assert!(app.search("nonexistentword").is_empty());
 
     // Fixed languages skip detection and are used as given.
     let fixed = done(ocr_one(&mut app, pages[2], Some(&["rus"]), false));
     assert_eq!(fixed.langs, ["rus"]);
-    assert!(
-        !fixed.cached,
-        "a different language setting is a different cache entry"
-    );
+    assert!(!fixed.cached, "a different language setting is a different cache entry");
 
     // "Extract text only": one text file, pages separated by form feeds.
-    let txt = app
-        .export_text(base.path(), "all.ocr.txt")
-        .expect("text export");
+    let txt = app.export_text(base.path(), "all.ocr.txt").expect("text export");
     let text = std::fs::read_to_string(&txt).expect("read text export");
     assert_eq!(text.matches('\u{c}').count(), 4);
     assert!(text.contains("bank transfer") && text.contains("банк") && !text.contains("Toshkent"));
@@ -286,36 +246,21 @@ fn pages_with_text_are_skipped_unless_redone() {
     assert_eq!(app.ws.find(id).and_then(|p| p.has_text), Some(true));
 
     // Add missing text (default): a born-digital page is left alone and stays lossless.
-    assert_eq!(
-        ocr_one(&mut app, id, None, false),
-        OcrOutcome::SkippedHasText
-    );
-    assert_eq!(
-        app.ws.find(id).map(|p| p.ocr.clone()),
-        Some(OcrState::SkippedHasText)
-    );
+    assert_eq!(ocr_one(&mut app, id, None, false), OcrOutcome::SkippedHasText);
+    assert_eq!(app.ws.find(id).map(|p| p.ocr.clone()), Some(OcrState::SkippedHasText));
     assert_eq!(
         app.ocr_result(id).expect_err("nothing recognized").code,
         ErrorCode::NotFound
     );
     let (kept, built) = app.export(base.path(), "kept.pdf").expect("export");
-    assert_eq!(
-        (built.copied, built.rasterized, built.text_layers),
-        (1, 0, 0)
-    );
-    assert!(app
-        .file_text(&kept, 0, None)
-        .expect("text")
-        .contains("bank transfer"));
+    assert_eq!((built.copied, built.rasterized, built.text_layers), (1, 0, 0));
+    assert!(app.file_text(&kept, 0, None).expect("text").contains("bank transfer"));
 
     // Redo all: recognized anyway, and the old text does not survive under the new layer.
     let r = done(ocr_one(&mut app, id, None, true));
     assert!(r.words > 30);
     let (redone, built) = app.export(base.path(), "redone.pdf").expect("export");
-    assert_eq!(
-        (built.copied, built.rasterized, built.text_layers),
-        (0, 1, 1)
-    );
+    assert_eq!((built.copied, built.rasterized, built.text_layers), (0, 1, 1));
     let text = app.file_text(&redone, 0, None).expect("text");
     assert_eq!(
         text.matches("negotiation").count(),
@@ -345,9 +290,7 @@ fn cache_follows_the_pixels() {
             delta: Rot::R180,
         })
         .expect("rotate");
-    app.ws
-        .apply(Op::Duplicate { ids: vec![id] })
-        .expect("duplicate");
+    app.ws.apply(Op::Duplicate { ids: vec![id] }).expect("duplicate");
     let copy = app.ws.pages(1..2)[0].id;
     assert!(done(ocr_one(&mut app, id, None, false)).cached);
     assert_eq!(
@@ -389,9 +332,7 @@ fn searchable_pdf_has_the_text_where_the_words_are() {
     let result = app.ocr_result(id).expect("result");
     let (out, built) = app.export(base.path(), "rus.ocr.pdf").expect("export");
     assert_eq!((built.page_count, built.text_layers), (1, 1));
-    let text = app
-        .file_text(&out, 0, None)
-        .expect("text of the searchable PDF");
+    let text = app.file_text(&out, 0, None).expect("text of the searchable PDF");
     let cer = char_error_rate(&truth(RUS), &text);
     assert!(
         cer < 0.03,
@@ -403,10 +344,7 @@ fn searchable_pdf_has_the_text_where_the_words_are() {
     // The searchable PDF is itself a document with text now: importing it skips OCR.
     let reimported = import_one(&mut app, &out);
     assert_eq!(app.ws.find(reimported).and_then(|p| p.has_text), Some(true));
-    assert_eq!(
-        ocr_one(&mut app, reimported, None, false),
-        OcrOutcome::SkippedHasText
-    );
+    assert_eq!(ocr_one(&mut app, reimported, None, false), OcrOutcome::SkippedHasText);
 }
 
 #[test]
@@ -428,11 +366,7 @@ fn sideways_and_upside_down_pages_are_turned_and_stay_aligned() {
         "the fix is recorded on the page"
     );
     let result = app.ocr_result(id).expect("result");
-    assert!(
-        char_error_rate(&truth(ENG), &result.text()) < 0.03,
-        "{}",
-        result.text()
-    );
+    assert!(char_error_rate(&truth(ENG), &result.text()) < 0.03, "{}", result.text());
     let (out, _) = app.export(base.path(), "sideways.ocr.pdf").expect("export");
     assert!(char_error_rate(&truth(ENG), &app.file_text(&out, 0, None).expect("text")) < 0.03);
     assert_text_layer_aligned(&app, &out, &result, PAGE_PX);
@@ -448,9 +382,7 @@ fn sideways_and_upside_down_pages_are_turned_and_stay_aligned() {
     let r = done(ocr_one(&mut app, id, None, false));
     assert_eq!(r.rotate, 180);
     let result = app.ocr_result(id).expect("result");
-    let (out, built) = app
-        .export(base.path(), "upside-down.ocr.pdf")
-        .expect("export");
+    let (out, built) = app.export(base.path(), "upside-down.ocr.pdf").expect("export");
     assert_eq!(
         (built.copied, built.rasterized, built.text_layers),
         (1, 0, 1),
@@ -495,9 +427,7 @@ fn ocr_failures_stay_on_their_page() {
         })
         .expect("blank");
     let blank = app.ws.pages(0..1)[0].id;
-    assert!(
-        matches!(ocr_one(&mut app, blank, None, false), OcrOutcome::Failed(e) if e.code == ErrorCode::InvalidArg)
-    );
+    assert!(matches!(ocr_one(&mut app, blank, None, false), OcrOutcome::Failed(e) if e.code == ErrorCode::InvalidArg));
     // Export still works, with text layers on the recognized pages only.
     let (_, built) = app.export(base.path(), "mixed.pdf").expect("export");
     assert_eq!((built.page_count, built.text_layers), (3, 2));
@@ -511,19 +441,14 @@ fn without_an_engine_ocr_fails_cleanly() {
     engines.tesseract = None;
     let mut app = App::start(&engines, &base.path().join("sessions"), 1).expect("app starts");
     let id = import_one(&mut app, &fx.path("eng.png"));
-    assert!(
-        matches!(ocr_one(&mut app, id, None, false), OcrOutcome::Failed(e) if e.code == ErrorCode::EngineMissing)
-    );
+    assert!(matches!(ocr_one(&mut app, id, None, false), OcrOutcome::Failed(e) if e.code == ErrorCode::EngineMissing));
 
     engines.tesseract = Some(("/no/such/tesseract".into(), fixture_gen::tessdata_dir()));
     let mut app = App::start(&engines, &base.path().join("sessions2"), 1).expect("app starts");
     let id = import_one(&mut app, &fx.path("eng.png"));
-    assert!(
-        matches!(ocr_one(&mut app, id, None, false), OcrOutcome::Failed(e) if e.code == ErrorCode::EngineMissing)
-    );
+    assert!(matches!(ocr_one(&mut app, id, None, false), OcrOutcome::Failed(e) if e.code == ErrorCode::EngineMissing));
     // Everything that does not need OCR still works.
-    app.export(base.path(), "plain.pdf")
-        .expect("export without OCR");
+    app.export(base.path(), "plain.pdf").expect("export without OCR");
 }
 
 #[test]
@@ -552,8 +477,7 @@ fn headless_ocr_command() {
         String::from_utf8_lossy(&result.stdout).trim(),
         out.path().join("uzb.ocr.pdf").to_string_lossy()
     );
-    assert!(String::from_utf8_lossy(&result.stderr)
-        .contains("1 pages recognized, 0 already had text, 0 failed"));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("1 pages recognized, 0 already had text, 0 failed"));
     assert!(out.path().join("uzb.ocr.pdf").is_file());
 
     let result = run(&["--text-only", "--langs", "rus"], "rus.png");
@@ -579,9 +503,5 @@ fn headless_ocr_command() {
     let result = run(&["--langs", "zzz"], "eng.png");
     assert_eq!(result.status.code(), Some(2));
     assert!(out.path().join("eng.ocr.pdf").is_file());
-    assert_eq!(
-        run(&["--langs"], "eng.png").status.code(),
-        Some(64),
-        "usage error"
-    );
+    assert_eq!(run(&["--langs"], "eng.png").status.code(), Some(64), "usage error");
 }

@@ -9,8 +9,7 @@ use harness::App;
 use sheaf_core::{ErrorCode, Op, PageId, Rot};
 
 fn app(base: &Scratch) -> App {
-    let engines = harness::Engines::vendored()
-        .expect("sheaf-worker is built (run `cargo build --workspace`)");
+    let engines = harness::Engines::vendored().expect("sheaf-worker is built (run `cargo build --workspace`)");
     App::start(&engines, &base.path().join("sessions"), 2).expect("app starts")
 }
 
@@ -45,11 +44,7 @@ fn import_edit_undo_export() {
     }
 
     // TOOL-REMOVE, TOOL-ORGANIZE, TOOL-ROTATE, then one undo.
-    app.ws
-        .apply(Op::Delete {
-            ids: vec![ra.pages[1]],
-        })
-        .expect("delete");
+    app.ws.apply(Op::Delete { ids: vec![ra.pages[1]] }).expect("delete");
     app.ws
         .apply(Op::Move {
             ids: vec![rb.pages[0], rb.pages[1]],
@@ -62,23 +57,10 @@ fn import_edit_undo_export() {
             delta: Rot::R90,
         })
         .expect("rotate");
-    app.ws
-        .apply(Op::Delete {
-            ids: vec![ra.pages[3]],
-        })
-        .expect("delete");
+    app.ws.apply(Op::Delete { ids: vec![ra.pages[3]] }).expect("delete");
     app.ws.undo().expect("undo the last delete");
     let order: Vec<PageId> = app.ws.all_pages().map(|p| p.id).collect();
-    assert_eq!(
-        order,
-        [
-            rb.pages[0],
-            rb.pages[1],
-            ra.pages[0],
-            ra.pages[2],
-            ra.pages[3]
-        ]
-    );
+    assert_eq!(order, [rb.pages[0], rb.pages[1], ra.pages[0], ra.pages[2], ra.pages[3]]);
 
     let (out, built) = app.export(out_dir.path(), "merged.pdf").expect("export");
     assert_eq!(out, out_dir.path().join("merged.pdf"));
@@ -101,8 +83,7 @@ fn import_edit_undo_export() {
         .iter()
         .map(|t| {
             let bytes = std::fs::read(t).expect("thumbnail");
-            let be =
-                |o: usize| u32::from_be_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
+            let be = |o: usize| u32::from_be_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
             (be(16), be(20)) // PNG IHDR width, height
         })
         .collect();
@@ -130,14 +111,9 @@ fn import_edit_undo_export() {
     app.ws
         .apply(Op::Delete { ids: report.pages })
         .expect("drop the re-imported pages");
-    let (second, _) = app
-        .export(out_dir.path(), "merged.pdf")
-        .expect("second export");
+    let (second, _) = app.export(out_dir.path(), "merged.pdf").expect("second export");
     assert_eq!(second, out_dir.path().join("merged-2.pdf"));
-    assert_eq!(
-        std::fs::read(&out).expect("first export still there"),
-        first_bytes
-    );
+    assert_eq!(std::fs::read(&out).expect("first export still there"), first_bytes);
     // The inputs were never written to.
     assert_eq!(std::fs::read(&a).expect("input a"), numbered_pdf(0, 4));
 
@@ -151,19 +127,14 @@ fn bad_inputs_fail_cleanly_and_the_app_carries_on() {
     let mut app = app(&base);
 
     let corrupt = base.file("corrupt.pdf", &fixture_gen::corrupt_pdf());
-    assert_eq!(
-        app.import(&corrupt).expect_err("corrupt").code,
-        ErrorCode::ParseError
-    );
+    assert_eq!(app.import(&corrupt).expect_err("corrupt").code, ErrorCode::ParseError);
     let text = base.file("notes.txt", b"hello");
     assert_eq!(
         app.import(&text).expect_err("not a document").code,
         ErrorCode::Unsupported
     );
     assert_eq!(
-        app.import(&base.path().join("missing.pdf"))
-            .expect_err("missing")
-            .code,
+        app.import(&base.path().join("missing.pdf")).expect_err("missing").code,
         ErrorCode::NotFound
     );
     assert_eq!(
@@ -177,10 +148,7 @@ fn bad_inputs_fail_cleanly_and_the_app_carries_on() {
     let locked = base.file("locked.pdf", &fixture_gen::locked_pdf());
     let report = app.import(&locked).expect("import of a locked file");
     assert!(report.encrypted && report.pages.is_empty());
-    assert!(app
-        .ws
-        .source(report.source)
-        .is_some_and(|s| s.encrypted && !s.unlocked));
+    assert!(app.ws.source(report.source).is_some_and(|s| s.encrypted && !s.unlocked));
 
     assert_eq!(
         app.export(base.path(), "empty.pdf")
@@ -206,9 +174,6 @@ fn a_stale_session_is_swept_at_startup() {
     std::fs::write(stale.join(".lock"), b"").expect("lock");
     std::fs::write(stale.join("cache/page.png"), b"left behind by a crash").expect("leftover");
     let app = app(&base);
-    assert!(
-        !stale.exists(),
-        "leftovers from a crashed run are removed at startup"
-    );
+    assert!(!stale.exists(), "leftovers from a crashed run are removed at startup");
     assert!(app.session_dir().exists());
 }

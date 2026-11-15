@@ -81,9 +81,7 @@ impl NormRect {
     pub const MIN_SIDE: f32 = 0.01;
 
     pub fn validate(&self) -> Result<()> {
-        let ok = [self.x0, self.y0, self.x1, self.y1]
-            .iter()
-            .all(|v| v.is_finite())
+        let ok = [self.x0, self.y0, self.x1, self.y1].iter().all(|v| v.is_finite())
             && self.x0 >= 0.0
             && self.y0 >= 0.0
             && self.x1 <= 1.0
@@ -139,9 +137,7 @@ impl Filter {
     }
     pub fn validate(&self) -> Result<()> {
         match self.deskew {
-            Deskew::Angle(a) if !a.is_finite() || a.abs() > 45.0 => {
-                Err(AppError::invalid("deskew angle out of range"))
-            }
+            Deskew::Angle(a) if !a.is_finite() || a.abs() > 45.0 => Err(AppError::invalid("deskew angle out of range")),
             _ => Ok(()),
         }
     }

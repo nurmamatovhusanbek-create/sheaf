@@ -6,7 +6,7 @@ pub mod paths;
 pub mod session;
 pub mod settings;
 
-pub use paths::{allow_input, allow_output, publish, AllowedInput};
+pub use paths::{allow_input, allow_output, create_output_dir, publish, AllowedInput};
 pub use session::{default_base_dir, sweep_stale, Session};
 pub use settings::{config_dir, Settings};
 
@@ -58,9 +58,7 @@ pub fn hash_file(path: &Path) -> Result<[u8; 32]> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
     loop {
-        let n = f
-            .read(&mut buf)
-            .map_err(|e| AppError::io("read for hashing", &e))?;
+        let n = f.read(&mut buf).map_err(|e| AppError::io("read for hashing", &e))?;
         if n == 0 {
             break;
         }

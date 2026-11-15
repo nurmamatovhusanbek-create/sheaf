@@ -35,14 +35,10 @@ fn is_reserved_name(component: &str) -> bool {
         .unwrap_or("")
         .trim_end_matches(' ')
         .to_ascii_uppercase();
-    matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) || (stem.len() == 4
-        && (stem.starts_with("COM") || stem.starts_with("LPT"))
-        && stem[3..]
-            .chars()
-            .all(|c| c.is_ascii_digit() || "¹²³".contains(c)))
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem[3..].chars().all(|c| c.is_ascii_digit() || "¹²³".contains(c)))
 }
 
 /// Lexical Windows rules, applied before the file system is touched: no
@@ -54,19 +50,13 @@ pub fn check_windows_path_rules(raw: &str) -> Result<()> {
     }
     let norm = raw.replace('/', "\\");
     let upper = norm.to_ascii_uppercase();
-    if upper.starts_with("\\\\.\\")
-        || upper.starts_with("\\\\?\\GLOBALROOT")
-        || upper.starts_with("\\??\\")
-    {
+    if upper.starts_with("\\\\.\\") || upper.starts_with("\\\\?\\GLOBALROOT") || upper.starts_with("\\??\\") {
         return Err(rejected("device path"));
     }
     // Strip the prefixes that legitimately contain ':' or '?'.
     let mut rest = norm.as_str();
     if let Some(r) = rest.strip_prefix("\\\\?\\") {
-        rest = r
-            .strip_prefix("UNC\\")
-            .or_else(|| r.strip_prefix("unc\\"))
-            .unwrap_or(r);
+        rest = r.strip_prefix("UNC\\").or_else(|| r.strip_prefix("unc\\")).unwrap_or(r);
     }
     let bytes = rest.as_bytes();
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
@@ -90,9 +80,7 @@ fn looks_unc(raw: &str) -> bool {
 
 /// Validate a file the user picked, dropped or passed on the command line.
 pub fn allow_input(p: &Path) -> Result<AllowedInput> {
-    let raw = p
-        .to_str()
-        .ok_or_else(|| rejected("path is not valid Unicode"))?;
+    let raw = p.to_str().ok_or_else(|| rejected("path is not valid Unicode"))?;
     if raw.is_empty() || raw.contains('\0') {
         return Err(rejected("empty path or NUL byte"));
     }
@@ -105,10 +93,7 @@ pub fn allow_input(p: &Path) -> Result<AllowedInput> {
     })?;
     if cfg!(windows) {
         // Again on the resolved form: a link may point somewhere the rules forbid.
-        check_windows_path_rules(
-            path.to_str()
-                .ok_or_else(|| rejected("path is not valid Unicode"))?,
-        )?;
+        check_windows_path_rules(path.to_str().ok_or_else(|| rejected("path is not valid Unicode"))?)?;
     }
     let meta = fs::metadata(&path).map_err(|e| AppError::io("stat input", &e))?;
     if !meta.is_file() {
@@ -167,14 +152,9 @@ fn numbered(name: &str, n: u32) -> String {
 
 fn checked_out_dir(dir: &Path) -> Result<PathBuf> {
     if cfg!(windows) {
-        check_windows_path_rules(
-            dir.to_str()
-                .ok_or_else(|| rejected("path is not valid Unicode"))?,
-        )?;
+        check_windows_path_rules(dir.to_str().ok_or_else(|| rejected("path is not valid Unicode"))?)?;
     }
-    let dir = dir
-        .canonicalize()
-        .map_err(|e| AppError::io("resolve output dir", &e))?;
+    let dir = dir.canonicalize().map_err(|e| AppError::io("resolve output dir", &e))?;
     if !dir.is_dir() {
         return Err(rejected("output location is not a directory"));
     }
@@ -225,19 +205,13 @@ pub fn publish(src: &Path, dir: &Path, name: &str) -> Result<PathBuf> {
                 // No hard links here (FAT, some network shares): claim the
                 // name with create_new, then rename the staged file over our
                 // own empty placeholder.
-                match OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&target)
-                {
+                match OpenOptions::new().write(true).create_new(true).open(&target) {
                     Ok(_) => {
-                        return fs::rename(&tmp, &target)
-                            .map(|()| target.clone())
-                            .map_err(|e| {
-                                let _ = fs::remove_file(&tmp);
-                                let _ = fs::remove_file(&target);
-                                AppError::io("move output into place", &e)
-                            });
+                        return fs::rename(&tmp, &target).map(|()| target.clone()).map_err(|e| {
+                            let _ = fs::remove_file(&tmp);
+                            let _ = fs::remove_file(&target);
+                            AppError::io("move output into place", &e)
+                        });
                     }
                     Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
                     Err(e) => {
@@ -250,6 +224,22 @@ pub fn publish(src: &Path, dir: &Path, name: &str) -> Result<PathBuf> {
     }
     let _ = fs::remove_file(&tmp);
     Err(AppError::limit("too many files with the same name"))
+}
+
+/// Create a new folder in `dir` for a job that produces several files
+/// (TOOL-PDF2IMG). Never reuses an existing folder: collisions get `-2`, `-3`, …
+pub fn create_output_dir(dir: &Path, name: &str) -> Result<PathBuf> {
+    let dir = checked_out_dir(dir)?;
+    let name = sanitize_file_name(name);
+    for n in 1..10_000 {
+        let target = dir.join(if n == 1 { name.clone() } else { format!("{name}-{n}") });
+        match fs::create_dir(&target) {
+            Ok(()) => return Ok(target),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(AppError::io("create output folder", &e)),
+        }
+    }
+    Err(AppError::limit("too many folders with the same name"))
 }
 
 /// Turn `\\?\C:\dir` back into `C:\dir` when that is safe. `canonicalize`

@@ -26,9 +26,7 @@ fn fold(s: &str) -> String {
         .flat_map(char::to_lowercase)
         .map(|c| if "ʻʼ’‘`´".contains(c) { '\'' } else { c })
         .collect();
-    folded
-        .trim_matches(|c: char| !c.is_alphanumeric())
-        .to_string()
+    folded.trim_matches(|c: char| !c.is_alphanumeric()).to_string()
 }
 
 impl SearchIndex {
@@ -38,14 +36,8 @@ impl SearchIndex {
 
     /// Add or replace a page's words.
     pub fn set_page(&mut self, page: PageId, result: &OcrResult) {
-        self.pages.insert(
-            page,
-            result
-                .words
-                .iter()
-                .map(|w| (w.text.clone(), w.line))
-                .collect(),
-        );
+        self.pages
+            .insert(page, result.words.iter().map(|w| (w.text.clone(), w.line)).collect());
     }
 
     pub fn remove_page(&mut self, page: PageId) {
@@ -65,8 +57,7 @@ impl SearchIndex {
             for start in 0..folded.len().saturating_sub(needle.len() - 1) {
                 let window = &folded[start..start + needle.len()];
                 let last = needle.len() - 1;
-                let matches = window[..last] == needle[..last]
-                    && window[last].starts_with(needle[last].as_str());
+                let matches = window[..last] == needle[..last] && window[last].starts_with(needle[last].as_str());
                 if !matches {
                     continue;
                 }
@@ -132,10 +123,7 @@ mod tests {
             PageId(3),
             "apostrophe variants match"
         );
-        assert!(
-            index.search("shahri Toshkent", 10).is_empty(),
-            "word order matters"
-        );
+        assert!(index.search("shahri Toshkent", 10).is_empty(), "word order matters");
         assert!(index.search("", 10).is_empty());
         assert!(index.search("yoʻq", 10).is_empty());
 

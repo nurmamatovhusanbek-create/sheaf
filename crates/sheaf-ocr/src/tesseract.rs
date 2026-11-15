@@ -51,9 +51,7 @@ impl Tesseract {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|_| {
-                AppError::new(ErrorCode::EngineMissing, "tesseract could not be started")
-            })?;
+            .map_err(|_| AppError::new(ErrorCode::EngineMissing, "tesseract could not be started"))?;
         let stdout = child.stdout.take();
         let reader = std::thread::spawn(move || {
             let mut text = Vec::new();
@@ -69,10 +67,7 @@ impl Tesseract {
                 Ok(None) if Instant::now() >= deadline => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(AppError::new(
-                        ErrorCode::Timeout,
-                        "tesseract exceeded its time limit",
-                    ));
+                    return Err(AppError::new(ErrorCode::Timeout, "tesseract exceeded its time limit"));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(10)),
                 Err(e) => {
@@ -104,9 +99,7 @@ pub(crate) fn parse_osd(text: &str) -> Osd {
     };
     let num = |name: &str| field(name).and_then(|v| v.parse::<f32>().ok());
     let rotate = match (num("Rotate"), num("Orientation confidence")) {
-        (Some(r), Some(c)) if c >= MIN_ORIENTATION_CONF && [90.0, 180.0, 270.0].contains(&r) => {
-            r as u16
-        }
+        (Some(r), Some(c)) if c >= MIN_ORIENTATION_CONF && [90.0, 180.0, 270.0].contains(&r) => r as u16,
         _ => 0,
     };
     let script = match (field("Script").as_deref(), num("Script confidence")) {
@@ -171,10 +164,7 @@ impl OcrEngine for Tesseract {
         };
         if !ok {
             cleanup();
-            return Err(AppError::new(
-                ErrorCode::ParseError,
-                "tesseract failed on the page",
-            ));
+            return Err(AppError::new(ErrorCode::ParseError, "tesseract failed on the page"));
         }
         let tsv_text = std::fs::read_to_string(&tsv_path).map_err(|e| {
             cleanup();
@@ -213,8 +203,7 @@ mod tests {
                 script: Script::Cyrillic
             }
         );
-        let unsure =
-            "Rotate: 180\nOrientation confidence: 0.4\nScript: Latin\nScript confidence: 0.2\n";
+        let unsure = "Rotate: 180\nOrientation confidence: 0.4\nScript: Latin\nScript confidence: 0.2\n";
         assert_eq!(
             parse_osd(unsure),
             Osd {
@@ -230,10 +219,7 @@ mod tests {
                 script: Script::Unknown
             }
         );
-        assert_eq!(
-            parse_osd("Rotate: 45\nOrientation confidence: 9\n").rotate,
-            0
-        );
+        assert_eq!(parse_osd("Rotate: 45\nOrientation confidence: 9\n").rotate, 0);
         assert_eq!(parse_osd(""), Osd::default());
     }
 }

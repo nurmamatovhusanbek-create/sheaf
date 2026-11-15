@@ -17,13 +17,7 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("sheaf-jobs", &["sheaf-core", "sheaf-store"]),
     (
         "sheaf-worker",
-        &[
-            "sheaf-core",
-            "sheaf-pdf",
-            "sheaf-image",
-            "sheaf-ocr",
-            "sheaf-store",
-        ],
+        &["sheaf-core", "sheaf-pdf", "sheaf-image", "sheaf-ocr", "sheaf-store"],
     ),
     ("sheaf-cli", &[]),
 ];
@@ -61,11 +55,7 @@ fn crates_depend_only_on_what_the_spec_lists() {
         let Ok(manifest) = std::fs::read_to_string(dir.join("Cargo.toml")) else {
             continue;
         };
-        let name = dir
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
+        let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
         let Some((_, allowed)) = ALLOWED.iter().find(|(n, _)| *n == name) else {
             problems.push(format!("{name}: crate is not in the DOC-MODULES table"));
             continue;
@@ -81,9 +71,7 @@ fn crates_depend_only_on_what_the_spec_lists() {
     }
     for (name, _) in ALLOWED {
         if !seen.contains(*name) {
-            problems.push(format!(
-                "{name}: listed in DOC-LAYOUT but missing from crates/"
-            ));
+            problems.push(format!("{name}: listed in DOC-LAYOUT but missing from crates/"));
         }
     }
     assert!(problems.is_empty(), "\n{}", problems.join("\n"));

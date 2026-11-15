@@ -13,3 +13,5 @@ workspace = true
 serde.workspace = true
 serde_json.workspace = true
 imbl.workspace = true
+regex.workspace = true
+zeroize.workspace = true

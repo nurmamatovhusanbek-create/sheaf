@@ -59,10 +59,7 @@ pub struct AppError {
 
 impl AppError {
     pub fn new(code: ErrorCode, msg: impl Into<String>) -> Self {
-        Self {
-            code,
-            msg: msg.into(),
-        }
+        Self { code, msg: msg.into() }
     }
     pub fn invalid(msg: impl Into<String>) -> Self {
         Self::new(ErrorCode::InvalidArg, msg)

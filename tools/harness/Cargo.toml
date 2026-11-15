@@ -26,3 +26,5 @@ sheaf-ocr = { path = "../../crates/sheaf-ocr" }
 # Tests only: synthesizing text pages for the OCR fixtures.
 sheaf-pdf = { path = "../../crates/sheaf-pdf" }
 sheaf-image = { path = "../../crates/sheaf-image" }
+tiff.workspace = true
+image.workspace = true

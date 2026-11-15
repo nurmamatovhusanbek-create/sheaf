@@ -53,7 +53,8 @@ pub fn parse(tsv: &str) -> OcrResult {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
+    const SAMPLE: &str =
+        "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
 1\t1\t0\t0\t0\t0\t0\t0\t2480\t3508\t-1\t\n\
 4\t1\t1\t1\t1\t0\t300\t400\t900\t60\t-1\t\n\
 5\t1\t1\t1\t1\t1\t300\t400\t250\t60\t96.5\tShartnoma\n\
@@ -69,10 +70,7 @@ garbage line\n";
         let texts: Vec<&str> = r.words.iter().map(|w| w.text.as_str()).collect();
         assert_eq!(texts, ["Shartnoma", "№", "қўғҳ", "a\tb"]);
         assert_eq!(r.words[0].bbox, [300, 400, 250, 60]);
-        assert_eq!(
-            r.words.iter().map(|w| w.line).collect::<Vec<_>>(),
-            [0, 0, 1, 2]
-        );
+        assert_eq!(r.words.iter().map(|w| w.line).collect::<Vec<_>>(), [0, 0, 1, 2]);
         assert!((r.mean_conf - (96.5 + 91.0 + 40.25 + 88.0) / 4.0).abs() < 1e-4);
         assert_eq!(r.text(), "Shartnoma №\nқўғҳ\na\tb");
     }

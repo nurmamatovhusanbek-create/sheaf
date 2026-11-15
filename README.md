@@ -5,10 +5,10 @@ Local, offline PDF and scan toolkit for Windows (Rust + Tauri 2). No network at 
 The design and the phase-by-phase build plan are in [ARCHITECTURE.md](ARCHITECTURE.md);
 start with its reading guide and the rules for whoever writes code.
 
-**Status:** PH-2 (OCR) is done on top of the PH-1 core: pages without text are recognized
-with Tesseract (English, Russian, Uzbek Latin and Cyrillic), results are cached by pixel
-content, and export lays an invisible text layer over the untouched page. There is no window
-yet (PH-4); a headless harness drives the core.
+**Status:** PH-3 (tools) is done on top of the core and OCR: merge, extract, split with name
+patterns, crop, compress, images to PDF, PDF to images, watermarks and page numbers,
+AES-256 protection and unlocking. There is no window yet (PH-4); the tools are exercised
+through a headless harness and its tests.
 
 ## Working on it
 

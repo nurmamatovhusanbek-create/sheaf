@@ -61,26 +61,15 @@ fn parse() -> std::result::Result<Args, String> {
         match arg.as_str() {
             "--out" => a.out = Some(value("--out")?.into()),
             "--name" => a.name = value("--name")?,
-            "--rotate" => {
-                a.rotate = value("--rotate")?
-                    .parse()
-                    .map_err(|_| "--rotate needs degrees")?
-            }
+            "--rotate" => a.rotate = value("--rotate")?.parse().map_err(|_| "--rotate needs degrees")?,
             "--reverse" => a.reverse = true,
             "--drop" => {
                 for n in value("--drop")?.split(',') {
-                    a.drop.push(
-                        n.trim()
-                            .parse()
-                            .map_err(|_| "--drop needs page numbers like 2,5")?,
-                    );
+                    a.drop
+                        .push(n.trim().parse().map_err(|_| "--drop needs page numbers like 2,5")?);
                 }
             }
-            "--pages" => {
-                a.pages = value("--pages")?
-                    .parse()
-                    .map_err(|_| "--pages needs a number")?
-            }
+            "--pages" => a.pages = value("--pages")?.parse().map_err(|_| "--pages needs a number")?,
             "--enforce" => a.enforce = true,
             "--langs" => {
                 let v = value("--langs")?;
@@ -88,11 +77,7 @@ fn parse() -> std::result::Result<Args, String> {
             }
             "--replace" => a.replace = true,
             "--text-only" => a.text_only = true,
-            "--workers" => {
-                a.workers = value("--workers")?
-                    .parse()
-                    .map_err(|_| "--workers needs a number")?
-            }
+            "--workers" => a.workers = value("--workers")?.parse().map_err(|_| "--workers needs a number")?,
             flag if flag.starts_with("--") => return Err(format!("unknown flag {flag}")),
             file => a.files.push(file.into()),
         }
@@ -122,10 +107,7 @@ fn probe(a: &Args) -> Result<()> {
             .iter()
             .filter(|id| app.ws.find(**id).is_some_and(|p| p.has_text == Some(true)))
             .count();
-        println!(
-            "{name}: {} pages, {with_text} with a text layer",
-            report.pages.len()
-        );
+        println!("{name}: {} pages, {with_text} with a text layer", report.pages.len());
     }
     app.close()
 }
@@ -165,10 +147,7 @@ fn export(a: &Args) -> Result<()> {
         // TOOL-ORGANIZE: move the last page to the front until the order is reversed.
         for i in 0..app.ws.len() {
             let last = app.ws.pages(app.ws.len() - 1..app.ws.len())[0].id;
-            app.ws.apply(Op::Move {
-                ids: vec![last],
-                to: i,
-            })?;
+            app.ws.apply(Op::Move { ids: vec![last], to: i })?;
         }
     }
     let delta = Rot::from_degrees(a.rotate)?;
@@ -271,12 +250,8 @@ fn bench(a: &Args) -> Result<()> {
         "output                         {} pages, {} copied, {size} bytes",
         built.page_count, built.copied
     );
-    let within =
-        thumbs_ms <= THUMBS_BUDGET_MS && export_ms <= EXPORT_BUDGET_MS && built.copied == a.pages;
-    println!(
-        "within budget                  {}",
-        if within { "yes" } else { "NO" }
-    );
+    let within = thumbs_ms <= THUMBS_BUDGET_MS && export_ms <= EXPORT_BUDGET_MS && built.copied == a.pages;
+    println!("within budget                  {}", if within { "yes" } else { "NO" });
     if a.enforce && !within {
         return Err(AppError::limit("performance budget exceeded"));
     }
@@ -287,9 +262,7 @@ fn main() -> ExitCode {
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {
-            eprintln!(
-                "sheaf-harness: {e}\nusage: sheaf-harness probe|export|ocr|bench [flags] [FILE...]"
-            );
+            eprintln!("sheaf-harness: {e}\nusage: sheaf-harness probe|export|ocr|bench [flags] [FILE...]");
             return ExitCode::from(64);
         }
     };

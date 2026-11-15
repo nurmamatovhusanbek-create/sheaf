@@ -13,8 +13,7 @@ impl Scratch {
     fn new(tag: &str) -> Self {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("sheaf-store-test-{}-{tag}-{n}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("sheaf-store-test-{}-{tag}-{n}", std::process::id()));
         fs::create_dir_all(&dir).expect("create scratch dir");
         Scratch(dir.canonicalize().expect("canonical scratch dir"))
     }
@@ -38,11 +37,7 @@ fn session_is_created_private_and_removed_on_close_and_drop() {
     {
         use std::os::unix::fs::PermissionsExt;
         let mode = fs::metadata(&dir).expect("stat").permissions().mode();
-        assert_eq!(
-            mode & 0o077,
-            0,
-            "session dir must not be readable by others"
-        );
+        assert_eq!(mode & 0o077, 0, "session dir must not be readable by others");
     }
     fs::write(dir.join("cache").join("x"), b"data").expect("write");
     session.close().expect("close");
@@ -84,10 +79,7 @@ fn attach_only_accepts_a_session_dir_and_does_not_delete_it() {
     let owner = Session::create(base.path()).expect("create session");
     let worker_view = Session::attach(owner.dir()).expect("attach");
     drop(worker_view);
-    assert!(
-        owner.dir().exists(),
-        "a worker must not delete its parent's session"
-    );
+    assert!(owner.dir().exists(), "a worker must not delete its parent's session");
     assert!(Session::attach(base.path()).is_err());
 }
 
@@ -169,9 +161,7 @@ fn allow_input_accepts_files_and_rejects_everything_else() {
     assert_eq!(allow_input(&via_dotdot).expect("resolves").path, file);
 
     assert_eq!(
-        allow_input(&dir.path().join("missing.pdf"))
-            .expect_err("missing")
-            .code,
+        allow_input(&dir.path().join("missing.pdf")).expect_err("missing").code,
         ErrorCode::NotFound
     );
     assert_eq!(
@@ -184,9 +174,7 @@ fn allow_input_accepts_files_and_rejects_everything_else() {
     );
     #[cfg(unix)]
     assert_eq!(
-        allow_input(Path::new("/dev/null"))
-            .expect_err("device")
-            .code,
+        allow_input(Path::new("/dev/null")).expect_err("device").code,
         ErrorCode::PathRejected
     );
 }
@@ -200,10 +188,7 @@ fn oversized_input_is_rejected_before_anything_reads_it() {
     if f.set_len(sheaf_core::consts::MAX_FILE_BYTES + 1).is_err() {
         return; // file system without sparse files: nothing to test here
     }
-    assert_eq!(
-        allow_input(&file).expect_err("too big").code,
-        ErrorCode::LimitExceeded
-    );
+    assert_eq!(allow_input(&file).expect_err("too big").code, ErrorCode::LimitExceeded);
 }
 
 #[test]
@@ -236,19 +221,13 @@ fn verbatim_paths_are_simplified_only_when_safe() {
 fn file_names_are_sanitized() {
     assert_eq!(sanitize_file_name("report.pdf"), "report.pdf");
     assert_eq!(sanitize_file_name("../../etc/passwd"), "_.._etc_passwd");
-    assert_eq!(
-        sanitize_file_name("a<b>c:d\"e|f?g*.pdf"),
-        "a_b_c_d_e_f_g_.pdf"
-    );
+    assert_eq!(sanitize_file_name("a<b>c:d\"e|f?g*.pdf"), "a_b_c_d_e_f_g_.pdf");
     assert_eq!(sanitize_file_name("NUL.pdf"), "_NUL.pdf");
     assert_eq!(sanitize_file_name("com1"), "_com1");
     assert_eq!(sanitize_file_name("name. "), "name");
     assert_eq!(sanitize_file_name(""), "_");
     assert_eq!(sanitize_file_name("..."), "_");
-    assert_eq!(
-        sanitize_file_name("Shartnoma №12 ўқғҳ.pdf"),
-        "Shartnoma №12 ўқғҳ.pdf"
-    );
+    assert_eq!(sanitize_file_name("Shartnoma №12 ўқғҳ.pdf"), "Shartnoma №12 ўқғҳ.pdf");
     let long = sanitize_file_name(&format!("{}.pdf", "x".repeat(500)));
     assert_eq!(long.chars().count(), 120);
     assert!(long.ends_with(".pdf"));
@@ -282,14 +261,8 @@ fn outputs_never_overwrite() {
         fs::read(out.path().join("merged.pdf")).expect("read"),
         b"the user's file"
     );
-    assert_eq!(
-        fs::read(out.path().join("merged-2.pdf")).expect("read"),
-        b"first"
-    );
-    assert_eq!(
-        fs::read(out.path().join("merged-3.pdf")).expect("read"),
-        b"second"
-    );
+    assert_eq!(fs::read(out.path().join("merged-2.pdf")).expect("read"), b"first");
+    assert_eq!(fs::read(out.path().join("merged-3.pdf")).expect("read"), b"second");
     let names: Vec<String> = fs::read_dir(out.path())
         .expect("list")
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
@@ -301,10 +274,7 @@ fn outputs_never_overwrite() {
     assert_eq!(escaped.parent(), Some(out.path()));
     assert!(publish(&staged, &out.path().join("missing-dir"), "x.pdf").is_err());
     assert!(publish(&session.dir().join("nope"), out.path(), "y.pdf").is_err());
-    assert!(
-        !out.path().join("y.pdf").exists(),
-        "a failed publish leaves no file"
-    );
+    assert!(!out.path().join("y.pdf").exists(), "a failed publish leaves no file");
 }
 
 #[test]
@@ -326,10 +296,7 @@ fn atomic_write_replaces_whole_files_and_hash_matches() {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect();
-    assert_eq!(
-        hex,
-        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-    );
+    assert_eq!(hex, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 }
 
 #[test]

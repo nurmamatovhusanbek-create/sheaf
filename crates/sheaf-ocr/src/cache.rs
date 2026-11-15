@@ -22,10 +22,7 @@ pub fn cache_key(
         Some(list) => list.join("+"),
         None => "auto".to_string(),
     };
-    let header = format!(
-        "{}x{}\n{engine}\n{version}\n{langs}\n{params}\n",
-        size.0, size.1
-    );
+    let header = format!("{}x{}\n{engine}\n{version}\n{langs}\n{params}\n", size.0, size.1);
     sheaf_store::hex(&sheaf_store::hash_bytes(&[header.as_bytes(), pixels]))
 }
 
@@ -49,10 +46,7 @@ pub struct CacheEntry {
 }
 
 fn valid_key(key: &str) -> bool {
-    key.len() == 64
-        && key
-            .bytes()
-            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
 impl CacheEntry {
@@ -85,11 +79,8 @@ impl CacheEntry {
 
     /// Words and confidences (CMD-OCR-RESULT).
     pub fn result(&self) -> Result<OcrResult> {
-        let meta = self
-            .meta()
-            .ok_or_else(|| AppError::not_found("OCR result"))?;
-        let text =
-            std::fs::read_to_string(self.tsv()).map_err(|e| AppError::io("read OCR result", &e))?;
+        let meta = self.meta().ok_or_else(|| AppError::not_found("OCR result"))?;
+        let text = std::fs::read_to_string(self.tsv()).map_err(|e| AppError::io("read OCR result", &e))?;
         let mut result = tsv::parse(&text);
         result.langs_used = meta.langs;
         result.script = meta.script;
@@ -101,8 +92,7 @@ impl CacheEntry {
     /// last inside the work dir, so a visible entry is always complete. If
     /// another worker got there first, theirs stays and ours is dropped.
     pub fn commit(&self, work: &std::path::Path, meta: &Meta) -> Result<()> {
-        let json = serde_json::to_vec(meta)
-            .map_err(|e| AppError::internal(format!("encode OCR meta: {e}")))?;
+        let json = serde_json::to_vec(meta).map_err(|e| AppError::internal(format!("encode OCR meta: {e}")))?;
         sheaf_store::write_atomic(&work.join("meta.json"), &json)?;
         if std::fs::rename(work, &self.dir).is_err() {
             let _ = std::fs::remove_dir_all(work);

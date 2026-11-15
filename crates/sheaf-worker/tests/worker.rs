@@ -78,10 +78,7 @@ impl Worker {
     fn err(&mut self, op: &str, args: Value) -> String {
         let reply = self.call(op, args);
         assert_eq!(reply["ok"], json!(false), "{op} should fail: {reply}");
-        reply["error"]["code"]
-            .as_str()
-            .expect("error code")
-            .to_string()
+        reply["error"]["code"].as_str().expect("error code").to_string()
     }
 }
 
@@ -109,23 +106,14 @@ fn probe_classifies_inputs() {
     let mut w = Worker::start(&dir);
     assert!(w.ok("ping", json!({}))["pid"].as_u64().is_some());
 
-    let pdf = dir.file(
-        "a.pdf",
-        &fixture_gen::pdf(&[PageDef::text("Hi"), PageDef::no_text()]),
-    );
+    let pdf = dir.file("a.pdf", &fixture_gen::pdf(&[PageDef::text("Hi"), PageDef::no_text()]));
     let r = w.ok("import_probe", json!({"path": pdf}));
-    assert_eq!(
-        (r["kind"].as_str(), r["page_count"].as_u64()),
-        (Some("Pdf"), Some(2))
-    );
+    assert_eq!((r["kind"].as_str(), r["page_count"].as_u64()), (Some("Pdf"), Some(2)));
     assert_eq!(r["has_text"], json!([true, false]));
 
     let image = png(&dir, "scan.png", 1240, 1754, [250, 250, 250]);
     let r = w.ok("import_probe", json!({"path": image}));
-    assert_eq!(
-        (r["kind"].as_str(), r["page_count"].as_u64()),
-        (Some("Image"), Some(1))
-    );
+    assert_eq!((r["kind"].as_str(), r["page_count"].as_u64()), (Some("Image"), Some(1)));
     assert_eq!(r["has_text"], json!([false]));
 
     let locked = dir.file("locked.pdf", &fixture_gen::locked_pdf());
@@ -136,35 +124,20 @@ fn probe_classifies_inputs() {
     );
 
     let corrupt = dir.file("corrupt.pdf", &fixture_gen::corrupt_pdf());
-    assert_eq!(
-        w.err("import_probe", json!({"path": corrupt})),
-        "ParseError"
-    );
+    assert_eq!(w.err("import_probe", json!({"path": corrupt})), "ParseError");
     let text = dir.file("notes.txt", b"just text");
     assert_eq!(w.err("import_probe", json!({"path": text})), "Unsupported");
     assert_eq!(
-        w.err(
-            "import_probe",
-            json!({"path": dir.path().join("missing.pdf")})
-        ),
+        w.err("import_probe", json!({"path": dir.path().join("missing.pdf")})),
         "NotFound"
     );
-    assert_eq!(
-        w.err("import_probe", json!({"path": "relative.pdf"})),
-        "PathRejected"
-    );
-    assert_eq!(
-        w.err("import_probe", json!({"path": dir.path()})),
-        "PathRejected"
-    );
+    assert_eq!(w.err("import_probe", json!({"path": "relative.pdf"})), "PathRejected");
+    assert_eq!(w.err("import_probe", json!({"path": dir.path()})), "PathRejected");
 
     // Bad requests are answered, not fatal.
     assert_eq!(w.err("import_probe", json!({"wrong": 1})), "InvalidArg");
     assert_eq!(w.err("format_disk", json!({})), "InvalidArg");
-    assert_eq!(
-        w.send_raw("this is not json")["error"]["code"],
-        json!("InvalidArg")
-    );
+    assert_eq!(w.send_raw("this is not json")["error"]["code"], json!("InvalidArg"));
     assert!(
         w.ok("ping", json!({}))["pid"].as_u64().is_some(),
         "still alive after all of that"
@@ -181,10 +154,7 @@ fn thumbnails_land_in_the_session_and_nowhere_else() {
         "thumb",
         json!({"page": pdf_page(&pdf, 0), "max_px": [256, 256], "out": "thumbs/p0.png"}),
     );
-    assert_eq!(
-        (r["width"].as_u64(), r["height"].as_u64()),
-        (Some(181), Some(256))
-    );
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(181), Some(256)));
     let thumb = image::open(w.session.join("thumbs/p0.png"))
         .expect("thumbnail is a PNG")
         .into_rgb8();
@@ -198,10 +168,7 @@ fn thumbnails_land_in_the_session_and_nowhere_else() {
         "render",
         json!({"page": page, "max_px": [256, 256], "out": "thumbs/turned.png"}),
     );
-    assert_eq!(
-        (r["width"].as_u64(), r["height"].as_u64()),
-        (Some(256), Some(181))
-    );
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(256), Some(181)));
     let mut page = pdf_page(&pdf, 0);
     page["crop"] = json!({"x0": 0.0, "y0": 0.0, "x1": 0.2, "y1": 0.2});
     w.ok(
@@ -221,10 +188,7 @@ fn thumbnails_land_in_the_session_and_nowhere_else() {
         "thumb",
         json!({"page": blank, "max_px": [100, 100], "out": "thumbs/blank.png"}),
     );
-    assert_eq!(
-        (r["width"].as_u64(), r["height"].as_u64()),
-        (Some(70), Some(100))
-    );
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(70), Some(100)));
 
     let image = png(&dir, "photo.png", 400, 200, [10, 200, 10]);
     let page = json!({"source": {"path": image, "kind": "Image"}, "filter": {"mode": "Gray", "threshold": "Auto", "contrast": 0, "deskew": "Off", "despeckle": false}});
@@ -232,13 +196,8 @@ fn thumbnails_land_in_the_session_and_nowhere_else() {
         "thumb",
         json!({"page": page, "max_px": [100, 100], "out": "thumbs/gray.png"}),
     );
-    assert_eq!(
-        (r["width"].as_u64(), r["height"].as_u64()),
-        (Some(100), Some(50))
-    );
-    let gray = image::open(w.session.join("thumbs/gray.png"))
-        .expect("png")
-        .into_rgb8();
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(100), Some(50)));
+    let gray = image::open(w.session.join("thumbs/gray.png")).expect("png").into_rgb8();
     assert!(gray.pixels().all(|p| p[0] == p[1] && p[1] == p[2]));
 
     // SEC-PATHS: the worker writes inside the session dir only.
@@ -284,15 +243,28 @@ fn build_assembles_a_mixed_document() {
         cropped,
     ]);
     let r = w.ok("build", json!({"pages": pages, "out": "results/out.pdf"}));
+    let counts = [
+        "page_count",
+        "copied",
+        "rasterized",
+        "text_layers",
+        "jpeg_passthrough",
+        "stamps",
+    ]
+    .map(|k| r[k].as_u64());
+    assert_eq!(counts, [Some(5), Some(2), Some(2), Some(0), Some(0), Some(0)]);
     assert_eq!(
-        r,
-        json!({"out": "results/out.pdf", "page_count": 5, "copied": 2, "rasterized": 2, "text_layers": 0})
+        r["bytes"].as_u64(),
+        std::fs::metadata(w.session.join("results/out.pdf"))
+            .ok()
+            .map(|m| m.len())
+    );
+    assert_eq!(
+        (r["encryption"].clone(), r["bytes_before_compress"].clone()),
+        (json!(null), json!(null))
     );
     let out = w.session.join("results/out.pdf");
-    assert!(
-        !w.session.join("results/out.part").exists(),
-        "no temp file left behind"
-    );
+    assert!(!w.session.join("results/out.part").exists(), "no temp file left behind");
 
     let probe = w.ok("import_probe", json!({"path": out}));
     assert_eq!(probe["page_count"], json!(5));
@@ -312,10 +284,7 @@ fn build_assembles_a_mixed_document() {
             )
         })
         .collect();
-    assert_eq!(
-        sizes,
-        [(595, 842), (595, 842), (298, 421), (300, 300), (298, 421)]
-    );
+    assert_eq!(sizes, [(595, 842), (595, 842), (298, 421), (300, 300), (298, 421)]);
 
     // Failures leave nothing behind.
     assert_eq!(
@@ -323,10 +292,7 @@ fn build_assembles_a_mixed_document() {
         "InvalidArg"
     );
     assert_eq!(
-        w.err(
-            "build",
-            json!({"pages": [pdf_page(&a, 9)], "out": "results/bad.pdf"})
-        ),
+        w.err("build", json!({"pages": [pdf_page(&a, 9)], "out": "results/bad.pdf"})),
         "InvalidArg"
     );
     let corrupt = dir.file("corrupt.pdf", &fixture_gen::corrupt_pdf());
@@ -338,10 +304,7 @@ fn build_assembles_a_mixed_document() {
         "ParseError"
     );
     assert_eq!(
-        w.err(
-            "build",
-            json!({"pages": [pdf_page(&a, 0)], "out": "../out.pdf"})
-        ),
+        w.err("build", json!({"pages": [pdf_page(&a, 0)], "out": "../out.pdf"})),
         "PathRejected"
     );
     // A text-layer key is a hash and nothing else; an unknown one is an error, not a silent skip.
@@ -361,10 +324,7 @@ fn build_assembles_a_mixed_document() {
     }
     // Without a configured engine, OCR is refused; a page that has text is still reported as such.
     let scan_page = json!({"source": {"path": scan, "kind": "Image"}});
-    assert_eq!(
-        w.err("ocr_page", json!({"page": scan_page})),
-        "EngineMissing"
-    );
+    assert_eq!(w.err("ocr_page", json!({"page": scan_page})), "EngineMissing");
     assert_eq!(
         w.ok("ocr_page", json!({"page": pdf_page(&a, 0)}))["skipped_has_text"],
         json!(true)

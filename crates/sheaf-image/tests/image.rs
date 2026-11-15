@@ -46,11 +46,7 @@ fn gray(img: &RgbaImage) -> GrayImage {
 #[test]
 fn skew_is_estimated_within_tolerance() {
     let page = text_page(1000, 1400, 30, 7);
-    assert_eq!(
-        estimate_skew(&gray(&page)),
-        0.0,
-        "an upright page reports no skew"
-    );
+    assert_eq!(estimate_skew(&gray(&page)), 0.0, "an upright page reports no skew");
     for angle in [-7.0f32, -3.5, -1.0, -0.4, 0.5, 1.5, 2.75, 6.0] {
         let skewed = rotate_small(&page, angle);
         let got = estimate_skew(&gray(&skewed));
@@ -207,11 +203,7 @@ fn exif_orientation_is_applied() {
     // Orientation 6: the stored image must be turned 90° clockwise to display.
     let turned = decode_bytes(&with_exif_orientation(&jpeg, 6)).expect("decode");
     assert_eq!(turned.dimensions(), (32, 48));
-    assert_eq!(
-        dominant(&turned, 4, 4),
-        "blue",
-        "bottom-left moves to top-left"
-    );
+    assert_eq!(dominant(&turned, 4, 4), "blue", "bottom-left moves to top-left");
     assert_eq!(dominant(&turned, 27, 4), "red");
     assert_eq!(dominant(&turned, 27, 43), "green");
 
@@ -233,22 +225,16 @@ fn exif_orientation_is_applied() {
 #[test]
 fn hostile_and_unsupported_inputs_fail_cleanly() {
     assert_eq!(
-        decode_bytes(b"not an image at all")
-            .expect_err("garbage")
-            .code,
+        decode_bytes(b"not an image at all").expect_err("garbage").code,
         ErrorCode::Unsupported
     );
     let png = encode_png(&corners()).expect("encode");
     assert_eq!(
-        decode_bytes(&png[..png.len() / 2])
-            .expect_err("truncated")
-            .code,
+        decode_bytes(&png[..png.len() / 2]).expect_err("truncated").code,
         ErrorCode::ParseError
     );
     assert_eq!(
-        decode_bytes(b"GIF89a\x01\0\x01\0\0\0\0;")
-            .expect_err("gif")
-            .code,
+        decode_bytes(b"GIF89a\x01\0\x01\0\0\0\0;").expect_err("gif").code,
         ErrorCode::Unsupported
     );
 
@@ -269,20 +255,14 @@ fn hostile_and_unsupported_inputs_fail_cleanly() {
         check_dimensions(20_000, 20_000).expect_err("area").code,
         ErrorCode::LimitExceeded
     );
-    assert_eq!(
-        check_dimensions(0, 10).expect_err("empty").code,
-        ErrorCode::ParseError
-    );
+    assert_eq!(check_dimensions(0, 10).expect_err("empty").code, ErrorCode::ParseError);
     check_dimensions(9933, 14043).expect("A3 at 600 dpi is allowed");
 }
 
 #[test]
 fn png_round_trip_is_lossless() {
     let img = corners();
-    assert_eq!(
-        decode_bytes(&encode_png(&img).expect("encode")).expect("decode"),
-        img
-    );
+    assert_eq!(decode_bytes(&encode_png(&img).expect("encode")).expect("decode"), img);
 }
 
 #[test]
@@ -303,15 +283,8 @@ fn crop_and_rotate_move_the_right_pixels() {
 
     let turned = rotate_quarter(img.clone(), Rot::R90);
     assert_eq!(turned.dimensions(), (32, 48));
-    assert_eq!(
-        dominant(&turned, 28, 4),
-        "red",
-        "clockwise: top-left goes to top-right"
-    );
-    assert_eq!(
-        rotate_quarter(rotate_quarter(img.clone(), Rot::R270), Rot::R90),
-        img
-    );
+    assert_eq!(dominant(&turned, 28, 4), "red", "clockwise: top-left goes to top-right");
+    assert_eq!(rotate_quarter(rotate_quarter(img.clone(), Rot::R270), Rot::R90), img);
     assert_eq!(rotate_quarter(img.clone(), Rot::R0), img);
 }
 
@@ -343,11 +316,7 @@ fn filters_do_what_they_say() {
     );
     assert!(bw.pixels().all(|p| p[0] == 0 || p[0] == 255));
     let ink = |i: &RgbaImage| i.pixels().filter(|p| p[0] < 128).count();
-    assert_eq!(
-        ink(&bw),
-        ink(&page),
-        "auto threshold keeps exactly the strokes"
-    );
+    assert_eq!(ink(&bw), ink(&page), "auto threshold keeps exactly the strokes");
 
     let all_white = apply_filter(
         page.clone(),
@@ -398,11 +367,7 @@ fn sauvola_handles_uneven_lighting() {
     for (x, y, p) in shaded.enumerate_pixels_mut() {
         let paper = 250 - (x * 150 / 600) as i32;
         let is_ink = page.get_pixel(x, y)[0] < 128;
-        p[0] = if is_ink {
-            (paper - 90).max(0) as u8
-        } else {
-            paper as u8
-        };
+        p[0] = if is_ink { (paper - 90).max(0) as u8 } else { paper as u8 };
     }
     let local = binarize_sauvola(&shaded, 41, 0.3);
     let (mut hit, mut miss, mut false_ink) = (0u32, 0u32, 0u32);
@@ -415,8 +380,85 @@ fn sauvola_handles_uneven_lighting() {
         }
     }
     assert!(hit > miss * 4, "strokes kept: {hit} hit, {miss} missed");
-    assert!(
-        false_ink < hit / 10,
-        "background stays clean: {false_ink} stray pixels"
+    assert!(false_ink < hit / 10, "background stays clean: {false_ink} stray pixels");
+}
+
+#[test]
+fn multipage_tiff_pages_decode_in_order() {
+    // TEST-IMG2PDF: TIFF pages.
+    use tiff::encoder::{colortype, TiffEncoder};
+    let dir = std::env::temp_dir().join(format!("sheaf-image-tiff-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let path = dir.join("pages.tif");
+    {
+        let file = std::fs::File::create(&path).expect("create");
+        let mut encoder = TiffEncoder::new(std::io::BufWriter::new(file)).expect("encoder");
+        encoder
+            .write_image::<colortype::RGB8>(4, 2, &[200u8; 24])
+            .expect("page 1");
+        encoder
+            .write_image::<colortype::Gray8>(3, 5, &[90u8; 15])
+            .expect("page 2");
+        encoder
+            .write_image::<colortype::RGB8>(2, 2, &[10u8, 20, 30].repeat(4))
+            .expect("page 3");
+    }
+    assert_eq!(page_count(&path).expect("count"), 3);
+    assert_eq!(decode_page(&path, 0).expect("page 1").dimensions(), (4, 2));
+    let second = decode_page(&path, 1).expect("page 2");
+    assert_eq!(
+        (second.dimensions(), second.get_pixel(1, 1).0),
+        ((3, 5), [90, 90, 90, 255])
     );
+    assert_eq!(
+        decode_page(&path, 2).expect("page 3").get_pixel(0, 0).0,
+        [10, 20, 30, 255]
+    );
+    assert_eq!(
+        decode_page(&path, 3).expect_err("past the end").code,
+        ErrorCode::InvalidArg
+    );
+
+    // Other formats have exactly one page.
+    let png = dir.join("one.png");
+    std::fs::write(&png, encode_png(&corners()).expect("png")).expect("write");
+    assert_eq!(page_count(&png).expect("count"), 1);
+    assert_eq!(
+        decode_page(&png, 1).expect_err("no second page").code,
+        ErrorCode::InvalidArg
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn jpeg_passthrough_reports_stored_size_and_turn() {
+    let dir = std::env::temp_dir().join(format!("sheaf-image-jpt-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let jpeg = encode_jpeg(&corners(), 90).expect("jpeg");
+    let write = |name: &str, bytes: &[u8]| {
+        let p = dir.join(name);
+        std::fs::write(&p, bytes).expect("write");
+        p
+    };
+    assert_eq!(jpeg_passthrough(&write("plain.jpg", &jpeg)), Some(((48, 32), Rot::R0)));
+    // Orientation 6 asks for a quarter turn clockwise; the stored size is unchanged.
+    assert_eq!(
+        jpeg_passthrough(&write("o6.jpg", &with_exif_orientation(&jpeg, 6))),
+        Some(((48, 32), Rot::R90))
+    );
+    assert_eq!(
+        jpeg_passthrough(&write("o8.jpg", &with_exif_orientation(&jpeg, 8))),
+        Some(((48, 32), Rot::R270))
+    );
+    // Mirrored: a page rotation cannot express it, so it has to be re-encoded.
+    assert_eq!(
+        jpeg_passthrough(&write("o2.jpg", &with_exif_orientation(&jpeg, 2))),
+        None
+    );
+    assert_eq!(
+        jpeg_passthrough(&write("not.jpg", &encode_png(&corners()).expect("png"))),
+        None
+    );
+    assert_eq!(jpeg_passthrough(&dir.join("missing.jpg")), None);
+    let _ = std::fs::remove_dir_all(&dir);
 }

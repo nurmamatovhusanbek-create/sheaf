@@ -103,8 +103,8 @@ pub fn downsample(img: RgbaImage, target_dpi: u32, src_dpi: u32) -> RgbaImage {
     if target_dpi == 0 || src_dpi == 0 || target_dpi >= src_dpi {
         return img;
     }
-    let scale =
-        |v: u32| ((u64::from(v) * u64::from(target_dpi)) / u64::from(src_dpi)).max(1) as u32;
+    let (t, d) = (u64::from(target_dpi), u64::from(src_dpi));
+    let scale = |v: u32| ((u64::from(v) * t + d / 2) / d).max(1) as u32;
     let (w, h) = (scale(img.width()), scale(img.height()));
     fit_within(img, w, h)
 }
@@ -127,9 +127,7 @@ pub fn apply_filter(img: RgbaImage, f: &Filter) -> RgbaImage {
         let slope = 3f32.powf(f32::from(f.contrast) / 127.0);
         for p in img.pixels_mut() {
             for ch in 0..3 {
-                p[ch] = ((f32::from(p[ch]) - 127.5) * slope + 127.5)
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
+                p[ch] = ((f32::from(p[ch]) - 127.5) * slope + 127.5).round().clamp(0.0, 255.0) as u8;
             }
         }
     }
