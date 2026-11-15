@@ -8,6 +8,7 @@
 //! because a GUI program neither prints into a pipe nor lets the shell wait
 //! for its exit code.
 
+mod crash;
 mod headless;
 #[cfg(windows)]
 mod selection;
@@ -35,6 +36,8 @@ fn ui_config(files: Vec<PathBuf>) -> UiConfig {
 
 /// Run the mode the arguments ask for.
 pub fn run() -> ExitCode {
+    sheaf_store::harden_process();
+    crash::install();
     let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let command = match sheaf_cli::parse(&args) {
         Ok(c) => c,

@@ -7,6 +7,7 @@ use crate::i18n::LANGUAGES;
 use eframe::egui::{self, RichText};
 use sheaf_app::api::{ErrorDto, ExportSpecDto, SettingsDto, SettingsPatch, SourceDto, UnlockDto};
 use sheaf_core::{CompressLevel, Protect, SplitRule};
+use zeroize::Zeroizing;
 
 pub struct ExportForm {
     selected: Vec<u64>,
@@ -18,8 +19,8 @@ pub struct ExportForm {
     split_arg: String,
     compress: Option<usize>,
     protect: bool,
-    user_pw: String,
-    owner_pw: String,
+    user_pw: Zeroizing<String>,
+    owner_pw: Zeroizing<String>,
     flatten: bool,
     hide_only: bool,
     image_png: bool,
@@ -39,8 +40,8 @@ impl ExportForm {
             split_arg: String::new(),
             compress: None,
             protect: false,
-            user_pw: String::new(),
-            owner_pw: String::new(),
+            user_pw: Zeroizing::default(),
+            owner_pw: Zeroizing::default(),
             flatten: false,
             hide_only: false,
             image_png: true,
@@ -57,6 +58,7 @@ pub struct SettingsForm {
     ocr_quality: String,
     workers: u32,
     wheel_hotkey: String,
+    allow_network_paths: bool,
 }
 
 impl SettingsForm {
@@ -68,13 +70,14 @@ impl SettingsForm {
             ocr_quality: s.ocr_quality.clone(),
             workers: s.workers.unwrap_or(0) as u32,
             wheel_hotkey: s.wheel_hotkey.clone(),
+            allow_network_paths: s.allow_network_paths,
         }
     }
 }
 
 pub struct PasswordForm {
     pub source: SourceDto,
-    password: String,
+    password: Zeroizing<String>,
     wrong: bool,
     busy: bool,
 }
@@ -124,7 +127,7 @@ impl SheafApp {
             if let Some(source) = self.locked_queue.pop_front() {
                 self.modal = Some(Modal::Password(PasswordForm {
                     source,
-                    password: String::new(),
+                    password: Zeroizing::default(),
                     wrong: false,
                     busy: false,
                 }));
@@ -148,7 +151,7 @@ impl SheafApp {
             ui.label(RichText::new(self.t.t("password.label")).weak());
             let resp = ui.add_enabled(
                 !f.busy,
-                egui::TextEdit::singleline(&mut f.password)
+                egui::TextEdit::singleline(&mut *f.password)
                     .password(true)
                     .desired_width(f32::INFINITY),
             );
@@ -183,7 +186,7 @@ impl SheafApp {
             f.busy = true;
             f.wrong = false;
             // The password leaves this form the moment it is sent (SEC-SECRETS).
-            let pw = std::mem::take(&mut f.password);
+            let pw = std::mem::take(&mut *f.password);
             let id = f.source.id;
             self.spawn(move |b| Msg::Unlock {
                 source: id,
@@ -263,6 +266,8 @@ impl SheafApp {
                     ui.end_row();
                 });
             ui.label(RichText::new(self.t.t("settings.workers_hint")).weak().small());
+            ui.checkbox(&mut f.allow_network_paths, self.t.t("settings.network_paths"));
+            ui.label(RichText::new(self.t.t("settings.network_paths_hint")).weak().small());
             ui.label(RichText::new(self.t.t("settings.wheel_hotkey_hint")).weak().small());
             ui.separator();
             ui.label(self.t.t("settings.engines"));
@@ -325,6 +330,7 @@ impl SheafApp {
                 workers: Some(f.workers as usize),
                 default_preset: None,
                 wheel_hotkey: Some(f.wheel_hotkey.trim().to_ascii_lowercase()),
+                allow_network_paths: Some(f.allow_network_paths),
             };
             self.spawn(move |b| Msg::Settings(b.set_settings(patch).map_err(|e| ErrorDto::from(&e))));
             return None;
@@ -404,13 +410,13 @@ impl SheafApp {
                         if f.protect {
                             ui.label(self.t.t("lock.user_pw"));
                             ui.add(
-                                egui::TextEdit::singleline(&mut f.user_pw)
+                                egui::TextEdit::singleline(&mut *f.user_pw)
                                     .password(true)
                                     .desired_width(f32::INFINITY),
                             );
                             ui.label(self.t.t("lock.owner_pw"));
                             ui.add(
-                                egui::TextEdit::singleline(&mut f.owner_pw)
+                                egui::TextEdit::singleline(&mut *f.owner_pw)
                                     .password(true)
                                     .desired_width(f32::INFINITY),
                             );
@@ -506,8 +512,8 @@ impl SheafApp {
             .compress
             .map(|c| [CompressLevel::Low, CompressLevel::Recommended, CompressLevel::Extreme][c.min(2)]);
         let protect = (f.format == 0 && f.protect).then(|| Protect {
-            user_pw: sheaf_core::Password::new(f.user_pw.clone()),
-            owner_pw: sheaf_core::Password::new(f.owner_pw.clone()),
+            user_pw: sheaf_core::Password::new(f.user_pw.as_str()),
+            owner_pw: sheaf_core::Password::new(f.owner_pw.as_str()),
             allow_print: true,
             allow_copy: true,
             allow_edit: false,

@@ -6,6 +6,14 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # The D-Bus stack that accessibility support (AccessKit) uses on Linux. The accesskit feature is
+    # enabled for Windows only (crates/sheaf-ui/Cargo.toml), so none of these is compiled into the
+    # product or into a Linux build; they appear only because the lock file lists every platform.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: D-Bus on Linux only, not built (Windows-only product)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: D-Bus on Linux only, not built (Windows-only product)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: D-Bus on Linux only, not built (Windows-only product)" },
+]
 
 [licenses]
 # Extend deliberately, one license at a time, as dependencies arrive.

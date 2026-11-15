@@ -52,6 +52,7 @@ pub struct Shared {
     pub session: Session,
     workers: usize,
     counter: AtomicU64,
+    allow_network: AtomicBool,
 }
 
 impl Shared {
@@ -61,7 +62,17 @@ impl Shared {
             session,
             workers: workers.max(1),
             counter: AtomicU64::new(0),
+            allow_network: AtomicBool::new(true),
         }
+    }
+
+    /// SEC-PATHS: may files on network shares be opened? Set from the settings.
+    pub fn set_allow_network(&self, allow: bool) {
+        self.allow_network.store(allow, Ordering::SeqCst);
+    }
+
+    pub fn allow_network(&self) -> bool {
+        self.allow_network.load(Ordering::SeqCst)
     }
 
     /// A number never handed out before, for staged file names.

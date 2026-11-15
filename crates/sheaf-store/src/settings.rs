@@ -28,6 +28,9 @@ pub struct Settings {
     pub theme: String,
     /// Global hotkey that calls the action wheel, like `ctrl+alt+space`; empty turns it off (ADR-WHEEL).
     pub wheel_hotkey: String,
+    /// Open files from network shares (`\\server\share`). Reading one makes Windows talk to that
+    /// server, which is network traffic the app did not ask for (SEC-NONET, SEC-PATHS).
+    pub allow_network_paths: bool,
     pub recent_folders: Vec<PathBuf>,
 }
 
@@ -42,6 +45,7 @@ impl Default for Settings {
             ocr_mode: "Manual".into(),
             theme: "system".into(),
             wheel_hotkey: DEFAULT_WHEEL_HOTKEY.into(),
+            allow_network_paths: true,
             recent_folders: Vec::new(),
         }
     }

@@ -15,6 +15,16 @@ sheaf-store = { path = "../sheaf-store" }
 serde.workspace = true
 serde_json.workspace = true
 
+# Windows Job Objects contain the workers (SEC-ISOLATE).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
 # Protocol test double for TEST-JOBS (crash, hang, memory, priority). Never bundled.
 [[bin]]
 name = "sheaf-fake-worker"

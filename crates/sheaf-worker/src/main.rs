@@ -29,6 +29,7 @@ const USAGE: &str =
     "usage: sheaf-worker --session <dir> --pdfium <dir> [--tesseract <exe> --tessdata <dir>] [--font <ttf>]";
 
 fn main() -> ExitCode {
+    sheaf_store::harden_process();
     let mut session = None;
     let mut pdfium = None;
     let mut tesseract = None;

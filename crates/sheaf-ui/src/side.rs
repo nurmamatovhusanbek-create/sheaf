@@ -6,6 +6,7 @@ use eframe::egui::{self, vec2, RichText};
 use serde_json::{json, Value};
 use sheaf_app::api::{OcrPolicyDto, PickDto};
 use sheaf_core::{Anchor, Stamp};
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
@@ -91,9 +92,9 @@ pub struct SideState {
     stamp_to: String,
     stamp_first: i32,
     picked: Option<PickDto>,
-    lock_user: String,
-    lock_again: String,
-    lock_owner: String,
+    lock_user: Zeroizing<String>,
+    lock_again: Zeroizing<String>,
+    lock_owner: Zeroizing<String>,
     lock_print: bool,
     lock_copy: bool,
     lock_edit: bool,
@@ -131,9 +132,9 @@ impl Default for SideState {
             stamp_to: String::new(),
             stamp_first: 1,
             picked: None,
-            lock_user: String::new(),
-            lock_again: String::new(),
-            lock_owner: String::new(),
+            lock_user: Zeroizing::default(),
+            lock_again: Zeroizing::default(),
+            lock_owner: Zeroizing::default(),
             lock_print: true,
             lock_copy: true,
             lock_edit: false,
@@ -674,20 +675,20 @@ impl SheafApp {
         let s = &mut self.side;
         ui.label(u_l);
         ui.add(
-            egui::TextEdit::singleline(&mut s.lock_user)
+            egui::TextEdit::singleline(&mut *s.lock_user)
                 .password(true)
                 .desired_width(f32::INFINITY),
         );
         ui.label(RichText::new(u_h).weak().small());
         ui.label(r_l);
         ui.add(
-            egui::TextEdit::singleline(&mut s.lock_again)
+            egui::TextEdit::singleline(&mut *s.lock_again)
                 .password(true)
                 .desired_width(f32::INFINITY),
         );
         ui.label(o_l);
         ui.add(
-            egui::TextEdit::singleline(&mut s.lock_owner)
+            egui::TextEdit::singleline(&mut *s.lock_owner)
                 .password(true)
                 .desired_width(f32::INFINITY),
         );
@@ -708,10 +709,11 @@ impl SheafApp {
             } else if s.lock_user != s.lock_again {
                 s.error = Some(self.t.t("lock.mismatch"));
             } else {
-                let params = json!({ "protect": { "user_pw": s.lock_user, "owner_pw": s.lock_owner, "allow_print": s.lock_print, "allow_copy": s.lock_copy, "allow_edit": s.lock_edit } });
-                s.lock_user.clear();
-                s.lock_again.clear();
-                s.lock_owner.clear();
+                let params = json!({ "protect": { "user_pw": s.lock_user.as_str(), "owner_pw": s.lock_owner.as_str(), "allow_print": s.lock_print, "allow_copy": s.lock_copy, "allow_edit": s.lock_edit } });
+                // The words leave the form the moment they are sent (SEC-SECRETS).
+                s.lock_user.zeroize();
+                s.lock_again.zeroize();
+                s.lock_owner.zeroize();
                 self.run_tool("protect", params);
             }
         }

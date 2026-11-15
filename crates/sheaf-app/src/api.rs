@@ -212,6 +212,7 @@ pub struct SettingsDto {
     pub ocr_mode: String,
     pub theme: String,
     pub wheel_hotkey: String,
+    pub allow_network_paths: bool,
 }
 
 impl From<&Settings> for SettingsDto {
@@ -225,6 +226,7 @@ impl From<&Settings> for SettingsDto {
             ocr_mode: s.ocr_mode.clone(),
             theme: s.theme.clone(),
             wheel_hotkey: s.wheel_hotkey.clone(),
+            allow_network_paths: s.allow_network_paths,
         }
     }
 }
@@ -472,6 +474,7 @@ pub struct SettingsPatch {
     pub default_preset: Option<String>,
     /// The wheel's global hotkey (`ctrl+alt+space`); empty turns it off. The tray helper reads it at its start.
     pub wheel_hotkey: Option<String>,
+    pub allow_network_paths: Option<bool>,
 }
 
 // ---------------------------------------------------------------------
@@ -550,6 +553,7 @@ impl Backend {
         let settings = cfg.config_dir.as_deref().map_or_else(Settings::default, Settings::load);
         let app = App::start(&cfg.engines, &cfg.base_dir, settings.worker_count())?;
         let shared = app.shared();
+        shared.set_allow_network(settings.allow_network_paths);
         let out_dir = settings
             .output_dir
             .as_deref()
@@ -1421,6 +1425,7 @@ impl Backend {
             next.save(dir)?;
         }
         let dto = SettingsDto::from(&next);
+        self.shared.set_allow_network(next.allow_network_paths);
         *lock(&self.settings) = next;
         Ok(dto)
     }
@@ -1452,6 +1457,9 @@ impl Backend {
         }
         if let Some(v) = patch.workers {
             next.workers = (v != 0).then_some(v);
+        }
+        if let Some(v) = patch.allow_network_paths {
+            next.allow_network_paths = v;
         }
         if let Some(v) = patch.wheel_hotkey {
             let ok = v.len() <= 40 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '+');

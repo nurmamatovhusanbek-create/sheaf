@@ -65,6 +65,18 @@ impl Engines {
         Err(last.unwrap_or_else(|| AppError::new(ErrorCode::EngineMissing, "no vendor folder found")))
     }
 
+    /// SEC-SUPPLY: check the bundled files against their pinned hashes. Every entry
+    /// point that starts workers calls this first (the window does it in the
+    /// background; the wheel and `sheaf run` do it before they begin), so a
+    /// swapped DLL is never loaded by any mode. Fails closed: no pinned hashes,
+    /// no start.
+    pub fn verify(&self) -> Result<()> {
+        let vendor = self
+            .vendor_dir()
+            .ok_or_else(|| AppError::new(ErrorCode::EngineMissing, "cannot tell where the bundled files are"))?;
+        verify_vendor(vendor).map(|_| ())
+    }
+
     /// The vendor folder these engines came from: the parent of `pdfium/`.
     pub fn vendor_dir(&self) -> Option<&Path> {
         self.pdfium_dir.parent().and_then(Path::parent)
@@ -158,6 +170,26 @@ mod tests {
         let err = verify_vendor(&dir).expect_err("must fail");
         assert_eq!(err.code, ErrorCode::EngineMissing);
         assert!(err.msg.contains("a.bin"), "{err}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn engines_verify_checks_the_folder_they_came_from_and_fails_closed() {
+        let dir = scratch("engines");
+        std::fs::create_dir_all(dir.join("pdfium").join(PDFIUM_PLATFORM)).expect("dirs");
+        let engines = Engines {
+            worker: PathBuf::from("w"),
+            pdfium_dir: dir.join("pdfium").join(PDFIUM_PLATFORM),
+            tesseract: None,
+            font: None,
+        };
+        let err = engines.verify().expect_err("no SHA256SUMS: no start");
+        assert_eq!(err.code, ErrorCode::EngineMissing);
+        std::fs::write(dir.join("SHA256SUMS"), "").expect("sums");
+        assert!(engines.verify().is_ok());
+        std::fs::write(dir.join("file.bin"), b"x").expect("file");
+        std::fs::write(dir.join("SHA256SUMS"), format!("{}  file.bin\n", "0".repeat(64))).expect("sums");
+        assert!(engines.verify().is_err(), "a changed file stops every mode");
         let _ = std::fs::remove_dir_all(dir);
     }
 

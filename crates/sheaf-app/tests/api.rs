@@ -818,3 +818,27 @@ fn nothing_listens_on_a_port() {
         }
     }
 }
+
+#[test]
+fn the_network_share_setting_is_stored_and_reaches_the_import_path() {
+    // SEC-PATHS: files on network shares can be turned off. The refusal itself needs a UNC
+    // path and is checked on Windows; here the setting must stick and survive a restart.
+    let rig = rig();
+    assert!(
+        rig.backend.settings().allow_network_paths,
+        "on by default, flagged when used"
+    );
+    let dto = rig
+        .backend
+        .set_settings(SettingsPatch {
+            allow_network_paths: Some(false),
+            ..Default::default()
+        })
+        .expect("set");
+    assert!(!dto.allow_network_paths);
+    let saved = std::fs::read_to_string(rig.base.path().join("config").join("settings.json")).expect("settings.json");
+    assert!(saved.contains("\"allow_network_paths\": false"), "{saved}");
+    // Local files are unaffected.
+    let (_, ids) = rig.import_pdf("local.pdf", 1);
+    assert_eq!(ids.len(), 1);
+}

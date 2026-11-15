@@ -9,9 +9,15 @@ use std::process::ExitCode;
 
 pub fn run(request: &QuickRequest) -> ExitCode {
     let started = Engines::discover(&[]).and_then(|engines| {
+        engines.verify()?; // SEC-SUPPLY: before any worker starts
         let base = sheaf_store::default_base_dir().unwrap_or_else(|_| std::env::temp_dir().join("Sheaf"));
         let workers = sheaf_store::Settings::default().worker_count();
-        App::start(&engines, &base, workers)
+        let app = App::start(&engines, &base, workers)?;
+        if let Ok(dir) = sheaf_store::config_dir() {
+            app.shared()
+                .set_allow_network(sheaf_store::Settings::load(&dir).allow_network_paths);
+        }
+        Ok(app)
     });
     let mut app = match started {
         Ok(app) => app,

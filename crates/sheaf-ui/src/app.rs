@@ -180,6 +180,7 @@ impl SheafApp {
                 ocr_mode: "Manual".into(),
                 theme: "system".into(),
                 wheel_hotkey: sheaf_store::settings::DEFAULT_WHEEL_HOTKEY.into(),
+                allow_network_paths: true,
             }),
             engines: EngineDto {
                 verified: None,
@@ -362,6 +363,9 @@ impl SheafApp {
                             encrypted: true,
                             unlocked: false,
                         });
+                    } else if r.is_unc {
+                        let text = self.t.tv("import.network", &[("name", &r.name)]);
+                        self.toast(text, "", false);
                     } else if r.has_forms {
                         let text = self.t.tv("import.forms", &[("name", &r.name)]);
                         self.toast(text, "", false);

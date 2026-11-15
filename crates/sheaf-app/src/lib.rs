@@ -189,6 +189,12 @@ impl App {
     /// Needs no workspace, so a host can do it without holding a lock.
     pub fn begin_import(shared: &Shared, path: &Path) -> Result<Probed> {
         let allowed = sheaf_store::allow_input(path)?;
+        if allowed.is_unc && !shared.allow_network() {
+            return Err(AppError::new(
+                ErrorCode::PathRejected,
+                "files on network shares are turned off in Settings",
+            ));
+        }
         let probe = probe(shared, &allowed.path, None)?;
         let sha256 = sheaf_store::hash_file(&allowed.path)?;
         Ok(Probed {

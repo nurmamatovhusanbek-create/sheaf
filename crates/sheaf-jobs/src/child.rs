@@ -11,6 +11,11 @@ use std::time::Duration;
 /// files, so its output is not trusted either (SEC-TB2).
 const MAX_LINE: u64 = 1 << 20;
 
+/// Per-process memory the operating system itself refuses to exceed: twice the
+/// default worker limit, a backstop under the polling check (SEC-LIMITS).
+#[cfg(windows)]
+const HARD_CAP_MB: u64 = 2 * sheaf_core::consts::DEFAULT_WORKER_RSS_MB;
+
 pub(crate) enum Line {
     Text(String),
     Nothing,
@@ -19,6 +24,9 @@ pub(crate) enum Line {
 }
 
 pub(crate) struct WorkerProc {
+    // Declared before `child` so the job (and everything in it) goes first on drop.
+    #[cfg(windows)]
+    _job: Option<crate::winjob::Contained>,
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
@@ -35,6 +43,9 @@ impl WorkerProc {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| AppError::new(ErrorCode::EngineMissing, "worker process could not be started"))?;
+        // SEC-ISOLATE: contain the worker (and tesseract below it) before it reads a byte of a document.
+        #[cfg(windows)]
+        let job = crate::winjob::contain(&child, HARD_CAP_MB);
         let (stdin, stdout) = match (child.stdin.take(), child.stdout.take()) {
             (Some(i), Some(o)) => (i, o),
             _ => {
@@ -61,7 +72,13 @@ impl WorkerProc {
                 }
             }
         });
-        Ok(WorkerProc { child, stdin, lines })
+        Ok(WorkerProc {
+            #[cfg(windows)]
+            _job: job,
+            child,
+            stdin,
+            lines,
+        })
     }
 
     pub(crate) fn send(&mut self, line: &str) -> std::io::Result<()> {
@@ -92,7 +109,11 @@ impl WorkerProc {
                 .ok()?;
             Some(kb / 1024)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
+        {
+            crate::winjob::working_set_mb(&self.child)
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
         {
             None
         }

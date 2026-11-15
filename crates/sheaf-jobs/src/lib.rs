@@ -6,10 +6,12 @@
 //! See `ARCHITECTURE.md`, anchor `mod-jobs`.
 //!
 //! Memory caps are enforced by polling the worker's resident size, which is
-//! implemented for Linux only so far. The Windows Job Object (hard cap,
-//! kill-on-close) is PH-7 hardening.
+//! implemented for Linux (`/proc`) and Windows (working set). On Windows each
+//! worker also sits in a Job Object (hard cap, kill-on-close, see `winjob`).
 
 mod child;
+#[cfg(windows)]
+mod winjob;
 
 use child::{Line, WorkerProc};
 use serde_json::Value;

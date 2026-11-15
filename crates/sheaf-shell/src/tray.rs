@@ -20,15 +20,16 @@ use std::str::FromStr;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, POINT};
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, LPARAM, POINT, WPARAM};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
     KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
-use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, DispatchMessageW, GetCursorPos, GetMessageW, TranslateMessage, ASFW_ANY, MSG,
+    AllowSetForegroundWindow, DispatchMessageW, GetCursorPos, GetMessageW, PostThreadMessageW, TranslateMessage,
+    ASFW_ANY, MSG, WM_APP,
 };
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
@@ -205,6 +206,43 @@ fn show_wheel(child: &mut Option<Child>) {
     }
 }
 
+/// (Re)register the wheel hotkey; the previous one is released first. `None` when the
+/// setting is empty, unreadable, or the combination is taken by another program.
+fn register(manager: &GlobalHotKeyManager, keys: &str, current: &mut Option<HotKey>) -> Option<u32> {
+    if let Some(old) = current.take() {
+        let _ = manager.unregister(old);
+    }
+    let hotkey = if keys.is_empty() {
+        None
+    } else {
+        HotKey::from_str(keys).ok()
+    }?;
+    manager.register(hotkey).ok()?;
+    *current = Some(hotkey);
+    Some(hotkey.id())
+}
+
+/// Poll the settings file's modification time and post `WM_APP` to the helper's loop when it changes.
+fn watch_settings(loop_thread: u32) {
+    let Ok(dir) = sheaf_store::config_dir() else { return };
+    let file = dir.join("settings.json");
+    std::thread::spawn(move || {
+        let stamp = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let mut last = stamp(&file);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            let now = stamp(&file);
+            if now != last {
+                last = now;
+                // SAFETY: posting a plain thread message; a loop that has ended just ignores it.
+                unsafe {
+                    let _ = PostThreadMessageW(loop_thread, WM_APP, WPARAM(0), LPARAM(0));
+                }
+            }
+        }
+    });
+}
+
 pub fn run() -> Result<(), String> {
     // One helper per user session.
     // SAFETY: a named mutex held for the life of the process; the handle is
@@ -223,21 +261,14 @@ pub fn run() -> Result<(), String> {
     let t = I18n::new(&settings.language);
 
     let manager = GlobalHotKeyManager::new().map_err(|e| format!("hotkeys: {e}"))?;
-    let keys = if settings.wheel_hotkey.is_empty() {
-        None
-    } else {
-        HotKey::from_str(&settings.wheel_hotkey).ok()
-    };
-    let hotkey_id = keys.and_then(|k| manager.register(k).ok().map(|()| k.id()));
-    let shown_keys = if hotkey_id.is_some() {
-        pretty(&settings.wheel_hotkey)
-    } else {
-        "-".into()
-    };
+    let mut registered: Option<HotKey> = None;
+    let mut hotkey_id = register(&manager, &settings.wheel_hotkey, &mut registered);
+    let shown_keys = |on: bool, keys: &str| if on { pretty(keys) } else { "-".to_string() };
+    let shown = shown_keys(hotkey_id.is_some(), &settings.wheel_hotkey);
 
     let menu = Menu::new();
     let open = MenuItem::new(t.t("tray.open"), true, None);
-    let info = MenuItem::new(t.tv("tray.wheel", &[("keys", &shown_keys)]), false, None);
+    let info = MenuItem::new(t.tv("tray.wheel", &[("keys", &shown)]), false, None);
     let autostart = CheckMenuItem::new(t.t("tray.autostart"), true, autostart_enabled(), None);
     let quit = MenuItem::new(t.t("tray.quit"), true, None);
     for item in [
@@ -250,13 +281,19 @@ pub fn run() -> Result<(), String> {
     ] {
         menu.append(item).map_err(|e| format!("menu: {e}"))?;
     }
-    let _tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
-        .with_tooltip(t.tv("tray.tip", &[("keys", &shown_keys)]))
+        .with_tooltip(t.tv("tray.tip", &[("keys", &shown)]))
         .with_icon(icon())
         .build()
         .map_err(|e| format!("tray icon: {e}"))?;
+
+    // Settings are changed in the window; a small thread notices the file change and
+    // wakes this loop, so a new hotkey applies without restarting the helper.
+    // SAFETY: no arguments, no pointers.
+    let loop_thread = unsafe { GetCurrentThreadId() };
+    watch_settings(loop_thread);
 
     let mut child: Option<Child> = None;
     let mut msg = MSG::default();
@@ -270,6 +307,15 @@ pub fn run() -> Result<(), String> {
         unsafe {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+        if msg.message == WM_APP {
+            let settings = sheaf_store::config_dir()
+                .map(|d| Settings::load(&d))
+                .unwrap_or_default();
+            hotkey_id = register(&manager, &settings.wheel_hotkey, &mut registered);
+            let shown = shown_keys(hotkey_id.is_some(), &settings.wheel_hotkey);
+            info.set_text(t.tv("tray.wheel", &[("keys", &shown)]));
+            let _ = tray.set_tooltip(Some(t.tv("tray.tip", &[("keys", &shown)])));
         }
         while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
             if Some(ev.id) == hotkey_id && ev.state == HotKeyState::Pressed {

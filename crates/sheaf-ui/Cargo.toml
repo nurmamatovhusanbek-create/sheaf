@@ -16,9 +16,13 @@ sheaf-store = { path = "../sheaf-store" }
 serde.workspace = true
 serde_json.workspace = true
 image.workspace = true
+zeroize.workspace = true
 # The window toolkit (ADR-NATIVE-UI): OpenGL rendering, no web view, no network features.
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11"] }
 
 # Native open/folder dialogs on Windows; elsewhere the app is for development only (NG-XPLAT).
+# Screen-reader support through Windows UI Automation. Not on Linux: there it would pull a D-Bus
+# stack with an async runtime, which SEC-NONET bans.
 [target.'cfg(windows)'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["accesskit"] }
 rfd = { version = "0.17", default-features = false }

@@ -179,7 +179,12 @@ impl WheelApp {
         std::thread::spawn(move || {
             let result = (|| {
                 let engines = config.engines?;
+                engines.verify()?; // SEC-SUPPLY: the wheel checks the bundled files too
                 let mut app = App::start(&engines, &config.base_dir, 2)?;
+                if let Some(dir) = config.config_dir.as_deref() {
+                    app.shared()
+                        .set_allow_network(sheaf_store::Settings::load(dir).allow_network_paths);
+                }
                 let progress_tx = tx.clone();
                 let progress_ctx = ctx.clone();
                 let report = run_quick(&mut app, &request, &move |f, name| {
