@@ -293,7 +293,9 @@ pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Respon
 /// An icon with a label, as a flat button; `primary` fills it with the accent.
 pub fn labeled_button(ui: &mut egui::Ui, icon: Icon, label: &str, primary: bool, tooltip: &str) -> egui::Response {
     let font = egui::TextStyle::Button.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(label.to_string(), font, Color32::WHITE);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font, Color32::PLACEHOLDER);
     let size = vec2(12.0 + 18.0 + 6.0 + galley.size().x + 12.0, 32.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let enabled = ui.is_enabled();

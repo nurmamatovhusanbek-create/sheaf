@@ -211,9 +211,21 @@ fn tool_icon(tool: Tool) -> crate::icons::Icon {
 }
 
 /// One tile of the tools grid: icon, name, one line of what it does.
-fn tool_card(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str, width: f32) -> bool {
+/// Height a card needs for its words: the picture and name above, the hint wrapped below, so
+/// a long translation grows the card instead of being cut off.
+fn card_height(ui: &egui::Ui, hint: &str, width: f32) -> f32 {
+    let galley = ui.painter().layout(
+        hint.to_string(),
+        egui::FontId::proportional(12.0),
+        egui::Color32::PLACEHOLDER,
+        width - 24.0,
+    );
+    (64.0 + galley.size().y + 14.0).max(112.0)
+}
+
+fn tool_card(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str, width: f32, height: f32) -> bool {
     let enabled = tool != Tool::Scan;
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 112.0), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
     let v = ui.visuals().clone();
     let hovered = enabled && resp.hovered();
     let fill = if hovered {
@@ -345,9 +357,14 @@ impl SheafApp {
         let gap = ui.spacing().item_spacing.x;
         let width = ((ui.available_width() - gap) / 2.0).floor();
         for pair in entries.chunks(2) {
+            // Both cards of a row are as tall as the taller one, so the row stays even.
+            let height = pair
+                .iter()
+                .map(|(_, _, hint)| card_height(ui, hint, width))
+                .fold(112.0, f32::max);
             ui.horizontal(|ui| {
                 for (tool, name, hint) in pair {
-                    if tool_card(ui, *tool, name, hint, width) {
+                    if tool_card(ui, *tool, name, hint, width, height) {
                         self.open_tool(*tool);
                     }
                 }
