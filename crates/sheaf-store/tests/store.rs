@@ -151,8 +151,10 @@ fn allow_input_accepts_files_and_rejects_everything_else() {
     let file = dir.path().join("doc.pdf");
     fs::write(&file, b"%PDF-1.4").expect("write");
 
+    // The path that comes back is the canonical one (on Windows the verbatim form).
+    let canon = file.canonicalize().expect("canonical");
     let ok = allow_input(&file).expect("regular file");
-    assert_eq!(ok.path, file);
+    assert_eq!(ok.path, canon);
     assert_eq!(ok.size, 8);
     assert!(!ok.is_unc);
 
@@ -160,7 +162,7 @@ fn allow_input_accepts_files_and_rejects_everything_else() {
     let sub = dir.path().join("sub");
     fs::create_dir(&sub).expect("mkdir");
     let via_dotdot = sub.join("..").join("doc.pdf");
-    assert_eq!(allow_input(&via_dotdot).expect("resolves").path, file);
+    assert_eq!(allow_input(&via_dotdot).expect("resolves").path, canon);
 
     assert_eq!(
         allow_input(&dir.path().join("missing.pdf")).expect_err("missing").code,
