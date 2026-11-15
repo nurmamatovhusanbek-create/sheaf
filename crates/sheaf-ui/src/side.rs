@@ -190,14 +190,97 @@ impl SideState {
     }
 }
 
+fn tool_icon(tool: Tool) -> crate::icons::Icon {
+    use crate::icons::Icon;
+    match tool {
+        Tool::Merge => Icon::Merge,
+        Tool::Split => Icon::Split,
+        Tool::Extract => Icon::Extract,
+        Tool::Remove => Icon::Trash,
+        Tool::Organize => Icon::Blank,
+        Tool::Rotate => Icon::RotateCw,
+        Tool::Crop => Icon::Crop,
+        Tool::Compress => Icon::Compress,
+        Tool::Img2Pdf | Tool::Pdf2Img => Icon::Image,
+        Tool::Stamp => Icon::Stamp,
+        Tool::Lock => Icon::Lock,
+        Tool::Ocr => Icon::Ocr,
+        Tool::Scan => Icon::Scan,
+    }
+}
+
+/// One tile of the tools grid: icon, name, one line of what it does.
+fn tool_card(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str, width: f32) -> bool {
+    let enabled = tool != Tool::Scan;
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, 112.0), egui::Sense::click());
+    let v = ui.visuals().clone();
+    let hovered = enabled && resp.hovered();
+    let fill = if hovered {
+        v.widgets.hovered.bg_fill
+    } else {
+        v.faint_bg_color
+    };
+    let stroke = if hovered {
+        egui::Stroke::new(1.0, v.selection.bg_fill)
+    } else {
+        egui::Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color)
+    };
+    let p = ui.painter();
+    p.rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
+    let fg = if enabled {
+        v.text_color()
+    } else {
+        v.weak_text_color().gamma_multiply(0.7)
+    };
+    let accent = if enabled { v.selection.bg_fill } else { fg };
+    crate::icons::paint(
+        p,
+        egui::Rect::from_min_size(rect.min + vec2(12.0, 11.0), vec2(22.0, 22.0)),
+        tool_icon(tool),
+        accent,
+    );
+    p.text(
+        rect.min + vec2(12.0, 44.0),
+        egui::Align2::LEFT_TOP,
+        name,
+        egui::FontId::proportional(14.5),
+        fg,
+    );
+    let galley = p.layout(
+        hint.to_string(),
+        egui::FontId::proportional(12.0),
+        v.weak_text_color(),
+        width - 24.0,
+    );
+    p.galley(rect.min + vec2(12.0, 64.0), galley, v.weak_text_color());
+    enabled && resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 impl SheafApp {
     pub(crate) fn side_ui(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             let (a, b) = (self.t.t("side.tools"), self.t.t("side.ocr"));
-            ui.selectable_value(&mut self.side.tab, Tab::Tools, a);
-            ui.selectable_value(&mut self.side.tab, Tab::Ocr, b);
+            let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+            for (tab, label) in [(Tab::Tools, a), (Tab::Ocr, b)] {
+                let on = self.side.tab == tab;
+                let button = egui::Button::new(egui::RichText::new(label).color(if on {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                }))
+                .fill(if on {
+                    ui.visuals().selection.bg_fill
+                } else {
+                    ui.visuals().faint_bg_color
+                })
+                .min_size(vec2(w, 32.0));
+                if ui.add(button).clicked() {
+                    self.side.tab = tab;
+                }
+            }
         });
-        ui.separator();
+        ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match self.side.tab {
@@ -258,19 +341,17 @@ impl SheafApp {
             ui.label(RichText::new(self.t.t("side.no_tools")).weak());
             return;
         }
-        let width = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
+        let gap = ui.spacing().item_spacing.x;
+        let width = ((ui.available_width() - gap) / 2.0).floor();
         for pair in entries.chunks(2) {
             ui.horizontal(|ui| {
                 for (tool, name, hint) in pair {
-                    let enabled = *tool != Tool::Scan;
-                    let text = egui::WidgetText::from(RichText::new(name).strong());
-                    let button = egui::Button::new(text).min_size(vec2(width, 62.0)).wrap();
-                    let resp = ui.add_enabled(enabled, button).on_hover_text(hint);
-                    if resp.clicked() {
+                    if tool_card(ui, *tool, name, hint, width) {
                         self.open_tool(*tool);
                     }
                 }
             });
+            ui.add_space(2.0);
         }
     }
 

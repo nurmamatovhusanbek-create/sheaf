@@ -470,6 +470,7 @@ impl SheafApp {
     }
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
+        use crate::icons::{icon_button, labeled_button, Icon};
         let t = &self.t;
         let no_pages = self.pages.is_empty();
         let (open, ocr, export, undo, redo, settings) = (
@@ -480,59 +481,59 @@ impl SheafApp {
             t.t("toolbar.redo"),
             t.t("toolbar.settings"),
         );
-        let scan_soon = self.t.t("toolbar.scan_soon");
-        let presets_soon = self.t.t("toolbar.presets_soon");
-        let scan = self.t.t("toolbar.scan");
-        let presets = self.t.t("toolbar.presets");
+        let (scan, presets) = (t.t("toolbar.scan"), t.t("toolbar.presets"));
+        let scan_soon = t.t("toolbar.scan_soon");
+        let presets_soon = t.t("toolbar.presets_soon");
         let ocr_off = self.settings.ocr_mode == "Off";
         let (can_undo, can_redo) = (self.can_undo, self.can_redo);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button(scan.clone()).on_hover_text(&scan_soon).clicked() {
-                self.toast(scan_soon.clone(), "", false);
-            }
-            if ui.button(open.clone()).on_hover_text("Ctrl+O").clicked() {
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            if labeled_button(ui, Icon::Open, &open, false, "Ctrl+O").clicked() {
                 self.open_dialog();
             }
             if ui
-                .add_enabled(!no_pages && !ocr_off, egui::Button::new(ocr.clone()))
-                .on_hover_text("F")
+                .add_enabled(true, |ui: &mut egui::Ui| {
+                    labeled_button(ui, Icon::Scan, &scan, false, &scan_soon)
+                })
                 .clicked()
             {
-                self.run_ocr_selection();
+                self.toast(scan_soon.clone(), "", false);
             }
-            if ui
-                .add_enabled(
-                    !no_pages,
-                    egui::Button::new(export.clone()).fill(ui.visuals().selection.bg_fill),
-                )
-                .on_hover_text("Ctrl+E")
-                .clicked()
-            {
-                self.open_export(false);
-            }
+            ui.add_enabled_ui(!no_pages && !ocr_off, |ui| {
+                if labeled_button(ui, Icon::Ocr, &ocr, false, "F").clicked() {
+                    self.run_ocr_selection();
+                }
+            });
+            ui.add_space(4.0);
             ui.separator();
-            if ui
-                .add_enabled(can_undo, egui::Button::new(undo.clone()))
-                .on_hover_text("Ctrl+Z")
-                .clicked()
-            {
-                self.undo(false);
-            }
-            if ui
-                .add_enabled(can_redo, egui::Button::new(redo.clone()))
-                .on_hover_text("Ctrl+Y")
-                .clicked()
-            {
-                self.undo(true);
-            }
+            ui.add_space(4.0);
+            ui.add_enabled_ui(can_undo, |ui| {
+                if icon_button(ui, Icon::Undo, &format!("{undo}  Ctrl+Z")).clicked() {
+                    self.undo(false);
+                }
+            });
+            ui.add_enabled_ui(can_redo, |ui| {
+                if icon_button(ui, Icon::Redo, &format!("{redo}  Ctrl+Y")).clicked() {
+                    self.undo(true);
+                }
+            });
+            ui.add_space(4.0);
             ui.separator();
-            if ui.button(presets.clone()).on_hover_text(&presets_soon).clicked() {
+            ui.add_space(4.0);
+            if labeled_button(ui, Icon::Presets, &presets, false, &presets_soon).clicked() {
                 self.toast(presets_soon.clone(), "", false);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(settings.clone()).clicked() {
+                ui.add_space(6.0);
+                if icon_button(ui, Icon::Settings, &settings).clicked() {
                     self.modal = Some(Modal::Settings(crate::dialogs::SettingsForm::new(&self.settings)));
                 }
+                ui.add_enabled_ui(!no_pages, |ui| {
+                    if labeled_button(ui, Icon::Export, &export, true, "Ctrl+E").clicked() {
+                        self.open_export(false);
+                    }
+                });
+                ui.add_space(8.0);
                 self.search_box(ui);
             });
         });
@@ -801,11 +802,19 @@ impl eframe::App for SheafApp {
         self.shortcuts(&ctx);
         self.drops(&ctx);
 
-        egui::Panel::top("toolbar").show(ui, |ui| {
-            ui.add_space(2.0);
-            self.toolbar(ui);
-            ui.add_space(2.0);
-        });
+        egui::Panel::top("toolbar")
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().window_fill)
+                    .inner_margin(egui::Margin::symmetric(6, 8))
+                    .stroke(egui::Stroke::new(
+                        1.0,
+                        ui.visuals().widgets.noninteractive.bg_stroke.color,
+                    )),
+            )
+            .show(ui, |ui| {
+                self.toolbar(ui);
+            });
         egui::Panel::bottom("jobbar").resizable(false).show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .max_height(120.0)

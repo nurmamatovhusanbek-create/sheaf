@@ -2,6 +2,7 @@
 
 mod app;
 mod dialogs;
+mod icons;
 mod jobs;
 mod platform;
 mod preview;

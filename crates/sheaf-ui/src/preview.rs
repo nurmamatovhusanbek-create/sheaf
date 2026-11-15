@@ -217,7 +217,7 @@ impl SheafApp {
         let f = page.filter;
         ui.horizontal_wrapped(|ui| {
             if ui
-                .add_enabled(at > 0, egui::Button::new("<"))
+                .add_enabled(at > 0, egui::Button::new(" < "))
                 .on_hover_text(self.t.t("preview.prev"))
                 .clicked()
             {
@@ -226,7 +226,7 @@ impl SheafApp {
             }
             ui.label(label);
             if ui
-                .add_enabled(at + 1 < total, egui::Button::new(">"))
+                .add_enabled(at + 1 < total, egui::Button::new(" > "))
                 .on_hover_text(self.t.t("preview.next"))
                 .clicked()
             {
@@ -234,24 +234,25 @@ impl SheafApp {
                 self.tray.scroll_to = Some(at + 1);
             }
             ui.separator();
-            if ui.button("-90°").on_hover_text(ccw).clicked() {
+            if crate::icons::icon_button(ui, crate::icons::Icon::RotateCcw, &ccw).clicked() {
                 self.rotate_pages(vec![page.id], -90);
             }
-            if ui.button("+90°").on_hover_text(cw).clicked() {
+            if crate::icons::icon_button(ui, crate::icons::Icon::RotateCw, &cw).clicked() {
                 self.rotate_pages(vec![page.id], 90);
             }
             ui.separator();
-            if ui.button("-").on_hover_text(zout).clicked() {
+            if crate::icons::icon_button(ui, crate::icons::Icon::ZoomOut, &zout).clicked() {
                 self.preview.step_zoom(-1);
             }
             ui.label(format!("{}%", (self.preview.zoom * 100.0).round() as i32));
-            if ui.button("+").on_hover_text(zin).clicked() {
+            if crate::icons::icon_button(ui, crate::icons::Icon::ZoomIn, &zin).clicked() {
                 self.preview.step_zoom(1);
             }
-            if ui.button(self.t.t("preview.fit")).on_hover_text(fit).clicked() {
+            if crate::icons::icon_button(ui, crate::icons::Icon::Fit, &fit).clicked() {
                 self.preview.zoom = 1.0;
             }
-            ui.separator();
+        });
+        ui.horizontal(|ui| {
             for (id, name) in modes {
                 let mode = match id {
                     "Gray" => ColorMode::Gray,
