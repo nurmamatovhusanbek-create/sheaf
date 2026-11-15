@@ -1,0 +1,29 @@
+[package]
+name = "sheaf-shell"
+description = "MOD-SHELL: Tauri 2 app, commands, events, capabilities, thumbnail protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sheaf"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = "2"
+
+[dependencies]
+sheaf-app = { path = "../crates/sheaf-app" }
+sheaf-core = { path = "../crates/sheaf-core" }
+sheaf-store = { path = "../crates/sheaf-store" }
+serde.workspace = true
+serde_json.workspace = true
+# The window toolkit (ADR-TAURI). No default features: no compression, no dynamic ACL, no X11.
+# `custom-protocol` embeds `ui/` in the binary: nothing is served from a port (ADR-NOHTTP).
+tauri = { version = "2", default-features = false, features = ["wry", "common-controls-v6", "custom-protocol"] }
+# Native open/save dialogs, called from Rust only; the UI is not granted the plugin (SEC-PATHS).
+tauri-plugin-dialog = { version = "2", default-features = false }

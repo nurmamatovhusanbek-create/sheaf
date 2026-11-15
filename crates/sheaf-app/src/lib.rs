@@ -469,6 +469,17 @@ impl App {
         }
     }
 
+    /// The engine's record of a recognized page: image size, dpi, rotation applied.
+    pub fn ocr_meta(&self, id: PageId) -> Result<sheaf_ocr::cache::Meta> {
+        match self.ws.find(id).map(|p| &p.ocr) {
+            Some(OcrState::Done { key, .. }) => CacheEntry::at(&self.shared.session, key)?
+                .meta()
+                .ok_or_else(|| AppError::not_found("OCR result")),
+            Some(_) => Err(AppError::not_found("OCR result")),
+            None => Err(AppError::not_found("page")),
+        }
+    }
+
     /// CMD-SEARCH over recognized pages.
     pub fn search(&self, query: &str) -> Vec<Hit> {
         self.index.search(query, 200)

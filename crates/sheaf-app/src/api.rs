@@ -253,6 +253,18 @@ pub struct PickDto {
     pub name: String,
 }
 
+/// CMD-OCR-RESULT: words with their boxes, in pixels of an image `image_px`
+/// large, which is the page as displayed (the orientation fix is already in it).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcrResultDto {
+    pub words: Vec<sheaf_core::Word>,
+    pub text: String,
+    pub mean_conf: f32,
+    pub langs: Vec<String>,
+    pub image_px: (u32, u32),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HitDto {
@@ -489,6 +501,17 @@ pub struct Backend {
     closing: CancelFlag,
 }
 
+/// `/<pageId>/<ver>/<size>`, the path of a `sheaf-thumb://` URL (CMD-THUMB),
+/// into the page id and size; anything of another shape is refused.
+pub fn parse_thumb_path(path: &str) -> Option<(u64, u32)> {
+    let mut parts = path.trim_matches('/').split('/');
+    let page = parts.next()?.parse().ok()?;
+    let ver = parts.next()?;
+    let size = parts.next()?.parse().ok()?;
+    let plain_ver = ver.len() == 16 && ver.bytes().all(|b| b.is_ascii_hexdigit());
+    (plain_ver && parts.next().is_none()).then_some((page, size))
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -602,6 +625,12 @@ impl Backend {
 
     fn emit_error(&self, e: &AppError) {
         self.emit.emit(Event::Error(ErrorDto::from(e)));
+    }
+
+    /// Announce an error that happened outside a command (a drop, the command
+    /// line) where no caller is waiting to receive it (EVT-ERROR).
+    pub fn report(&self, e: &AppError) {
+        self.emit_error(e);
     }
 
     fn pages_event(&self, app: &App) -> Event {
@@ -971,8 +1000,22 @@ impl Backend {
     }
 
     /// CMD-OCR-RESULT.
-    pub fn ocr_result(&self, page: u64) -> Result<OcrResult> {
-        self.with(|app| app.ocr_result(PageId(page)))
+    pub fn ocr_result(&self, page: u64) -> Result<OcrResultDto> {
+        self.with(|app| {
+            let id = PageId(page);
+            let result: OcrResult = app.ocr_result(id)?;
+            let meta = app.ocr_meta(id)?;
+            // The words are in the image after the orientation turn.
+            let (w, h) = meta.image_px;
+            let image_px = if meta.rotate % 180 == 90 { (h, w) } else { (w, h) };
+            Ok(OcrResultDto {
+                text: result.text(),
+                mean_conf: result.mean_conf,
+                langs: result.langs_used.clone(),
+                words: result.words,
+                image_px,
+            })
+        })
     }
 
     /// CMD-SEARCH. An empty query finds nothing.
@@ -1490,5 +1533,27 @@ impl Backend {
 
     pub fn session_dir(&self) -> PathBuf {
         self.shared.session.dir().to_path_buf()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_thumb_path;
+
+    #[test]
+    fn thumb_paths_have_one_shape() {
+        assert_eq!(parse_thumb_path("/12/00ff00ff00ff00ff/256"), Some((12, 256)));
+        for bad in [
+            "",
+            "/",
+            "/12/zz/256",
+            "/12/00ff00ff00ff00ff",
+            "/12/00ff00ff00ff00ff/256/extra",
+            "/-1/00ff00ff00ff00ff/256",
+            "/12/00ff00ff00ff00ff/-5",
+            "/../../etc/passwd",
+        ] {
+            assert_eq!(parse_thumb_path(bad), None, "{bad}");
+        }
     }
 }

@@ -654,7 +654,12 @@ fn ocr_job_reports_each_page_and_can_be_cancelled() {
         .find(|p| p.ocr.state == "done")
         .expect("a recognized page");
     let words = rig.backend.ocr_result(page.id).expect("words");
-    assert!(words.text().to_lowercase().contains("page"));
+    assert!(words.text.to_lowercase().contains("page"));
+    assert!(
+        words.image_px.0 > 1_000 && words.image_px.1 > 1_000,
+        "an A4 page at 300 dpi: {:?}",
+        words.image_px
+    );
     assert!(!rig.backend.search("page").expect("search").is_empty());
 
     // Cropping changes the pixels, so the text read from them is dropped (FLOW-EDIT).

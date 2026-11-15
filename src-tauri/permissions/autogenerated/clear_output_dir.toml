@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-output-dir"
+description = "Enables the clear_output_dir command without any pre-configured scope."
+commands.allow = ["clear_output_dir"]
+
+[[permission]]
+identifier = "deny-clear-output-dir"
+description = "Denies the clear_output_dir command without any pre-configured scope."
+commands.deny = ["clear_output_dir"]
