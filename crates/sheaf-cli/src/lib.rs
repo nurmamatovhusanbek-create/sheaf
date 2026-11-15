@@ -9,6 +9,7 @@
 //! sheaf <action> <files...> ...      the same, `run` left out (what an Explorer verb writes)
 //! sheaf preset <name> <files...> [--out DIR]   run a saved preset on files, no window
 //! sheaf presets                      list the saved presets, one per line
+//! sheaf repair <files...> [--out DIR]   rebuild damaged PDFs into NAME.repaired.pdf, never overwriting
 //! sheaf install-verbs | uninstall-verbs   add or remove the Explorer right-click menu (current user)
 //! --card (with an action or preset): the progress and result show in a small card at the cursor
 //! --collect (with open, an action or preset): what an Explorer verb adds. The first process gathers the
@@ -33,6 +34,8 @@ pub enum Command {
     Preset(PresetRun),
     /// The names of the saved presets.
     Presets,
+    /// Rebuild damaged PDFs into new files (TOOL-REPAIR).
+    Repair(RepairRun),
     /// Write or remove Explorer's right-click entries (FLOW-EXPLORER).
     InstallVerbs,
     UninstallVerbs,
@@ -89,6 +92,13 @@ impl Command {
 
 /// A headless quick action.
 pub type Run = QuickRequest;
+
+/// Damaged PDFs to rebuild.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepairRun {
+    pub files: Vec<PathBuf>,
+    pub out: Option<PathBuf>,
+}
 
 /// A saved preset applied to files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +179,7 @@ fn parse_one(args: &[OsString]) -> Result<Command, UsageError> {
             Some(_) => err("presets takes no arguments"),
         },
         "preset" => parse_preset(it.collect()),
+        "repair" => parse_repair(it.collect()),
         "install-verbs" | "uninstall-verbs" => match it.next() {
             None if first_str == "install-verbs" => Ok(Command::InstallVerbs),
             None => Ok(Command::UninstallVerbs),
@@ -248,6 +259,26 @@ fn parse_preset(rest: Vec<&OsString>) -> Result<Command, UsageError> {
         return err("preset needs at least one file");
     }
     Ok(Command::Preset(PresetRun { name, files, out }))
+}
+
+fn parse_repair(rest: Vec<&OsString>) -> Result<Command, UsageError> {
+    let (mut files, mut out) = (Vec::new(), None);
+    let mut it = rest.into_iter();
+    while let Some(arg) = it.next() {
+        match arg.to_str() {
+            Some("--out") => {
+                out = Some(PathBuf::from(
+                    it.next().ok_or(UsageError("--out needs a folder".into()))?,
+                ))
+            }
+            Some(flag) if flag.starts_with("--") => return err(format!("unknown option {flag}")),
+            _ => files.push(PathBuf::from(arg)),
+        }
+    }
+    if files.is_empty() {
+        return err("repair needs at least one file");
+    }
+    Ok(Command::Repair(RepairRun { files, out }))
 }
 
 fn parse_wheel(rest: Vec<&OsString>) -> Result<Command, UsageError> {
@@ -391,6 +422,25 @@ mod tests {
         );
         // Without the flag nothing changes.
         assert!(matches!(p(&["merge", "a.pdf"]), Ok(Command::Run(_))));
+    }
+
+    #[test]
+    fn repair_takes_files_and_an_optional_folder() {
+        assert_eq!(
+            p(&["repair", "a.pdf", "b.pdf", "--out", "fixed"]),
+            Ok(Command::Repair(RepairRun {
+                files: vec!["a.pdf".into(), "b.pdf".into()],
+                out: Some("fixed".into()),
+            }))
+        );
+        for bad in [
+            &["repair"][..],
+            &["repair", "--out", "x"],
+            &["repair", "a.pdf", "--frobnicate"],
+            &["repair", "a.pdf", "--out"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

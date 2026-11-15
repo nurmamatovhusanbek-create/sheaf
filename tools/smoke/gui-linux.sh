@@ -109,6 +109,17 @@ case "$title" in *Done*) ;; *) echo "FAIL the card does not say Done"; exit 1;; 
 [ -f "$work/card.compressed.pdf" ] || { echo "FAIL the card's action made no file"; exit 1; }
 kill "$card"; wait "$card" 2>/dev/null || true
 
+echo "== repair: a PDF with its tail cut off"
+python3 - "$work/a.pdf" "$work/cut.pdf" <<'PY'
+import sys
+b = open(sys.argv[1], "rb").read()
+open(sys.argv[2], "wb").write(b[:-80])
+PY
+repaired="$("$sheaf" repair "$work/cut.pdf" 2>"$out/repair-err.txt")"
+case "$repaired" in *"cut.repaired.pdf") ;; *) echo "FAIL unexpected repair output: $repaired"; cat "$out/repair-err.txt"; exit 1;; esac
+grep -q "6 pages recovered" "$out/repair-err.txt" || { echo "FAIL the repair did not say how many pages came back"; cat "$out/repair-err.txt"; exit 1; }
+[ -f "$work/cut.repaired.pdf" ] || { echo "FAIL no repaired file"; exit 1; }
+
 echo "== action wheel on two PDFs"
 printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/list.txt"
 "$sheaf" wheel --at 600,400 --files "$work/list.txt" &

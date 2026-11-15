@@ -28,6 +28,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 type Result<T> = sheaf_core::Result<T>;
 
 mod presets;
+mod repair;
 mod scan;
 pub use scan::{ScanDeviceDto, ScanProfileDto, MAX_SCAN_PAGES, SCAN_DPIS};
 

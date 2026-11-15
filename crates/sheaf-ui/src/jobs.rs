@@ -80,6 +80,16 @@ pub fn summary(t: &I18n, job: &JobView) -> String {
                     .unwrap_or_default();
                 return format!("{}{sizes}{enc}", t.tn("job.files", files.len() as i64, &[]));
             }
+            if job.kind == "repair" {
+                // Say how much came back, not only that a file was written.
+                let files = t.tn("job.files", num("count").unwrap_or(0) as i64, &[]);
+                let pages = t.tn("job.pages", num("pages").unwrap_or(0) as i64, &[]);
+                let failed = num("failed")
+                    .filter(|n| *n > 0)
+                    .map(|n| format!(" · {}", t.tn("job.failed", n as i64, &[])))
+                    .unwrap_or_default();
+                return format!("{files} · {pages}{failed}");
+            }
             if let Some(count) = num("count") {
                 let skipped = num("skipped")
                     .filter(|s| *s > 0)
@@ -153,6 +163,14 @@ mod tests {
         assert!(summary(&en, &jam).ends_with("2 pages kept"), "{}", summary(&en, &jam));
         assert_eq!(kind_label(&en, "scan"), "Scan");
         assert_eq!(kind_label(&en, "preset"), "Preset");
+        assert_eq!(kind_label(&en, "repair"), "Repair");
+        assert_eq!(
+            summary(
+                &en,
+                &job("repair", "done", json!({"count": 2, "pages": 9, "failed": 1}))
+            ),
+            "2 files · 9 pages · 1 failed"
+        );
         assert_eq!(
             summary(&en, &job("preset", "done", json!({"count": 3, "failed": 1}))),
             "3 files · 1 failed"

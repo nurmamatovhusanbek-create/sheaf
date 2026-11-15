@@ -71,6 +71,15 @@ Step "headless: sheaf preset" {
   Check-Output "the preset run" $made
 }
 
+Step "repair: a PDF with its tail cut off" {
+  $bytes = [System.IO.File]::ReadAllBytes($Fixture)
+  $cut = Join-Path ([System.IO.Path]::GetTempPath()) "sheaf-cut.pdf"
+  [System.IO.File]::WriteAllBytes($cut, $bytes[0..($bytes.Length - 81)])
+  $made = & $Cli repair $cut 2>$null
+  if ($LASTEXITCODE -ne 0) { throw "repair exited with $LASTEXITCODE" }
+  Check-Output "repair" $made
+}
+
 Step "Explorer-style selection: three processes, one merge" {
   $agg = Join-Path ([System.IO.Path]::GetTempPath()) "sheaf-agg"
   Remove-Item -Recurse -Force $agg -ErrorAction SilentlyContinue

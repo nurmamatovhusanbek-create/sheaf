@@ -30,10 +30,11 @@ pub enum Tool {
     Stamp,
     Lock,
     Ocr,
+    Repair,
     Scan,
 }
 
-const TOOLS: [(Tool, &str); 14] = [
+const TOOLS: [(Tool, &str); 15] = [
     (Tool::Merge, "merge"),
     (Tool::Split, "split"),
     (Tool::Extract, "extract"),
@@ -47,6 +48,7 @@ const TOOLS: [(Tool, &str); 14] = [
     (Tool::Stamp, "stamp"),
     (Tool::Lock, "lock"),
     (Tool::Ocr, "ocr"),
+    (Tool::Repair, "repair"),
     (Tool::Scan, "scan"),
 ];
 
@@ -206,6 +208,7 @@ fn tool_icon(tool: Tool) -> crate::icons::Icon {
         Tool::Stamp => Icon::Stamp,
         Tool::Lock => Icon::Lock,
         Tool::Ocr => Icon::Ocr,
+        Tool::Repair => Icon::Check,
         Tool::Scan => Icon::Scan,
     }
 }
@@ -224,7 +227,7 @@ fn card_height(ui: &egui::Ui, hint: &str, width: f32) -> f32 {
 }
 
 fn tool_card(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str, width: f32, height: f32) -> bool {
-    let enabled = tool != Tool::Scan;
+    let enabled = true;
     let (rect, resp) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
     let v = ui.visuals().clone();
     let hovered = enabled && resp.hovered();
@@ -341,11 +344,7 @@ impl SheafApp {
                 (
                     *tool,
                     self.t.t(&format!("tool.{id}.name")),
-                    if *tool == Tool::Scan {
-                        self.t.t("tool.soon")
-                    } else {
-                        self.t.t(&format!("tool.{id}.hint"))
-                    },
+                    self.t.t(&format!("tool.{id}.hint")),
                 )
             })
             .filter(|(_, name, hint)| q.is_empty() || format!("{name} {hint}").to_lowercase().contains(&q))
@@ -400,7 +399,8 @@ impl SheafApp {
                 })
             }
             Tool::Ocr => self.side.tab = Tab::Ocr,
-            Tool::Scan => {}
+            Tool::Scan => self.open_scan(),
+            Tool::Repair => self.open_repair(),
             Tool::Split | Tool::Compress | Tool::Pdf2Img | Tool::Stamp | Tool::Lock => {
                 self.side.error = None;
                 self.side.form = Some(tool);

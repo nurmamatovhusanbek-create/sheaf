@@ -4,7 +4,7 @@
 
 use sheaf_app::quick::{run_quick, QuickReport};
 use sheaf_app::{App, Engines};
-use sheaf_cli::PresetRun;
+use sheaf_cli::{PresetRun, RepairRun};
 use sheaf_core::{AppError, QuickRequest};
 use std::process::ExitCode;
 
@@ -75,6 +75,44 @@ pub fn preset(run: &PresetRun) -> ExitCode {
         sheaf_app::preset::run_preset(&mut app, &preset, &run.files, run.out.as_deref(), &|_, _| {}, &|| false);
     let _ = app.close();
     finish(result)
+}
+
+/// `sheaf repair FILES...`: rebuild damaged PDFs. The paths go to stdout; what was recovered, to stderr.
+pub fn repair(run: &RepairRun) -> ExitCode {
+    let app = match start_app() {
+        Ok(app) => app,
+        Err(e) => return fail(&e),
+    };
+    let result = sheaf_app::repair::repair_files(
+        &app.shared(),
+        &run.files,
+        run.out.as_deref(),
+        &|_, _| {},
+        &sheaf_app::plan::NoCtl,
+    );
+    let _ = app.close();
+    match result {
+        Ok(report) => {
+            for done in &report.repaired {
+                let name = done
+                    .output
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                crate::say_err(&format!(
+                    "sheaf: {name}: {} pages recovered{}",
+                    done.pages,
+                    if done.was_damaged {
+                        ""
+                    } else {
+                        " (the file was not damaged)"
+                    }
+                ));
+            }
+            finish(Ok(report.quick))
+        }
+        Err(e) => fail(&e),
+    }
 }
 
 /// The saved presets, one per line.

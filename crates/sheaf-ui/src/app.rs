@@ -59,6 +59,8 @@ pub enum Msg {
     ScanDevices(Result<Vec<sheaf_app::api::ScanDeviceDto>, ErrorDto>),
     /// Work for the Presets dialog.
     Preset(crate::presets_ui::PresetMsg),
+    /// Files chosen for Repair.
+    RepairFiles(Vec<PathBuf>),
 }
 
 struct ChannelEmit {
@@ -334,6 +336,7 @@ impl SheafApp {
                 Msg::OcrResult { page, result } => self.preview.on_ocr_result(page, result),
                 Msg::Search(r) => self.search.on_result(r),
                 Msg::Preset(m) => self.on_preset_msg(m),
+                Msg::RepairFiles(files) => self.start_job(move |b| b.repair_run(files)),
                 Msg::ScanDevices(r) => {
                     if let Some(Modal::Scan(f)) = &mut self.modal {
                         f.on_devices(r);
@@ -565,6 +568,18 @@ impl SheafApp {
         }
         self.side.tab = crate::side::Tab::Ocr;
         self.start_job(move |b| b.ocr_run(Some(ids), Default::default()));
+    }
+
+    /// TOOL-REPAIR: choose the damaged files in the native dialog, then run.
+    pub(crate) fn open_repair(&self) {
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let files = crate::platform::pick_files();
+            if !files.is_empty() {
+                let _ = tx.send(Msg::RepairFiles(files));
+                ctx.request_repaint();
+            }
+        });
     }
 
     /// UI-SCANDLG: open the dialog and ask the system for scanners (it can take seconds).

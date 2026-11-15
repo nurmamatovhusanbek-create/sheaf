@@ -17,6 +17,7 @@ pub mod jobs;
 pub mod plan;
 pub mod preset;
 pub mod quick;
+pub mod repair;
 
 pub use api::Backend;
 pub use engines::Engines;

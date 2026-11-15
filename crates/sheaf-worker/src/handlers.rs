@@ -4,7 +4,7 @@ use sheaf_core::consts::{MAX_PAGE_SIDE, RASTER_DPI};
 use sheaf_core::proto::{
     ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, ImageFormat,
     OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs, ProbeResult, RenderArgs, RenderResult,
-    Request, SourceRef,
+    RepairArgs, RepairResult, Request, SourceRef,
 };
 use sheaf_core::{AppError, ErrorCode, Result, Rot, SourceKind};
 use sheaf_image::RgbaImage;
@@ -214,6 +214,7 @@ impl Worker {
             ops::PAGE_FACTS => to_value(&self.page_facts(&parse(&req.args)?)?),
             ops::EXPORT_IMAGES => to_value(&self.export_images(&parse(&req.args)?, progress)?),
             ops::EXTRACT_IMAGES => to_value(&self.extract_images(&parse(&req.args)?)?),
+            ops::REPAIR => to_value(&self.repair(&parse(&req.args)?)?),
             _ => Err(AppError::invalid("unknown op")),
         }
     }
@@ -241,6 +242,31 @@ impl Worker {
                 })
             }
         }
+    }
+
+    /// TOOL-REPAIR: rebuild the structure, then open the result with the renderer and say how
+    /// many pages it really has. Whether the original was damaged is judged the same way.
+    fn repair(&mut self, args: &RepairArgs) -> Result<RepairResult> {
+        let path = input(&args.path)?;
+        if sniff(&path)? != SourceKind::Pdf {
+            return Err(AppError::new(ErrorCode::Unsupported, "only PDF files can be repaired"));
+        }
+        let out = self.session.resolve(&args.out)?;
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io("create output dir", &e))?;
+        }
+        let before = self.engine()?.probe(Src::plain(&path)).ok().map(|p| p.page_count);
+        let found = sheaf_pdf::lo::repair(&path, &out)?;
+        let after = self.engine()?.probe(Src::plain(&out))?.page_count;
+        if after == 0 {
+            let _ = std::fs::remove_file(&out);
+            return Err(AppError::new(ErrorCode::ParseError, "no pages could be recovered"));
+        }
+        Ok(RepairResult {
+            out: args.out.clone(),
+            pages: after,
+            was_damaged: before != Some(after) || before != Some(found),
+        })
     }
 
     fn render(&mut self, args: &RenderArgs) -> Result<RenderResult> {

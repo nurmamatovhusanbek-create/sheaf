@@ -92,6 +92,7 @@ pub mod ops {
     pub const PAGE_FACTS: &str = "page_facts";
     pub const EXPORT_IMAGES: &str = "export_images";
     pub const EXTRACT_IMAGES: &str = "extract_images";
+    pub const REPAIR: &str = "repair";
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -309,6 +310,24 @@ pub struct ExtractImagesArgs {
     pub source: SourceRef,
     pub index: u32,
     pub out_dir: String,
+}
+
+/// `repair` (TOOL-REPAIR): rebuild a damaged PDF's structure into a new file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepairArgs {
+    /// Absolute, already validated by the main process.
+    pub path: String,
+    /// Session-relative output.
+    pub out: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepairResult {
+    pub out: String,
+    /// Pages the repaired file has when opened again by the renderer: the honest count.
+    pub pages: u32,
+    /// The original did not open cleanly (or opened with a different number of pages).
+    pub was_damaged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -44,6 +44,35 @@ fn load(path: &Path, password: Option<&str>) -> Result<Document> {
     .map_err(map_err)
 }
 
+/// TOOL-REPAIR: read a damaged PDF the tolerant way (a missing or wrong cross-reference table, a
+/// lost trailer, a cut-off end are rebuilt by scanning for the objects themselves) and write the
+/// whole structure out again. Returns the number of pages found in the page tree; the caller opens
+/// the result with the renderer and reports that count, which is the honest one. A locked file is
+/// not repaired (it would need its password), and nothing readable is an error, not an empty file.
+pub fn repair(path: &Path, out: &Path) -> Result<u32> {
+    let size = std::fs::metadata(path)
+        .map_err(|e| AppError::io("read file", &e))?
+        .len();
+    if size > sheaf_core::consts::MAX_FILE_BYTES {
+        return Err(AppError::limit("file is too large"));
+    }
+    let bytes = std::fs::read(path).map_err(|e| AppError::io("read file", &e))?;
+    let mut doc = Document::load_mem(&bytes).map_err(map_err)?;
+    drop(bytes);
+    if doc.is_encrypted() {
+        return Err(AppError::new(
+            ErrorCode::NeedsPassword,
+            "document is password protected",
+        ));
+    }
+    let pages = doc.get_pages().len() as u32;
+    if pages == 0 {
+        return Err(AppError::new(ErrorCode::ParseError, "no pages could be recovered"));
+    }
+    doc.save(out).map_err(|e| AppError::io("write repaired file", &e))?;
+    Ok(pages)
+}
+
 /// What [`compress`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompressReport {
