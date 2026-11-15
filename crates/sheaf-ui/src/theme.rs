@@ -89,7 +89,10 @@ fn style_one(style: &mut egui::Style) {
         w.corner_radius = CornerRadius::same(7);
         w.fg_stroke = Stroke::new(1.0, text);
     }
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, border);
+    // A clear outline on resting controls: without it an unchecked box or a flat button disappears
+    // into the panel behind it.
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, if dark { c(0x3d, 0x45, 0x59) } else { c(0xc2, 0xc9, 0xd8) });
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, if dark { c(0x55, 0x5f, 0x78) } else { c(0xa4, 0xad, 0xc2) });
     v.widgets.active.bg_stroke = Stroke::new(1.0, accent);
     v.striped = false;
     v.indent_has_left_vline = false;

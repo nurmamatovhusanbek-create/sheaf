@@ -2,7 +2,7 @@
 resolver = "2"
 members = ["crates/*", "tools/*"]
 # tools/smoke holds scripts, not a crate.
-exclude = ["tools/smoke"]
+exclude = ["tools/smoke", "tools/package"]
 
 [workspace.package]
 version = "0.0.0"
