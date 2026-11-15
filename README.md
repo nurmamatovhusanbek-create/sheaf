@@ -12,7 +12,11 @@ Explorer or the desktop, pops a radial menu at the cursor and merges, compresses
 rotates the selected files with no window. The same actions run from the command line (`sheaf run ...`).
 The window and the wheel are exercised on Linux under a virtual display; the Windows-only parts (tray helper,
 hotkey, Explorer and desktop selection, overlay placement) type-check for Windows but **have not yet run on
-Windows** (see `RISK-WIN-SHELL` in the spec). Scanning (PH-5) and presets (PH-6) are not there yet.
+Windows** (see `RISK-WIN-SHELL` in the spec).
+
+**Scanning (PH-5)** works end to end against a fake scanner (dialog, live pages in the tray, optional
+recognition while scanning, cancel keeps what was scanned). The Windows backend (WIA 2) is written and
+lints for Windows, but no page has come from a real scanner yet (`RISK-WIA`). Presets (PH-6) are not there yet.
 
 ## Working on it
 

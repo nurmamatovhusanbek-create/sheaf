@@ -20,7 +20,10 @@ const ALLOWED: &[(&str, &[&str])] = &[
         &["sheaf-core", "sheaf-pdf", "sheaf-image", "sheaf-ocr", "sheaf-store"],
     ),
     ("sheaf-cli", &["sheaf-core"]),
-    ("sheaf-app", &["sheaf-core", "sheaf-store", "sheaf-jobs", "sheaf-ocr"]),
+    (
+        "sheaf-app",
+        &["sheaf-core", "sheaf-store", "sheaf-jobs", "sheaf-ocr", "sheaf-scan"],
+    ),
     ("sheaf-ui", &["sheaf-app", "sheaf-core", "sheaf-store"]),
     (
         "sheaf-shell",

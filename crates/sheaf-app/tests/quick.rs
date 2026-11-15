@@ -81,10 +81,7 @@ fn compress_split_rotate_and_pdf_to_images_make_one_result_per_input() {
     let r = run_quick(&mut app, &req, &|_, _| {}).expect("compress");
     assert_eq!(names(&r), ["a.compressed.pdf", "b.compressed.pdf"]);
     assert!(r.bytes_before > 0 && r.bytes_after > 0);
-    assert!(r
-        .outputs
-        .iter()
-        .all(|p| p.starts_with(out.path().canonicalize().expect("canon"))));
+    assert!(r.outputs.iter().all(|p| p.starts_with(out.path())));
 
     let r = run(&mut app, QuickAction::Split, vec![a.clone()]);
     assert_eq!(names(&r), ["a-001.pdf", "a-002.pdf", "a-003.pdf"]);

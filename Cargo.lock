@@ -2998,6 +2998,7 @@ dependencies = [
  "sheaf-core",
  "sheaf-jobs",
  "sheaf-ocr",
+ "sheaf-scan",
  "sheaf-store",
 ]
 
@@ -3069,8 +3070,11 @@ dependencies = [
 name = "sheaf-scan"
 version = "0.0.0"
 dependencies = [
+ "image",
  "sheaf-core",
  "sheaf-image",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

@@ -12,10 +12,34 @@ pub fn kind_label(t: &I18n, kind: &str) -> String {
     }
 }
 
+/// A scan has no total, so the count of pages kept so far is its progress. Pages
+/// that arrived before a cancel or a failure are kept (SCAN-FAILURES), and say so.
+fn scan_summary(t: &I18n, job: &JobView, pages: i64) -> String {
+    let count = t.tn("job.pages", pages, &[]);
+    let kept = || t.tv("job.pages_kept", &[("pages", &count)]);
+    match job.state {
+        "failed" => {
+            let why = t.t(job.error.as_ref().map_or("error.internal", |e| e.key));
+            if pages > 0 {
+                format!("{why} {}", kept())
+            } else {
+                why
+            }
+        }
+        "cancelled" if pages > 0 => format!("{} · {}", t.t("job.cancelled"), kept()),
+        "cancelled" => t.t("job.cancelled"),
+        "queued" => t.t("job.queued"),
+        _ => count,
+    }
+}
+
 /// The one-line state or result of a job.
 pub fn summary(t: &I18n, job: &JobView) -> String {
     let d = &job.detail;
     let num = |k: &str| d.get(k).and_then(|v| v.as_u64());
+    if job.kind == "scan" {
+        return scan_summary(t, job, num("pages").unwrap_or(0) as i64);
+    }
     match job.state {
         "failed" => t.t(job.error.as_ref().map_or("error.internal", |e| e.key)),
         "cancelled" => t.t("job.cancelled"),
@@ -109,5 +133,19 @@ mod tests {
         );
         let locked = json!({"files": [{"encryption": "AES-256"}], "inputBytes": 0, "outputBytes": 900});
         assert!(summary(&en, &job("tool:protect", "done", locked)).ends_with("AES-256"));
+
+        // A scan shows the pages kept so far, also when it stopped early.
+        let scan = |state: &'static str, pages: u64| job("scan", state, json!({ "pages": pages }));
+        assert_eq!(summary(&en, &scan("running", 1)), "1 page");
+        assert_eq!(summary(&en, &scan("done", 12)), "12 pages");
+        assert_eq!(summary(&en, &scan("cancelled", 3)), "Cancelled · 3 pages kept");
+        assert_eq!(summary(&en, &scan("cancelled", 0)), "Cancelled");
+        let mut jam = scan("failed", 2);
+        jam.error = Some(sheaf_app::api::ErrorDto::from(&sheaf_core::AppError::new(
+            sheaf_core::ErrorCode::DeviceError,
+            "paper jam",
+        )));
+        assert!(summary(&en, &jam).ends_with("2 pages kept"), "{}", summary(&en, &jam));
+        assert_eq!(kind_label(&en, "scan"), "Scan");
     }
 }

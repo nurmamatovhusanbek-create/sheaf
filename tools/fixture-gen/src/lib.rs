@@ -179,7 +179,14 @@ impl Scratch {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
-        Scratch(dir.canonicalize().unwrap_or(dir))
+        // Canonical, but in the plain form on Windows (`C:\x`, not `\\?\C:\x`), the way the app writes paths.
+        let canon = dir.canonicalize().unwrap_or(dir);
+        let plain = canon
+            .to_str()
+            .and_then(|s| s.strip_prefix(r"\\?\"))
+            .filter(|rest| rest.as_bytes().get(1) == Some(&b':'))
+            .map(std::path::PathBuf::from);
+        Scratch(plain.unwrap_or(canon))
     }
     pub fn path(&self) -> &std::path::Path {
         &self.0

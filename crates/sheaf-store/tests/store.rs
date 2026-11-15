@@ -15,7 +15,9 @@ impl Scratch {
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!("sheaf-store-test-{}-{tag}-{n}", std::process::id()));
         fs::create_dir_all(&dir).expect("create scratch dir");
-        Scratch(dir.canonicalize().expect("canonical scratch dir"))
+        Scratch(sheaf_store::paths::simplify_verbatim(
+            dir.canonicalize().expect("canonical scratch dir"),
+        ))
     }
     fn path(&self) -> &Path {
         &self.0

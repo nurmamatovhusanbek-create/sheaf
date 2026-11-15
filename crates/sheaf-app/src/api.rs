@@ -27,6 +27,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 type Result<T> = sheaf_core::Result<T>;
 
+mod scan;
+pub use scan::{ScanDeviceDto, ScanProfileDto, MAX_SCAN_PAGES, SCAN_DPIS};
+
 /// Most pages one `pages` call returns.
 pub const MAX_PAGE_RANGE: usize = 2_000;
 /// Preview and thumbnail sizes the renderer will produce, longest side in pixels.
@@ -506,6 +509,8 @@ pub struct Backend {
     /// `None` until the startup check finishes, then its outcome.
     verified: (Mutex<Option<std::result::Result<(), AppError>>>, Condvar),
     closing: CancelFlag,
+    /// The scanner behind CMD-SCAN-*; `None` where there is none (MOD-SCAN).
+    scanner: Mutex<Option<Arc<dyn sheaf_scan::ScanBackend>>>,
 }
 
 /// `/<pageId>/<ver>/<size>`, the path of a `sheaf-thumb://` URL (CMD-THUMB),
@@ -572,6 +577,7 @@ impl Backend {
             font: cfg.engines.font.is_some(),
             verified: (Mutex::new(None), Condvar::new()),
             closing: CancelFlag::default(),
+            scanner: Mutex::new(scan::default_scanner()),
         });
         match (cfg.verify_vendor, cfg.engines.vendor_dir().map(Path::to_path_buf)) {
             (true, Some(vendor)) => {
@@ -824,29 +830,8 @@ impl Backend {
         let mut reports = Vec::new();
         let mut errors: Vec<AppError> = Vec::new();
         for (i, path) in paths.iter().enumerate() {
-            let one = App::begin_import(&self.shared, path).and_then(|probed| {
-                if probed.page_count() > MAX_SOURCE_PAGES {
-                    return Err(AppError::limit("file has too many pages"));
-                }
-                self.with(|app| {
-                    let r = app.commit_import(probed)?;
-                    let name = app.ws.source(r.source).map(|s| file_name(&s.path)).unwrap_or_default();
-                    Ok((r, name, self.pages_event(app)))
-                })
-            });
-            match one {
-                Ok((r, name, event)) => {
-                    self.emit.emit(event);
-                    reports.push(ImportReportDto {
-                        source: r.source.0,
-                        name,
-                        pages: r.pages.iter().map(|p| p.0).collect(),
-                        encrypted: r.encrypted,
-                        restricted: r.restricted,
-                        has_forms: r.has_forms,
-                        is_unc: r.is_unc,
-                    });
-                }
+            match self.import_one(path) {
+                Ok(report) => reports.push(report),
                 Err(e) => errors.push(e),
             }
             entry.set_progress((i + 1) as f32 / paths.len() as f32);
@@ -872,6 +857,30 @@ impl Backend {
         self.emit.emit(Event::Import(reports.clone()));
         self.auto_ocr(&reports);
         Ok(reports)
+    }
+
+    /// One file into the workspace: probe it in a worker, commit it, announce the
+    /// new page count. Shared by CMD-IMPORT and the scan job.
+    fn import_one(&self, path: &Path) -> Result<ImportReportDto> {
+        let probed = App::begin_import(&self.shared, path)?;
+        if probed.page_count() > MAX_SOURCE_PAGES {
+            return Err(AppError::limit("file has too many pages"));
+        }
+        let (r, name, event) = self.with(|app| {
+            let r = app.commit_import(probed)?;
+            let name = app.ws.source(r.source).map(|s| file_name(&s.path)).unwrap_or_default();
+            Ok((r, name, self.pages_event(app)))
+        })?;
+        self.emit.emit(event);
+        Ok(ImportReportDto {
+            source: r.source.0,
+            name,
+            pages: r.pages.iter().map(|p| p.0).collect(),
+            encrypted: r.encrypted,
+            restricted: r.restricted,
+            has_forms: r.has_forms,
+            is_unc: r.is_unc,
+        })
     }
 
     /// FLOW-OCR-AUTO: with the policy on Auto, pages that arrived without text are queued.
@@ -1518,11 +1527,6 @@ impl Backend {
     }
 
     // -- not yet ---------------------------------------------------------
-
-    /// CMD-SCAN-DEVICES, CMD-SCAN-START, CMD-SCAN-CANCEL arrive with PH-5.
-    pub fn scan_unavailable(&self) -> AppError {
-        AppError::new(ErrorCode::Unsupported, "scanning arrives with PH-5")
-    }
 
     /// CMD-PRESETS arrives with PH-6; until then the list is empty.
     pub fn presets_list(&self) -> Vec<String> {

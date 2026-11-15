@@ -215,6 +215,12 @@ impl Ctx {
         self.emit.emit(Event::Job(self.entry.view()));
     }
 
+    /// Kind-specific numbers shown with the job (a live page count, say).
+    pub fn set_detail(&self, detail: Value) {
+        self.entry.lock().detail = detail;
+        self.emit_view();
+    }
+
     /// Record a file the job has finished writing, so Reveal works before the job ends.
     pub fn add_output(&self, path: &Path) {
         self.entry.lock().outputs.push(path.to_path_buf());

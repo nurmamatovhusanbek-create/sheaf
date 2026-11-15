@@ -406,8 +406,12 @@ fn jobs_and_tools_reject_bad_input() {
     );
     rig.backend.job_cancel(424_242); // unknown ids are ignored
 
-    // Scanning and presets arrive in later phases and say so.
-    assert_eq!(rig.backend.scan_unavailable().code, ErrorCode::Unsupported);
+    // Without a scanner, scanning says so; presets arrive in a later phase and say so.
+    rig.backend.set_scanner(None);
+    assert_eq!(
+        rig.backend.scan_devices().expect_err("no scanner").code,
+        ErrorCode::Unsupported
+    );
     assert_eq!(rig.backend.presets_unavailable().code, ErrorCode::Unsupported);
     assert!(rig.backend.presets_list().is_empty());
 }

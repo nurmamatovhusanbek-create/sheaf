@@ -14,6 +14,7 @@ sheaf-core = { path = "../sheaf-core" }
 sheaf-store = { path = "../sheaf-store" }
 sheaf-jobs = { path = "../sheaf-jobs" }
 sheaf-ocr = { path = "../sheaf-ocr" }
+sheaf-scan = { path = "../sheaf-scan" }
 serde.workspace = true
 serde_json.workspace = true
 

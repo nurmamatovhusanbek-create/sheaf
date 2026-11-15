@@ -154,7 +154,9 @@ fn checked_out_dir(dir: &Path) -> Result<PathBuf> {
     if cfg!(windows) {
         check_windows_path_rules(dir.to_str().ok_or_else(|| rejected("path is not valid Unicode"))?)?;
     }
-    let dir = dir.canonicalize().map_err(|e| AppError::io("resolve output dir", &e))?;
+    // The plain form (`C:\dir`, not `\\?\C:\dir`): every path built from this one is shown
+    // to people and handed to scripts and other programs.
+    let dir = simplify_verbatim(dir.canonicalize().map_err(|e| AppError::io("resolve output dir", &e))?);
     if !dir.is_dir() {
         return Err(rejected("output location is not a directory"));
     }
@@ -164,7 +166,7 @@ fn checked_out_dir(dir: &Path) -> Result<PathBuf> {
 /// Validate a folder the user picked for outputs: it must exist, be a
 /// directory and pass the Windows path rules (SEC-PATHS). Returns it canonical.
 pub fn check_output_dir(dir: &Path) -> Result<PathBuf> {
-    checked_out_dir(dir).map(simplify_verbatim)
+    checked_out_dir(dir)
 }
 
 /// A path in `dir` for `name` that does not exist right now; collisions get

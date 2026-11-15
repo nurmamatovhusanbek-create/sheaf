@@ -55,7 +55,7 @@ jobs:
       - name: Toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - name: Virtual display, software GL, ImageMagick, Tesseract
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libxkbcommon-x11-0 libx11-xcb1 libxcursor1 libxi6 libxrandr2 imagemagick tesseract-ocr
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libxkbcommon-x11-0 libx11-xcb1 libxcursor1 libxi6 libxrandr2 imagemagick xdotool tesseract-ocr
       - name: Fetch and verify vendored assets
         run: bash tools/fetch-vendor
       - run: cargo build --locked -p sheaf-shell -p sheaf-worker

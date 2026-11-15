@@ -6,7 +6,7 @@
 #
 #   bash tools/smoke/gui-linux.sh [path to the sheaf binary] [output dir]
 #
-# Needs: Xvfb, ImageMagick (`import`, `convert`), Mesa software GL, libxkbcommon-x11,
+# Needs: Xvfb, xdotool, ImageMagick (`import`, `convert`), Tesseract, Mesa software GL, libxkbcommon-x11,
 # a built sheaf-worker beside the binary, and `bash tools/fetch-vendor` done.
 set -euo pipefail
 
@@ -38,6 +38,27 @@ n="$(colours "$out/window.png")"
 echo "colours on screen: $n"
 [ "$n" -gt 200 ] || { echo "FAIL the window drew almost nothing"; exit 1; }
 kill "$win"; wait "$win" 2>/dev/null || true
+
+echo "== scan dialog with a fake feeder"
+# The fake scanner exists on development machines only (SHEAF_FAKE_SCANNER); on Windows the real WIA backend is used.
+SHEAF_FAKE_SCANNER=1 "$sheaf" &
+scan=$!
+sleep 9
+kill -0 "$scan" || { echo "FAIL the window exited early"; exit 1; }
+xdotool mousemove 146 25 click 1            # toolbar: Scan
+sleep 3
+import -window root "$out/scan-dialog.png"
+xdotool mousemove 565 309 click 1; sleep 1   # Source
+xdotool mousemove 578 385 click 1; sleep 1   # Document feeder
+xdotool mousemove 479 587 click 1            # Start scanning
+sleep 8
+import -window root "$out/scan-done.png"
+# Read the job bar back: three sheets from the feeder are "3 pages".
+convert "$out/scan-done.png" -crop 420x30+0+790 +repage -resize 300% -colorspace Gray -negate "$work/bar.png"
+bar="$(tesseract "$work/bar.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
+echo "job bar reads: $bar"
+case "$bar" in *"3 pages"*) ;; *) echo "FAIL expected the job bar to say 3 pages"; exit 1;; esac
+kill "$scan"; wait "$scan" 2>/dev/null || true
 
 echo "== action wheel on two PDFs"
 printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/list.txt"

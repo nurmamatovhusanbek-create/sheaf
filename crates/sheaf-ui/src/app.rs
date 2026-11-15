@@ -55,6 +55,8 @@ pub enum Msg {
     JobStarted(Result<u64, ErrorDto>),
     /// Files chosen in the Open dialog or dropped on the window.
     Paths(Vec<PathBuf>),
+    /// The scanners the system lists (the Scan dialog is waiting for them).
+    ScanDevices(Result<Vec<sheaf_app::api::ScanDeviceDto>, ErrorDto>),
 }
 
 struct ChannelEmit {
@@ -80,6 +82,7 @@ pub enum Modal {
     Export(crate::dialogs::ExportForm),
     Settings(crate::dialogs::SettingsForm),
     Password(crate::dialogs::PasswordForm),
+    Scan(crate::dialogs::ScanForm),
 }
 
 #[derive(Default)]
@@ -120,6 +123,8 @@ pub struct SheafApp {
     pub(crate) toasts: Vec<Toast>,
     pub(crate) modal: Option<Modal>,
     pub(crate) locked_queue: VecDeque<SourceDto>,
+    /// What the Scan dialog had last time, so the next scan starts from it.
+    pub(crate) scan_prefs: crate::dialogs::ScanPrefs,
     pub(crate) drop_hover: bool,
     font_installed: bool,
 }
@@ -202,6 +207,7 @@ impl SheafApp {
             toasts: Vec::new(),
             modal: None,
             locked_queue: VecDeque::new(),
+            scan_prefs: Default::default(),
             drop_hover: false,
             font_installed: false,
         };
@@ -324,6 +330,11 @@ impl SheafApp {
                 Msg::Done(Ok(())) | Msg::JobStarted(Ok(_)) => {}
                 Msg::OcrResult { page, result } => self.preview.on_ocr_result(page, result),
                 Msg::Search(r) => self.search.on_result(r),
+                Msg::ScanDevices(r) => {
+                    if let Some(Modal::Scan(f)) = &mut self.modal {
+                        f.on_devices(r);
+                    }
+                }
                 Msg::Settings(r) => match r {
                     Ok(s) => self.apply_settings(s),
                     Err(e) => self.show_error(&e),
@@ -486,7 +497,6 @@ impl SheafApp {
             t.t("toolbar.settings"),
         );
         let (scan, presets) = (t.t("toolbar.scan"), t.t("toolbar.presets"));
-        let scan_soon = t.t("toolbar.scan_soon");
         let presets_soon = t.t("toolbar.presets_soon");
         let ocr_off = self.settings.ocr_mode == "Off";
         let (can_undo, can_redo) = (self.can_undo, self.can_redo);
@@ -495,13 +505,8 @@ impl SheafApp {
             if labeled_button(ui, Icon::Open, &open, false, "Ctrl+O").clicked() {
                 self.open_dialog();
             }
-            if ui
-                .add_enabled(true, |ui: &mut egui::Ui| {
-                    labeled_button(ui, Icon::Scan, &scan, false, &scan_soon)
-                })
-                .clicked()
-            {
-                self.toast(scan_soon.clone(), "", false);
+            if labeled_button(ui, Icon::Scan, &scan, false, "").clicked() {
+                self.open_scan();
             }
             ui.add_enabled_ui(!no_pages && !ocr_off, |ui| {
                 if labeled_button(ui, Icon::Ocr, &ocr, false, "F").clicked() {
@@ -557,6 +562,16 @@ impl SheafApp {
         }
         self.side.tab = crate::side::Tab::Ocr;
         self.start_job(move |b| b.ocr_run(Some(ids), Default::default()));
+    }
+
+    /// UI-SCANDLG: open the dialog and ask the system for scanners (it can take seconds).
+    pub(crate) fn open_scan(&mut self) {
+        let ocr_default = self.settings.ocr_mode == "Auto";
+        self.modal = Some(Modal::Scan(crate::dialogs::ScanForm::new(
+            self.scan_prefs.clone(),
+            ocr_default,
+        )));
+        self.spawn(|b| Msg::ScanDevices(b.scan_devices().map_err(|e| ErrorDto::from(&e))));
     }
 
     pub(crate) fn open_export(&mut self, selected: bool) {

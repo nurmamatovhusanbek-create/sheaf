@@ -26,6 +26,12 @@ pub enum ErrorCode {
     Cancelled,
     /// A bundled component (PDFium, tesseract) is missing or failed its check.
     EngineMissing,
+    /// A scanner (or its driver) reported a problem: offline, cover open, jam, driver error.
+    DeviceError,
+    /// The scanner is in use by something else (SCAN-FAILURES).
+    DeviceBusy,
+    /// The feeder is empty (at the start, or, mid-batch, simply the end).
+    NoPaper,
     Internal,
 }
 
@@ -45,6 +51,9 @@ impl ErrorCode {
             ErrorCode::Timeout => "error.timeout",
             ErrorCode::Cancelled => "error.cancelled",
             ErrorCode::EngineMissing => "error.engine_missing",
+            ErrorCode::DeviceError => "error.device",
+            ErrorCode::DeviceBusy => "error.device_busy",
+            ErrorCode::NoPaper => "error.no_paper",
             ErrorCode::Internal => "error.internal",
         }
     }

@@ -5,7 +5,9 @@
 use crate::app::{Modal, Msg, SheafApp};
 use crate::i18n::LANGUAGES;
 use eframe::egui::{self, RichText};
-use sheaf_app::api::{ErrorDto, ExportSpecDto, SettingsDto, SettingsPatch, SourceDto, UnlockDto};
+use sheaf_app::api::{
+    ErrorDto, ExportSpecDto, ScanDeviceDto, ScanProfileDto, SettingsDto, SettingsPatch, SourceDto, UnlockDto,
+};
 use sheaf_core::{CompressLevel, Protect, SplitRule};
 use zeroize::Zeroizing;
 
@@ -138,6 +140,7 @@ impl SheafApp {
             Modal::Export(f) => self.export_dialog(ctx, f).map(Modal::Export),
             Modal::Settings(f) => self.settings_dialog(ctx, f).map(Modal::Settings),
             Modal::Password(f) => self.password_dialog(ctx, f).map(Modal::Password),
+            Modal::Scan(f) => self.scan_dialog(ctx, f).map(Modal::Scan),
         };
     }
 
@@ -536,4 +539,246 @@ impl SheafApp {
 
 fn ui_escape(ctx: &egui::Context) -> bool {
     ctx.input(|i| i.key_pressed(egui::Key::Escape))
+}
+
+// ---------------------------------------------------------------------
+// UI-SCANDLG
+// ---------------------------------------------------------------------
+
+const SOURCES: [&str; 2] = ["flatbed", "feeder"];
+const COLORS: [&str; 3] = ["color", "gray", "bw"];
+const PAPERS: [&str; 4] = ["a4", "a3", "letter", "auto"];
+
+/// What the dialog remembers between scans (in memory for this run).
+#[derive(Clone, PartialEq, Debug)]
+pub struct ScanPrefs {
+    pub device_id: Option<String>,
+    pub source: usize,
+    pub duplex: bool,
+    pub dpi: u32,
+    pub color: usize,
+    pub paper: usize,
+    pub ocr: Option<bool>,
+}
+
+impl Default for ScanPrefs {
+    fn default() -> Self {
+        ScanPrefs {
+            device_id: None,
+            source: 0,
+            duplex: false,
+            dpi: 300,
+            color: 0,
+            paper: 0,
+            ocr: None,
+        }
+    }
+}
+
+pub struct ScanForm {
+    prefs: ScanPrefs,
+    /// `None` while the system is still being asked.
+    devices: Option<Result<Vec<ScanDeviceDto>, ErrorDto>>,
+    ocr: bool,
+}
+
+impl ScanForm {
+    pub fn new(prefs: ScanPrefs, ocr_default: bool) -> ScanForm {
+        ScanForm {
+            ocr: prefs.ocr.unwrap_or(ocr_default),
+            prefs,
+            devices: None,
+        }
+    }
+
+    /// The list arrived: keep the remembered scanner if it is still there, else the first.
+    pub fn on_devices(&mut self, result: Result<Vec<ScanDeviceDto>, ErrorDto>) {
+        if let Ok(list) = &result {
+            let known = self
+                .prefs
+                .device_id
+                .as_ref()
+                .is_some_and(|id| list.iter().any(|d| &d.id == id));
+            if !known {
+                self.prefs.device_id = list.first().map(|d| d.id.clone());
+            }
+        }
+        self.devices = Some(result);
+    }
+
+    /// What CMD-SCAN-START takes.
+    pub fn profile(&self) -> Option<ScanProfileDto> {
+        let device_id = self.prefs.device_id.clone()?;
+        let p = &self.prefs;
+        Some(ScanProfileDto {
+            device_id,
+            source: SOURCES[p.source.min(1)].into(),
+            duplex: p.duplex && p.source == 1,
+            dpi: p.dpi,
+            color: COLORS[p.color.min(2)].into(),
+            paper: PAPERS[p.paper.min(3)].into(),
+            ocr: Some(self.ocr),
+        })
+    }
+}
+
+impl SheafApp {
+    fn scan_dialog(&mut self, ctx: &egui::Context, mut f: ScanForm) -> Option<ScanForm> {
+        let mut close = false;
+        let mut start = false;
+        let mut refresh = false;
+        egui::Modal::new(egui::Id::unique("scan")).show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.heading(self.t.t("scan.title"));
+            ui.add_space(4.0);
+            match &f.devices {
+                None => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(self.t.t("scan.looking"));
+                    });
+                }
+                Some(Err(e)) => {
+                    let key = if e.code == sheaf_core::ErrorCode::Unsupported {
+                        "scan.unavailable"
+                    } else {
+                        e.key
+                    };
+                    ui.colored_label(ui.visuals().error_fg_color, self.t.t(key));
+                    refresh |= ui.button(self.t.t("scan.refresh")).clicked();
+                }
+                Some(Ok(list)) if list.is_empty() => {
+                    ui.label(self.t.t("scan.none"));
+                    refresh |= ui.button(self.t.t("scan.refresh")).clicked();
+                }
+                Some(Ok(list)) => {
+                    egui::Grid::new("scan-grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            ui.label(self.t.t("scan.device"));
+                            ui.horizontal(|ui| {
+                                let current = list
+                                    .iter()
+                                    .find(|d| Some(&d.id) == f.prefs.device_id.as_ref())
+                                    .map_or("", |d| d.name.as_str());
+                                egui::ComboBox::from_id_salt("scan-device")
+                                    .selected_text(current)
+                                    .width(250.0)
+                                    .show_ui(ui, |ui| {
+                                        for d in list {
+                                            ui.selectable_value(&mut f.prefs.device_id, Some(d.id.clone()), &d.name);
+                                        }
+                                    });
+                                refresh |= ui.button(self.t.t("scan.refresh")).clicked();
+                            });
+                            ui.end_row();
+
+                            ui.label(self.t.t("scan.source"));
+                            egui::ComboBox::from_id_salt("scan-source")
+                                .selected_text(self.t.t(&format!("scan.source_{}", SOURCES[f.prefs.source.min(1)])))
+                                .show_ui(ui, |ui| {
+                                    for (i, v) in SOURCES.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut f.prefs.source,
+                                            i,
+                                            self.t.t(&format!("scan.source_{v}")),
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+
+                            ui.label("");
+                            ui.add_enabled(
+                                f.prefs.source == 1,
+                                egui::Checkbox::new(&mut f.prefs.duplex, self.t.t("scan.duplex")),
+                            );
+                            ui.end_row();
+
+                            ui.label(self.t.t("scan.dpi"));
+                            egui::ComboBox::from_id_salt("scan-dpi")
+                                .selected_text(format!("{} dpi", f.prefs.dpi))
+                                .show_ui(ui, |ui| {
+                                    for dpi in sheaf_app::api::SCAN_DPIS {
+                                        ui.selectable_value(&mut f.prefs.dpi, dpi, format!("{dpi} dpi"));
+                                    }
+                                });
+                            ui.end_row();
+
+                            ui.label(self.t.t("scan.color"));
+                            egui::ComboBox::from_id_salt("scan-color")
+                                .selected_text(self.t.t(&format!("scan.color_{}", COLORS[f.prefs.color.min(2)])))
+                                .show_ui(ui, |ui| {
+                                    for (i, v) in COLORS.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut f.prefs.color,
+                                            i,
+                                            self.t.t(&format!("scan.color_{v}")),
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+
+                            ui.label(self.t.t("scan.paper"));
+                            egui::ComboBox::from_id_salt("scan-paper")
+                                .selected_text(self.t.t(&format!("scan.paper_{}", PAPERS[f.prefs.paper.min(3)])))
+                                .show_ui(ui, |ui| {
+                                    for (i, v) in PAPERS.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut f.prefs.paper,
+                                            i,
+                                            self.t.t(&format!("scan.paper_{v}")),
+                                        );
+                                    }
+                                });
+                            ui.end_row();
+                        });
+                    ui.add_space(4.0);
+                    ui.add_enabled(
+                        self.engines.tesseract,
+                        egui::Checkbox::new(&mut f.ocr, self.t.t("scan.ocr")),
+                    );
+                    ui.label(RichText::new(self.t.t("scan.hint")).weak().small());
+                }
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                let ready = f.profile().is_some() && matches!(&f.devices, Some(Ok(l)) if !l.is_empty());
+                if ui
+                    .add_enabled(
+                        ready,
+                        egui::Button::new(self.t.t("scan.start")).fill(ui.visuals().selection.bg_fill),
+                    )
+                    .clicked()
+                {
+                    start = true;
+                }
+                if ui.button(self.t.t("common.cancel")).clicked() {
+                    close = true;
+                }
+            });
+        });
+        if ui_escape(ctx) {
+            close = true;
+        }
+        if refresh {
+            f.devices = None;
+            self.spawn(|b| Msg::ScanDevices(b.scan_devices().map_err(|e| ErrorDto::from(&e))));
+        }
+        if start {
+            if let Some(dto) = f.profile() {
+                f.prefs.ocr = Some(f.ocr);
+                self.scan_prefs = f.prefs.clone();
+                self.start_job(move |b| b.scan_start(dto));
+                return None;
+            }
+        }
+        if close {
+            // Choices are kept even when the scan is not started.
+            f.prefs.ocr = Some(f.ocr);
+            self.scan_prefs = f.prefs;
+            return None;
+        }
+        Some(f)
+    }
 }
