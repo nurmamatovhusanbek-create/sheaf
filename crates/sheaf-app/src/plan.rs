@@ -222,6 +222,8 @@ pub struct ExportSpec {
     pub crop_hide_only: bool,
     /// Draw form fields into their pages (TOOL-MERGE, RISK-FORMS-MERGE).
     pub flatten_forms: bool,
+    /// Leave out pages that are blank (presets: cleanup).
+    pub drop_blank: bool,
 }
 
 impl ExportSpec {
@@ -256,9 +258,19 @@ impl ExportPlan {
         let specs = &self.specs;
         // What the split rule and the name pattern need to know about the pages.
         let (blank, text) = spec.split.needs();
+        let blank = blank || spec.drop_blank;
         let wants_match = spec.name.contains("{match:");
         let mut facts = shared.facts(specs, blank, text, ctl)?;
-        let groups = spec.split.plan(&facts)?;
+        let mut groups = spec.split.plan(&facts)?;
+        if spec.drop_blank {
+            for group in &mut groups {
+                group.retain(|&i| !facts[i].blank);
+            }
+            groups.retain(|g| !g.is_empty());
+            if groups.is_empty() {
+                return Err(AppError::invalid("every page is blank"));
+            }
+        }
         if wants_match && !text {
             // Only the first page of each output is ever looked at.
             let firsts: Vec<usize> = groups.iter().map(|g| g[0]).collect();

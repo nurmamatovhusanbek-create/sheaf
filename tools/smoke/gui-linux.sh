@@ -60,6 +60,25 @@ echo "job bar reads: $bar"
 case "$bar" in *"3 pages"*) ;; *) echo "FAIL expected the job bar to say 3 pages"; exit 1;; esac
 kill "$scan"; wait "$scan" 2>/dev/null || true
 
+echo "== presets: headless run and the dialog"
+mkdir -p "$XDG_CONFIG_HOME/Sheaf/presets"
+printf '{"compress":"Recommended","namePattern":"{source}.demo"}' > "$XDG_CONFIG_HOME/Sheaf/presets/Demo scan.json"
+[ "$("$sheaf" presets)" = "Demo scan" ] || { echo "FAIL the preset is not listed"; exit 1; }
+"$sheaf" preset "Demo scan" "$work/b.pdf" > "$out/preset.txt"
+case "$(cat "$out/preset.txt")" in *"b.demo.pdf") ;; *) echo "FAIL unexpected preset output"; cat "$out/preset.txt"; exit 1;; esac
+[ -f "$work/b.demo.pdf" ] || { echo "FAIL the preset wrote no file"; exit 1; }
+"$sheaf" &
+pre=$!
+sleep 9
+xdotool mousemove 446 25 click 1            # toolbar: Presets
+sleep 3
+import -window root "$out/presets-dialog.png"
+convert "$out/presets-dialog.png" -crop 190x80+296+190 +repage -resize 300% -colorspace Gray -negate "$work/list.png"
+listed="$(tesseract "$work/list.png" stdout --psm 6 2>/dev/null | tr -d '\n')"
+echo "preset list reads: $listed"
+case "$listed" in *Demo*) ;; *) echo "FAIL the dialog does not list the preset"; exit 1;; esac
+kill "$pre"; wait "$pre" 2>/dev/null || true
+
 echo "== action wheel on two PDFs"
 printf '%s\n%s\n' "$work/a.pdf" "$work/b.pdf" > "$work/list.txt"
 "$sheaf" wheel --at 600,400 --files "$work/list.txt" &

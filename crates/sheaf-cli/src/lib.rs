@@ -7,6 +7,8 @@
 //! sheaf open <files...>              the window, files imported
 //! sheaf run <action> <files...> [--out DIR] [--level low|recommended|extreme] [--langs auto|eng+rus]
 //! sheaf <action> <files...> ...      the same, `run` left out (what an Explorer verb writes)
+//! sheaf preset <name> <files...> [--out DIR]   run a saved preset on files, no window
+//! sheaf presets                      list the saved presets, one per line
 //! sheaf tray                         the resident helper: tray icon and the wheel hotkey
 //! sheaf wheel --at X,Y --files LIST  the wheel overlay (started by the helper)
 //! ```
@@ -18,14 +20,32 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Window { files: Vec<PathBuf> },
+    Window {
+        files: Vec<PathBuf>,
+    },
     Run(Run),
+    /// A saved preset on files, no window (FLOW-PRESET).
+    Preset(PresetRun),
+    /// The names of the saved presets.
+    Presets,
     Tray,
-    Wheel { at: (i32, i32), list: PathBuf },
+    Wheel {
+        at: (i32, i32),
+        list: PathBuf,
+    },
 }
 
 /// A headless quick action.
 pub type Run = QuickRequest;
+
+/// A saved preset applied to files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PresetRun {
+    pub name: String,
+    pub files: Vec<PathBuf>,
+    /// Replaces the preset's own output folder.
+    pub out: Option<PathBuf>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsageError(pub String);
@@ -36,7 +56,8 @@ impl std::fmt::Display for UsageError {
     }
 }
 
-pub const USAGE: &str = "usage: sheaf [open FILES... | run ACTION FILES... | ACTION FILES... | tray]\n\
+pub const USAGE: &str =
+    "usage: sheaf [open FILES... | run ACTION FILES... | ACTION FILES... | preset NAME FILES... | presets | tray]\n\
 actions: merge compress ocr split pdf2img img2pdf rotate\n\
 run flags: --out DIR  --level low|recommended|extreme  --langs auto|eng+rus";
 
@@ -60,6 +81,11 @@ pub fn parse(args: &[OsString]) -> Result<Command, UsageError> {
             Some(_) => err("tray takes no arguments"),
         },
         "wheel" => parse_wheel(it.collect()),
+        "presets" => match it.next() {
+            None => Ok(Command::Presets),
+            Some(_) => err("presets takes no arguments"),
+        },
+        "preset" => parse_preset(it.collect()),
         "run" => match it.next().and_then(|w| w.to_str()).and_then(QuickAction::parse) {
             Some(action) => parse_run(action, it.collect()),
             None => err("run needs an action: merge compress ocr split pdf2img img2pdf rotate"),
@@ -108,6 +134,32 @@ fn parse_run(action: QuickAction, rest: Vec<&OsString>) -> Result<Command, Usage
         return err(format!("{} needs at least one file", action.id()));
     }
     Ok(Command::Run(run))
+}
+
+fn parse_preset(rest: Vec<&OsString>) -> Result<Command, UsageError> {
+    let mut it = rest.into_iter();
+    let name = it
+        .next()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty() && !n.starts_with("--"))
+        .ok_or(UsageError("preset needs a preset name".into()))?
+        .to_string();
+    let (mut files, mut out) = (Vec::new(), None);
+    while let Some(arg) = it.next() {
+        match arg.to_str() {
+            Some("--out") => {
+                out = Some(PathBuf::from(
+                    it.next().ok_or(UsageError("--out needs a folder".into()))?,
+                ))
+            }
+            Some(flag) if flag.starts_with("--") => return err(format!("unknown option {flag}")),
+            _ => files.push(PathBuf::from(arg)),
+        }
+    }
+    if files.is_empty() {
+        return err("preset needs at least one file");
+    }
+    Ok(Command::Preset(PresetRun { name, files, out }))
 }
 
 fn parse_wheel(rest: Vec<&OsString>) -> Result<Command, UsageError> {
@@ -181,6 +233,29 @@ mod tests {
         match p(&["ocr", "s.pdf", "--langs", "auto"]) {
             Ok(Command::Run(r)) => assert_eq!(r.langs, None),
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn presets_are_listed_and_run_on_files() {
+        assert_eq!(p(&["presets"]), Ok(Command::Presets));
+        assert_eq!(
+            p(&["preset", "Contract scan", "a.pdf", "b.pdf", "--out", "out"]),
+            Ok(Command::Preset(PresetRun {
+                name: "Contract scan".into(),
+                files: vec!["a.pdf".into(), "b.pdf".into()],
+                out: Some("out".into()),
+            }))
+        );
+        for bad in [
+            &["preset"][..],
+            &["preset", "Name"],
+            &["preset", "--out", "x", "a.pdf"],
+            &["preset", "Name", "a.pdf", "--frobnicate"],
+            &["preset", "Name", "a.pdf", "--out"],
+            &["presets", "extra"],
+        ] {
+            assert!(p(bad).is_err(), "{bad:?}");
         }
     }
 

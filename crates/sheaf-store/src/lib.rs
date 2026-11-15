@@ -1,9 +1,10 @@
 //! MOD-STORE: session dir, cache, settings, path policy, content hashing.
 //!
-//! See `ARCHITECTURE.md`, anchor `mod-store`. Presets I/O arrives with PH-6.
+//! See `ARCHITECTURE.md`, anchor `mod-store`.
 
 pub mod harden;
 pub mod paths;
+pub mod presets;
 pub mod session;
 pub mod settings;
 

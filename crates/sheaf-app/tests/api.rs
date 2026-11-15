@@ -412,7 +412,6 @@ fn jobs_and_tools_reject_bad_input() {
         rig.backend.scan_devices().expect_err("no scanner").code,
         ErrorCode::Unsupported
     );
-    assert_eq!(rig.backend.presets_unavailable().code, ErrorCode::Unsupported);
     assert!(rig.backend.presets_list().is_empty());
 }
 

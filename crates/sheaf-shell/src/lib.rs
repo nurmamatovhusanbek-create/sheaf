@@ -49,6 +49,8 @@ pub fn run() -> ExitCode {
     match command {
         Command::Window { files } => finish(sheaf_ui::run_window(ui_config(files))),
         Command::Run(request) => headless::run(&request),
+        Command::Preset(run) => headless::preset(&run),
+        Command::Presets => headless::presets(),
         Command::Wheel { at, list } => {
             let files = sheaf_ui::take_file_list(&list);
             finish(sheaf_ui::run_wheel(sheaf_ui::WheelConfig {

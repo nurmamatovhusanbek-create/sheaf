@@ -85,7 +85,12 @@ pub fn summary(t: &I18n, job: &JobView) -> String {
                     .filter(|s| *s > 0)
                     .map(|s| format!(" · {}", t.tn("job.skipped", s as i64, &[])))
                     .unwrap_or_default();
-                return format!("{}{skipped}", t.tn("job.files", count as i64, &[]));
+                // Files a preset could not process (the others are kept).
+                let failed = num("failed")
+                    .filter(|n| *n > 0)
+                    .map(|n| format!(" · {}", t.tn("job.failed", n as i64, &[])))
+                    .unwrap_or_default();
+                return format!("{}{skipped}{failed}", t.tn("job.files", count as i64, &[]));
             }
             t.t("job.done")
         }
@@ -147,5 +152,10 @@ mod tests {
         )));
         assert!(summary(&en, &jam).ends_with("2 pages kept"), "{}", summary(&en, &jam));
         assert_eq!(kind_label(&en, "scan"), "Scan");
+        assert_eq!(kind_label(&en, "preset"), "Preset");
+        assert_eq!(
+            summary(&en, &job("preset", "done", json!({"count": 3, "failed": 1}))),
+            "3 files · 1 failed"
+        );
     }
 }

@@ -1,6 +1,6 @@
 # Sheaf
 
-Local, offline PDF and scan toolkit for Windows (Rust + Tauri 2). No network at runtime.
+Local, offline PDF and scan toolkit for Windows (Rust, native UI). No network at runtime.
 
 The design and the phase-by-phase build plan are in [ARCHITECTURE.md](ARCHITECTURE.md);
 start with its reading guide and the rules for whoever writes code.
@@ -16,7 +16,8 @@ Windows** (see `RISK-WIN-SHELL` in the spec).
 
 **Scanning (PH-5)** works end to end against a fake scanner (dialog, live pages in the tray, optional
 recognition while scanning, cancel keeps what was scanned). The Windows backend (WIA 2) is written and
-lints for Windows, but no page has come from a real scanner yet (`RISK-WIA`). Presets (PH-6) are not there yet.
+lints for Windows, but no page has come from a real scanner yet (`RISK-WIA`). **Presets (PH-6)**: saved one-click pipelines (cleanup, OCR, split, naming, compress, output folder) run from
+the Presets dialog or `sheaf preset NAME FILES...`. Explorer verbs and their single-instance aggregation are next.
 
 ## Working on it
 

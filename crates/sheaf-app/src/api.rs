@@ -27,6 +27,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 type Result<T> = sheaf_core::Result<T>;
 
+mod presets;
 mod scan;
 pub use scan::{ScanDeviceDto, ScanProfileDto, MAX_SCAN_PAGES, SCAN_DPIS};
 
@@ -511,6 +512,9 @@ pub struct Backend {
     closing: CancelFlag,
     /// The scanner behind CMD-SCAN-*; `None` where there is none (MOD-SCAN).
     scanner: Mutex<Option<Arc<dyn sheaf_scan::ScanBackend>>>,
+    /// What a preset run starts its own scratch session on, beside the open document's.
+    engines: Engines,
+    base_dir: PathBuf,
 }
 
 /// `/<pageId>/<ver>/<size>`, the path of a `sheaf-thumb://` URL (CMD-THUMB),
@@ -578,6 +582,8 @@ impl Backend {
             verified: (Mutex::new(None), Condvar::new()),
             closing: CancelFlag::default(),
             scanner: Mutex::new(scan::default_scanner()),
+            engines: cfg.engines.clone(),
+            base_dir: cfg.base_dir.clone(),
         });
         match (cfg.verify_vendor, cfg.engines.vendor_dir().map(Path::to_path_buf)) {
             (true, Some(vendor)) => {
@@ -1248,6 +1254,7 @@ impl Backend {
                     protect: dto.protect,
                     crop_hide_only: dto.crop_hide_only,
                     flatten_forms: dto.flatten_forms,
+                    drop_blank: false,
                 };
                 let plan = self.with(|app| app.plan_export(&spec))?;
                 Ok(self.spawn_job(kind, move |ctx| {
@@ -1524,17 +1531,6 @@ impl Backend {
             token,
             name: file_name(&allowed.path),
         })
-    }
-
-    // -- not yet ---------------------------------------------------------
-
-    /// CMD-PRESETS arrives with PH-6; until then the list is empty.
-    pub fn presets_list(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    pub fn presets_unavailable(&self) -> AppError {
-        AppError::new(ErrorCode::Unsupported, "presets arrive with PH-6")
     }
 
     // -- shutdown --------------------------------------------------------

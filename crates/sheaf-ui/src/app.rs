@@ -57,6 +57,8 @@ pub enum Msg {
     Paths(Vec<PathBuf>),
     /// The scanners the system lists (the Scan dialog is waiting for them).
     ScanDevices(Result<Vec<sheaf_app::api::ScanDeviceDto>, ErrorDto>),
+    /// Work for the Presets dialog.
+    Preset(crate::presets_ui::PresetMsg),
 }
 
 struct ChannelEmit {
@@ -83,6 +85,7 @@ pub enum Modal {
     Settings(crate::dialogs::SettingsForm),
     Password(crate::dialogs::PasswordForm),
     Scan(crate::dialogs::ScanForm),
+    Presets(crate::presets_ui::PresetsForm),
 }
 
 #[derive(Default)]
@@ -330,6 +333,7 @@ impl SheafApp {
                 Msg::Done(Ok(())) | Msg::JobStarted(Ok(_)) => {}
                 Msg::OcrResult { page, result } => self.preview.on_ocr_result(page, result),
                 Msg::Search(r) => self.search.on_result(r),
+                Msg::Preset(m) => self.on_preset_msg(m),
                 Msg::ScanDevices(r) => {
                     if let Some(Modal::Scan(f)) = &mut self.modal {
                         f.on_devices(r);
@@ -497,7 +501,6 @@ impl SheafApp {
             t.t("toolbar.settings"),
         );
         let (scan, presets) = (t.t("toolbar.scan"), t.t("toolbar.presets"));
-        let presets_soon = t.t("toolbar.presets_soon");
         let ocr_off = self.settings.ocr_mode == "Off";
         let (can_undo, can_redo) = (self.can_undo, self.can_redo);
         ui.horizontal(|ui| {
@@ -529,8 +532,8 @@ impl SheafApp {
             ui.add_space(4.0);
             ui.separator();
             ui.add_space(4.0);
-            if labeled_button(ui, Icon::Presets, &presets, false, &presets_soon).clicked() {
-                self.toast(presets_soon.clone(), "", false);
+            if labeled_button(ui, Icon::Presets, &presets, false, "").clicked() {
+                self.open_presets();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.add_space(6.0);

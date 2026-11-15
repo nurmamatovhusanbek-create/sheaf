@@ -5,6 +5,7 @@ mod dialogs;
 mod icons;
 mod jobs;
 mod platform;
+mod presets_ui;
 mod preview;
 mod search;
 mod side;

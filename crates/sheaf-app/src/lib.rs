@@ -15,6 +15,7 @@ pub mod api;
 pub mod engines;
 pub mod jobs;
 pub mod plan;
+pub mod preset;
 pub mod quick;
 
 pub use api::Backend;
