@@ -41,6 +41,8 @@ impl Session {
         let base = crate::paths::simplify_verbatim(base);
         let dir = base.join(format!("{PREFIX}{}-{}", std::process::id(), token()));
         create_private_dir(&dir)?;
+        // Before anything is made inside it, so all of it inherits the label a low-integrity worker needs.
+        crate::harden::label_session_low(&dir);
         let lock = File::create(dir.join(LOCK_FILE)).map_err(|e| AppError::io("create session lock", &e))?;
         lock.try_lock()
             .map_err(|_| AppError::new(ErrorCode::Io, "session lock is already held"))?;

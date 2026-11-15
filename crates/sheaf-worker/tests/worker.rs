@@ -12,18 +12,17 @@ struct Worker {
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     next: u64,
-    /// Kept so the session outlives the worker.
     session: PathBuf,
+    /// Kept so the session outlives the worker.
+    _owner: sheaf_store::Session,
 }
 
 impl Worker {
     fn start(base: &Scratch) -> Worker {
-        // A session dir as MOD-STORE makes it: the marker is its lock file.
-        let session = base.path().join("session-test");
-        for sub in ["thumbs", "results"] {
-            std::fs::create_dir_all(session.join(sub)).expect("session dirs");
-        }
-        std::fs::write(session.join(".lock"), b"").expect("lock file");
+        // A session dir exactly as the app makes it (on Windows it is labelled so the worker can run at low
+        // integrity, which every test here then exercises).
+        let owner = sheaf_store::Session::create(base.path()).expect("session dir");
+        let session = owner.dir().to_path_buf();
         let mut child = Command::new(env!("CARGO_BIN_EXE_sheaf-worker"))
             .arg("--session")
             .arg(&session)
@@ -41,6 +40,7 @@ impl Worker {
             stdout,
             next: 0,
             session,
+            _owner: owner,
         }
     }
 
@@ -362,4 +362,20 @@ fn the_worker_refuses_to_start_outside_a_session() {
         .status()
         .expect("runs");
     assert_eq!(status.code(), Some(2));
+}
+
+/// The worker really runs at the lowest integrity level, and still did all the work above (real PDFium).
+#[cfg(windows)]
+#[test]
+fn the_worker_runs_at_low_integrity() {
+    let dir = Scratch::new("worker-low");
+    let mut w = Worker::start(&dir);
+    let pid = w.ok("ping", json!({}))["pid"].as_u64().expect("pid") as u32;
+    assert_eq!(
+        sheaf_store::integrity_level_of(pid),
+        Some(0x1000),
+        "the worker should have lowered itself to low integrity"
+    );
+    // ...and the test itself, which started it, is not low.
+    assert_ne!(sheaf_store::integrity_level_of(std::process::id()), Some(0x1000));
 }

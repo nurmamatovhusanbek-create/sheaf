@@ -54,6 +54,9 @@ fn main() -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
+    // From here the worker can only write inside its session folder (and not at all if that folder carries
+    // no label): the documents it opens are the main way in for an attacker.
+    sheaf_store::lower_worker(&session);
     let mut worker = match Worker::new(
         &session,
         pdfium,
