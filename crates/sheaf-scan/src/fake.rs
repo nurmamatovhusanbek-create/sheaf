@@ -21,6 +21,10 @@ pub struct FakeBackend {
     busy: bool,
     /// Largest side of a generated page in pixels (the resolution is not simulated beyond this).
     max_side: u32,
+    /// What the page in transfer reports, like a driver that fills in its percentage.
+    meter: std::sync::Arc<crate::ScanMeter>,
+    /// A driver that never reports a percentage (some do not).
+    silent: bool,
 }
 
 impl Default for FakeBackend {
@@ -35,6 +39,8 @@ impl Default for FakeBackend {
             jam_after: None,
             busy: false,
             max_side: 900,
+            meter: crate::ScanMeter::new(),
+            silent: false,
         }
     }
 }
@@ -61,6 +67,11 @@ impl FakeBackend {
         self.max_side = px;
         self
     }
+    /// Behave like a driver that never reports how far a page is.
+    pub fn without_progress(mut self) -> FakeBackend {
+        self.silent = true;
+        self
+    }
     pub fn with_busy(mut self, busy: bool) -> FakeBackend {
         self.busy = busy;
         self
@@ -70,8 +81,8 @@ impl FakeBackend {
         self
     }
 
-    /// Wait out the delay in small steps so a cancel is seen quickly.
-    fn wait(&self, cancel: &CancelToken) -> bool {
+    /// Wait out the delay in small steps so a cancel is seen quickly, reporting how far the page is.
+    fn wait(&self, cancel: &CancelToken, page: usize) -> bool {
         let mut left = self.delay;
         while !left.is_zero() {
             if cancel.is_cancelled() {
@@ -80,6 +91,11 @@ impl FakeBackend {
             let step = left.min(Duration::from_millis(10));
             std::thread::sleep(step);
             left -= step;
+            if !self.silent && !self.delay.is_zero() {
+                let done = 1.0 - left.as_secs_f32() / self.delay.as_secs_f32();
+                // Never a full 100 before the page has actually been handed over.
+                self.meter.set(page as u32, (done * 100.0).clamp(0.0, 99.0) as u8);
+            }
         }
         !cancel.is_cancelled()
     }
@@ -128,6 +144,10 @@ impl ScanBackend for FakeBackend {
         Ok(self.devices.iter().take(MAX_DEVICES).cloned().collect())
     }
 
+    fn meter(&self) -> Option<std::sync::Arc<crate::ScanMeter>> {
+        Some(std::sync::Arc::clone(&self.meter))
+    }
+
     fn scan(&self, profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: CancelToken) -> Result<()> {
         profile.validate()?;
         if !self.devices.iter().any(|d| d.id == profile.device_id) {
@@ -143,8 +163,9 @@ impl ScanBackend for FakeBackend {
             }
             ScanSource::Feeder => self.sheets * if profile.duplex { 2 } else { 1 },
         };
+        self.meter.reset();
         for number in 1..=count {
-            if !self.wait(&cancel) {
+            if !self.wait(&cancel, number) {
                 return Err(AppError::new(ErrorCode::Cancelled, "cancelled"));
             }
             if self.jam_after.is_some_and(|n| number > n) {
@@ -152,6 +173,9 @@ impl ScanBackend for FakeBackend {
             }
             let png = sheaf_image::encode_png(&self.page_image(profile, number))?;
             let (data, ext) = normalize(png)?;
+            if !self.silent {
+                self.meter.set(number as u32, 100);
+            }
             if pages.send(ScannedPage { number, data, ext }).is_err() {
                 return Err(AppError::new(ErrorCode::Cancelled, "nobody is listening"));
             }

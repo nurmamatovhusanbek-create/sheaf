@@ -881,3 +881,36 @@ fn the_network_share_setting_is_stored_and_reaches_the_import_path() {
     let (_, ids) = rig.import_pdf("local.pdf", 1);
     assert_eq!(ids.len(), 1);
 }
+
+#[test]
+fn a_rendered_page_says_what_its_filters_did() {
+    let rig = rig();
+    let (_src, ids) = rig.import_pdf("filters.pdf", 2);
+    // No filter asked for: nothing to say.
+    let (_, note) = rig.backend.thumb_noted(ids[0], 900).expect("plain");
+    assert_eq!(note, None);
+
+    let filter = sheaf_core::Filter {
+        deskew: sheaf_core::Deskew::Auto,
+        despeckle: true,
+        ..Default::default()
+    };
+    rig.backend
+        .apply(UiOp::SetFilter {
+            ids: vec![ids[0]],
+            filter,
+        })
+        .expect("filter");
+    let (png, note) = rig.backend.thumb_noted(ids[0], 900).expect("filtered");
+    assert!(png.starts_with(b"\x89PNG"));
+    let note = note.expect("a filter was asked for, so the picture says what it did");
+    // A straight, clean page: it looked, and found nothing to fix. That is an answer, not silence.
+    assert!(note.skew_deg.is_some_and(|d| d.abs() < 0.5), "{note:?}");
+    assert_eq!(note.specks, Some(0), "{note:?}");
+
+    // The note belongs to the picture: asking again (now cached) gives the same one.
+    let (_, again) = rig.backend.thumb_noted(ids[0], 900).expect("cached");
+    assert_eq!(again, Some(note));
+    // The other page was not touched.
+    assert_eq!(rig.backend.thumb_noted(ids[1], 900).expect("other").1, None);
+}

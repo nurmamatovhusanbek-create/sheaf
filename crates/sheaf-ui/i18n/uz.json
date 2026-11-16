@@ -118,7 +118,16 @@
  "filter.Color": "Rangli",
  "filter.Gray": "Kulrang",
  "filter.deskew": "Toʻgʻrilash",
+ "filter.deskew_done": "Matnni tekislash uchun {deg}° burildi.",
+ "filter.deskew_none": "Matn allaqachon tekis, hech narsa burilmadi.",
+ "filter.deskew_tip": "Qiyshaygan matnni tekislash. Oʻlchash uchun bir necha qator matn kerak.",
  "filter.despeckle": "Tozalash",
+ "filter.despeckle_done": [
+  "{n} ta dogʻ olib tashlandi.",
+  "{n} ta dogʻ olib tashlandi."
+ ],
+ "filter.despeckle_none": "Dogʻ topilmadi, hech narsa olib tashlanmadi.",
+ "filter.despeckle_tip": "Chang dogʻlari va skaner shovqinini oʻchirish. Harflar va nuqtalar saqlanadi.",
  "help.files.body": "# Nimalarni ochish mumkin\n\nPDF, JPEG, PNG, TIFF (koʻp sahifali ham), BMP va WebP.\n\n# Parolli PDF\n\nParolli PDF ochilganda parol soʻraydi. Parolsiz faylni ochib boʻlmaydi. Parol notoʻgʻri boʻlsa, qayta urinib koʻrish mumkin.\n\n# Cheklovlar\n\n- Bitta faylga 2 GB va 20 000 sahifagacha.\n- Haddan tashqari katta oʻlchamli sahifalar kompyuterni himoya qilish uchun rad etiladi.\n\n# Shikastlangan fayllar\n\nPDF ochilmasa, «Tuzatish» vositasini sinang: u hali oʻqilishi mumkin boʻlgan narsani yangi faylga yigʻadi.\n\n# Tarmoq papkasidagi fayllar\n\nUlar odatda ochiladi, lekin Windows shu serverga murojaat qiladi. Sheaf toʻliq oflayn qolishi uchun buni sozlamalarda oʻchiring.",
  "help.files.title": "Fayllar, parollar va cheklovlar",
  "help.footer": "Hal boʻlmadimi? «Dastur haqida»ni ochib, «Muammo haqida xabar berish»ni tanlang.",
@@ -178,6 +187,11 @@
  "job.repair": "Tuzatish",
  "job.reveal": "Papkada koʻrsatish",
  "job.scan": "Skanerlash",
+ "job.scan_done": "skanerlandi: {pages}",
+ "job.scan_page": "{page}-sahifa",
+ "job.scan_page_est": "{page}-sahifa: taxminan {percent}%",
+ "job.scan_page_pct": "{page}-sahifa: {percent}%",
+ "job.scan_rate": "sahifasiga {seconds} s",
  "job.skipped": [
   "{n} ta tashlab ketildi",
   "{n} ta tashlab ketildi"
@@ -343,6 +357,7 @@
  "preview.text": "Matn",
  "preview.text_needs_ocr": "Avval bu sahifadagi matnni aniqlang",
  "preview.text_title": "Aniqlangan matnni sahifa ustida koʻrsatish",
+ "preview.updating": "Yangilanmoqda…",
  "preview.zoom_in": "Kattalashtirish",
  "preview.zoom_out": "Kichraytirish",
  "report.intro": "Bu kompyuterdan hech narsa yuborilmaydi. Bu yerda dastur va oxirgi xatolar haqida qisqa matn tayyorlanadi; uni nusxalab yoki saqlab, oʻzingiz yuborasiz. Unda hujjatlaringiz, fayl va papka nomlari hech qachon boʻlmaydi.",

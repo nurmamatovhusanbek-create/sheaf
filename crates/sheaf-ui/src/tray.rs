@@ -155,7 +155,7 @@ impl SheafApp {
         }
         let thumb = Rect::from_min_max(rect.min + vec2(14.0, 8.0), rect.max - vec2(14.0, 30.0));
         match self.picture(page.id, &page.ver, THUMB_PX) {
-            Pic::Ready(id, [w, h]) => {
+            Pic::Ready(id, [w, h]) | Pic::Stale(id, [w, h]) => {
                 let scale = (thumb.width() / w as f32).min(thumb.height() / h as f32);
                 let img = Rect::from_center_size(thumb.center(), vec2(w as f32 * scale, h as f32 * scale));
                 crate::theme::paper_shadow(&painter, img, visuals.dark_mode);

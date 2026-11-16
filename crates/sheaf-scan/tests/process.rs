@@ -154,3 +154,75 @@ fn a_missing_helper_is_a_device_error() {
         ErrorCode::DeviceError
     );
 }
+
+/// Watch a scan's meter from another thread while it runs.
+fn watch(
+    b: &ProcessBackend,
+) -> (
+    std::thread::JoinHandle<Vec<sheaf_scan::Reading>>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let meter = b.meter().expect("the helper backend has a meter");
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&stop);
+    let thread = std::thread::spawn(move || {
+        let mut seen: Vec<sheaf_scan::Reading> = Vec::new();
+        while !flag.load(std::sync::atomic::Ordering::SeqCst) {
+            let r = meter.reading();
+            if seen.last() != Some(&r) {
+                seen.push(r);
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        seen
+    });
+    (thread, stop)
+}
+
+#[test]
+fn how_far_a_page_is_travels_from_the_driver_to_the_app() {
+    // A slow page, so the helper's look every 100 ms catches it part-way.
+    let b = backend("ok").with_env("SHEAF_FAKE_DELAY_MS", "400");
+    let (watcher, stop) = watch(&b);
+    let (tx, rx) = channel();
+    b.scan(&feeder(), tx, CancelToken::new()).expect("scan");
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let seen = watcher.join().expect("watcher");
+    assert_eq!(collect(&rx).len(), 5);
+
+    let percents: Vec<u8> = seen.iter().filter_map(|r| r.percent).collect();
+    assert!(
+        percents.iter().any(|p| (1..100).contains(p)),
+        "a percentage between the ends was seen: {seen:?}"
+    );
+    assert!(seen.iter().any(|r| r.page >= 4), "the page number advanced: {seen:?}");
+    // Within one page the percentage only goes up.
+    for page in 1..=5u32 {
+        let on_page: Vec<u8> = seen
+            .iter()
+            .filter(|r| r.page == page)
+            .filter_map(|r| r.percent)
+            .collect();
+        assert!(
+            on_page.windows(2).all(|w| w[0] <= w[1]),
+            "page {page} went backwards: {on_page:?}"
+        );
+    }
+}
+
+#[test]
+fn a_driver_that_never_reports_leaves_no_percentage_to_show() {
+    let b = backend("ok")
+        .with_env("SHEAF_FAKE_DELAY_MS", "150")
+        .with_env("SHEAF_FAKE_SILENT", "1");
+    let (watcher, stop) = watch(&b);
+    let (tx, rx) = channel();
+    b.scan(&feeder(), tx, CancelToken::new()).expect("scan");
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    let seen = watcher.join().expect("watcher");
+    assert_eq!(collect(&rx).len(), 5);
+    assert!(
+        seen.iter().all(|r| r.percent.is_none()),
+        "no invented percentage: {seen:?}"
+    );
+}

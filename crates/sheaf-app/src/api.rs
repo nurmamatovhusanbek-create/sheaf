@@ -517,6 +517,9 @@ pub struct Backend {
     /// What a preset run starts its own scratch session on, beside the open document's.
     engines: Engines,
     base_dir: PathBuf,
+    /// What the filters did to each rendered picture, by its session path (so a cached picture still
+    /// has its note). `None` for a picture made with no filter asked for.
+    filter_notes: Mutex<BTreeMap<String, Option<sheaf_core::proto::FilterNote>>>,
 }
 
 /// `/<pageId>/<ver>/<size>`, the path of a `sheaf-thumb://` URL (CMD-THUMB),
@@ -586,6 +589,7 @@ impl Backend {
             scanner: Mutex::new(scan::default_scanner()),
             engines: cfg.engines.clone(),
             base_dir: cfg.base_dir.clone(),
+            filter_notes: Mutex::new(BTreeMap::new()),
         });
         match (cfg.verify_vendor, cfg.engines.vendor_dir().map(Path::to_path_buf)) {
             (true, Some(vendor)) => {
@@ -810,6 +814,12 @@ impl Backend {
     /// CMD-THUMB: PNG bytes of a page. Sizes up to [`THUMB_PX`] are thumbnails,
     /// larger ones previews. Renders in a worker unless already cached.
     pub fn thumb(&self, page: u64, size: u32) -> Result<Vec<u8>> {
+        self.thumb_noted(page, size).map(|(png, _)| png)
+    }
+
+    /// [`Backend::thumb`], and what the page's filters did to this picture (straightened by so many
+    /// degrees, so many specks removed), when any was asked for.
+    pub fn thumb_noted(&self, page: u64, size: u32) -> Result<(Vec<u8>, Option<sheaf_core::proto::FilterNote>)> {
         self.ready()?;
         if !RENDER_PX.contains(&size) {
             return Err(AppError::invalid("image size out of range"));
@@ -817,9 +827,19 @@ impl Backend {
         let (spec, rel) = self.with(|app| app.render_job(PageId(page), size))?;
         let path = self.shared.session.resolve(&rel)?;
         if !path.is_file() {
-            self.shared.run(spec, &NoCtl)?;
+            let done = self.shared.run(spec, &NoCtl)?;
+            let note = serde_json::from_value::<sheaf_core::proto::RenderResult>(done)
+                .ok()
+                .and_then(|r| r.filter);
+            let mut notes = lock(&self.filter_notes);
+            if notes.len() > 4000 {
+                notes.clear();
+            }
+            notes.insert(rel.clone(), note);
         }
-        std::fs::read(&path).map_err(|e| AppError::io("read rendered page", &e))
+        let png = std::fs::read(&path).map_err(|e| AppError::io("read rendered page", &e))?;
+        let note = lock(&self.filter_notes).get(&rel).copied().flatten();
+        Ok((png, note))
     }
 
     // -- import ----------------------------------------------------------

@@ -21,6 +21,10 @@ impl ScanBackend for Misbehaving {
         self.0.devices()
     }
 
+    fn meter(&self) -> Option<std::sync::Arc<sheaf_scan::ScanMeter>> {
+        self.0.meter()
+    }
+
     fn scan(&self, profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: CancelToken) -> Result<()> {
         let (tx, rx) = std::sync::mpsc::channel();
         let inner = self.0.clone();
@@ -48,7 +52,17 @@ impl ScanBackend for Misbehaving {
 
 fn main() {
     let mode = std::env::var("SHEAF_FAKE_SCAN").unwrap_or_else(|_| "ok".into());
-    let mut fake = FakeBackend::new().with_sheets(5).with_delay(Duration::from_millis(40));
+    // `SHEAF_FAKE_DELAY_MS` makes a page slow enough to watch; `SHEAF_FAKE_SILENT` is a driver that never reports progress.
+    let delay = std::env::var("SHEAF_FAKE_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(40);
+    let mut fake = FakeBackend::new()
+        .with_sheets(5)
+        .with_delay(Duration::from_millis(delay));
+    if std::env::var_os("SHEAF_FAKE_SILENT").is_some() {
+        fake = fake.without_progress();
+    }
     if mode == "jam" {
         fake = fake.with_jam_after(2);
     }

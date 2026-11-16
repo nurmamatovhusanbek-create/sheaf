@@ -118,7 +118,16 @@
  "filter.Color": "Color",
  "filter.Gray": "Gray",
  "filter.deskew": "Straighten",
+ "filter.deskew_done": "Rotated {deg}° to level the text.",
+ "filter.deskew_none": "The text is already level, so nothing was rotated.",
+ "filter.deskew_tip": "Level crooked text. Needs several lines of text to measure.",
  "filter.despeckle": "Clean",
+ "filter.despeckle_done": [
+  "Removed {n} speck.",
+  "Removed {n} specks."
+ ],
+ "filter.despeckle_none": "No specks found, so nothing was removed.",
+ "filter.despeckle_tip": "Paint out specks of dust and scanner noise. Letters and full stops are kept.",
  "help.files.body": "# What can be opened\n\nPDF, JPEG, PNG, TIFF (also with several pages), BMP and WebP.\n\n# Locked PDFs\n\nA PDF with a password asks for it when you open it. Without the password it cannot be opened. If the password is wrong you can try again.\n\n# Limits\n\n- Up to 2 GB and 20 000 pages per file.\n- Pages of an extreme size are refused, to protect the computer.\n\n# Damaged files\n\nIf a PDF will not open, try the Repair tool: it rebuilds what can still be read into a new file.\n\n# Files on a network share\n\nThey open by default, but Windows then contacts that server. Turn this off in Settings to keep Sheaf fully offline.",
  "help.files.title": "Files, passwords and limits",
  "help.footer": "Still stuck? Open About and choose Report a problem.",
@@ -178,6 +187,11 @@
  "job.repair": "Repair",
  "job.reveal": "Show in folder",
  "job.scan": "Scan",
+ "job.scan_done": "{pages} scanned",
+ "job.scan_page": "Page {page}",
+ "job.scan_page_est": "Page {page}: about {percent}%",
+ "job.scan_page_pct": "Page {page}: {percent}%",
+ "job.scan_rate": "{seconds} s per page",
  "job.skipped": [
   "{n} skipped",
   "{n} skipped"
@@ -343,6 +357,7 @@
  "preview.text": "Text",
  "preview.text_needs_ocr": "Recognize this page first",
  "preview.text_title": "Show recognized text over the page",
+ "preview.updating": "Updating…",
  "preview.zoom_in": "Zoom in",
  "preview.zoom_out": "Zoom out",
  "report.intro": "Nothing is sent from this computer. This builds a short text about the program and its latest errors that you can copy or save and send yourself. It never contains your documents, file names or folder names.",

@@ -331,8 +331,11 @@ fn filters_do_what_they_say() {
     // Despeckle removes dust but keeps the text.
     let mut dusty = page.clone();
     let mut rng = Rng(5);
-    for _ in 0..40 {
-        dusty.put_pixel(1 + rng.next() % 398, 1 + rng.next() % 28, BLACK); // top margin, clear of text
+    let _ = &mut rng;
+    // Dust in the top margin, clear of the text and of each other (dust that touches the next speck is
+    // left alone, as the two dots of a colon must be).
+    for i in 0..20u32 {
+        dusty.put_pixel(10 + i * 19, 3 + (i * 7) % 20, BLACK);
     }
     let clean = apply_filter(
         dusty,
@@ -461,4 +464,269 @@ fn jpeg_passthrough_reports_stored_size_and_turn() {
     );
     assert_eq!(jpeg_passthrough(&dir.join("missing.jpg")), None);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A 300 dpi-sized page with dust a few pixels across on the paper (never on the text), and how many specks.
+fn dusty_page(seed: u64) -> (RgbaImage, RgbaImage, u32) {
+    let page = text_page(2480, 3508, 30, seed);
+    let mut dusty = page.clone();
+    let mut rng = Rng(seed * 31 + 7);
+    let mut specks = 0;
+    let mut taken: Vec<(u32, u32)> = Vec::new();
+    while specks < 200 {
+        let (x, y) = (rng.next() % 2400 + 20, rng.next() % 3400 + 20);
+        let size = 2 + rng.next() % 3; // 2 to 4 pixels across
+                                       // On clear paper (10 pixels all round: nearer than that, a blob belongs to the text beside it),
+                                       // and away from the other specks so each stays one speck.
+        let room = size + 20;
+        let clear = (0..room).all(|d| (0..room).all(|e| page.get_pixel(x + d - 10, y + e - 10)[0] > 200))
+            && taken.iter().all(|&(tx, ty)| tx.abs_diff(x) > 16 || ty.abs_diff(y) > 16);
+        if !clear {
+            continue;
+        }
+        for dy in 0..size {
+            for dx in 0..size {
+                dusty.put_pixel(x + dx, y + dy, BLACK);
+            }
+        }
+        taken.push((x, y));
+        specks += 1;
+    }
+    (page, dusty, specks)
+}
+
+fn ink_count(i: &RgbaImage) -> i64 {
+    i.pixels().filter(|p| p[0] < 128).count() as i64
+}
+
+#[test]
+fn clean_removes_dust_of_real_size_and_leaves_the_text_alone() {
+    let (page, dusty, specks) = dusty_page(9);
+    let (clean, note) = apply_filter_report(
+        dusty.clone(),
+        &Filter {
+            despeckle: true,
+            ..Default::default()
+        },
+    );
+    // Every speck is gone: the ink is what the clean page had, to the pixel.
+    assert_eq!(ink_count(&clean), ink_count(&page), "all dust removed, no text lost");
+    assert_eq!(clean, page, "the page is the same as before the dust, pixel for pixel");
+    // And it says how many, so a person can see that it did something.
+    assert_eq!(note.specks, Some(specks), "reported {:?} for {specks}", note.specks);
+    assert!(ink_count(&dusty) > ink_count(&page), "the test dust is really there");
+}
+
+#[test]
+fn clean_keeps_full_stops_hyphens_and_the_dots_of_i() {
+    // 300 dpi: a letter is 24 pixels tall; a full stop of 10-point type is about 5 across, set close to
+    // its letter; the dot of an "i" floats a few pixels above its stem; a hyphen is about 9 by 2.
+    let mut page = RgbaImage::from_pixel(2480, 3508, WHITE);
+    let fill = |page: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32| {
+        for dy in 0..h {
+            for dx in 0..w {
+                page.put_pixel(x + dx, y + dy, BLACK);
+            }
+        }
+    };
+    // "d." : a stem and its full stop 4 pixels to the right, on the baseline.
+    fill(&mut page, 300, 300, 4, 24);
+    fill(&mut page, 308, 319, 5, 5);
+    // "i" : a stem and its dot 4 pixels above.
+    fill(&mut page, 600, 310, 3, 14);
+    fill(&mut page, 600, 302, 4, 4);
+    // "a-b" : a hyphen between two stems, longer than a speck is wide.
+    fill(&mut page, 900, 300, 4, 24);
+    fill(&mut page, 906, 312, 9, 2);
+    fill(&mut page, 918, 300, 4, 24);
+    // Something big to be the page's text, so the page is not empty.
+    fill(&mut page, 300, 1000, 1700, 40);
+    let (clean, note) = apply_filter_report(
+        page.clone(),
+        &Filter {
+            despeckle: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(clean, page, "nothing that is punctuation was removed");
+    assert_eq!(note.specks, Some(0), "and it says it found no specks");
+}
+
+#[test]
+fn clean_removes_a_blob_that_is_alone_and_keeps_one_of_the_same_size_beside_a_letter() {
+    let mut page = RgbaImage::from_pixel(2480, 3508, WHITE);
+    let fill = |page: &mut RgbaImage, x: u32, y: u32, w: u32, h: u32| {
+        for dy in 0..h {
+            for dx in 0..w {
+                page.put_pixel(x + dx, y + dy, BLACK);
+            }
+        }
+    };
+    fill(&mut page, 300, 1000, 1700, 40); // the text
+    fill(&mut page, 1500, 2000, 5, 5); // alone in the paper: dust
+    fill(&mut page, 300, 1045, 5, 5); // the same blob, 5 pixels under the text: it belongs to it, leave it
+    let (clean, note) = apply_filter_report(
+        page,
+        &Filter {
+            despeckle: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(note.specks, Some(1));
+    assert_eq!(*clean.get_pixel(1502, 2002), WHITE, "the lone blob is gone");
+    assert_eq!(*clean.get_pixel(302, 1047), BLACK, "the one near the text stays");
+}
+
+#[test]
+fn clean_paints_with_the_colour_of_the_paper_not_white() {
+    let cream = image::Rgba([240, 228, 196, 255]);
+    let mut page = RgbaImage::from_pixel(1240, 1754, cream);
+    for y in 500..530 {
+        for x in 200..1000 {
+            page.put_pixel(x, y, BLACK);
+        }
+    }
+    for dy in 0..2 {
+        for dx in 0..2 {
+            page.put_pixel(600 + dx, 900 + dy, BLACK);
+        }
+    }
+    let clean = despeckle(&page);
+    assert_eq!(*clean.get_pixel(600, 900), cream, "the speck became paper");
+    assert_eq!(*clean.get_pixel(601, 901), cream);
+    assert_eq!(*clean.get_pixel(300, 510), BLACK, "the text stayed");
+}
+
+#[test]
+fn clean_leaves_a_page_that_is_mostly_dark_alone() {
+    // A negative (white text on black) has no "paper" to clean.
+    let mut page = RgbaImage::from_pixel(1240, 1754, BLACK);
+    for y in 500..530 {
+        for x in 200..1000 {
+            page.put_pixel(x, y, WHITE);
+        }
+    }
+    let (clean, specks) = despeckle_report(&page);
+    assert_eq!((clean == page, specks), (true, 0));
+}
+
+#[test]
+fn the_filters_report_what_they_did() {
+    let (_, dusty, _) = dusty_page(4);
+    // Straight text and dust: levelled by (almost) nothing, specks removed.
+    let (_, note) = apply_filter_report(
+        dusty.clone(),
+        &Filter {
+            deskew: Deskew::Auto,
+            despeckle: true,
+            ..Default::default()
+        },
+    );
+    assert!(note.skew_deg.is_some_and(|d| d.abs() < 0.2), "{note:?}");
+    assert!(note.specks.is_some_and(|n| n > 100), "{note:?}");
+    // Off means no claim either way.
+    let (_, off) = apply_filter_report(
+        dusty,
+        &Filter {
+            mode: ColorMode::Gray,
+            ..Default::default()
+        },
+    );
+    assert_eq!((off.skew_deg, off.specks), (None, None));
+}
+
+#[test]
+fn a_tilted_page_is_levelled_and_the_report_gives_the_angle() {
+    let straight = text_page(1240, 1754, 30, 3);
+    let tilted = rotate_small(&straight, 2.0);
+    let (level, note) = apply_filter_report(
+        tilted,
+        &Filter {
+            deskew: Deskew::Auto,
+            ..Default::default()
+        },
+    );
+    let found = note.skew_deg.expect("a measurement");
+    assert!((found.abs() - 2.0).abs() < 0.4, "measured {found}, expected about 2");
+    assert!(estimate_skew(&gray(&level)).abs() < 0.4, "the result is level");
+}
+
+#[test]
+fn a_straight_page_with_one_short_word_is_not_tilted() {
+    // The shape of a page with "Page 1" at the top and nothing else: too little to measure a skew from.
+    let mut page = RgbaImage::from_pixel(636, 900, WHITE);
+    for (x0, y0, w, h) in [
+        (40u32, 40u32, 8u32, 14u32),
+        (52, 44, 7, 10),
+        (62, 44, 7, 14),
+        (73, 44, 7, 10),
+        (84, 40, 2, 14),
+    ] {
+        for y in y0..y0 + h {
+            for x in x0..x0 + w {
+                page.put_pixel(x, y, BLACK);
+            }
+        }
+    }
+    assert_eq!(estimate_skew(&gray(&page)), 0.0);
+    // Nor is a page whose only content is a short stack of lines in one corner.
+    let mut corner = RgbaImage::from_pixel(1240, 1754, WHITE);
+    for line in 0..6 {
+        for y in 100 + line * 30..100 + line * 30 + 10 {
+            for x in 100..300 {
+                corner.put_pixel(x, y, BLACK);
+            }
+        }
+    }
+    assert_eq!(estimate_skew(&gray(&corner)), 0.0);
+}
+
+#[test]
+#[ignore = "timing, run by hand in release"]
+fn how_long_do_the_filters_take_on_a_full_a4_scan() {
+    let (_, dusty, _) = dusty_page(3);
+    let tilted = rotate_small(&dusty, 1.5);
+    for (name, f) in [
+        (
+            "straighten",
+            Filter {
+                deskew: Deskew::Auto,
+                ..Default::default()
+            },
+        ),
+        (
+            "clean",
+            Filter {
+                despeckle: true,
+                ..Default::default()
+            },
+        ),
+        (
+            "gray",
+            Filter {
+                mode: ColorMode::Gray,
+                ..Default::default()
+            },
+        ),
+        (
+            "b/w",
+            Filter {
+                mode: ColorMode::BW,
+                ..Default::default()
+            },
+        ),
+        (
+            "all",
+            Filter {
+                deskew: Deskew::Auto,
+                despeckle: true,
+                mode: ColorMode::BW,
+                ..Default::default()
+            },
+        ),
+    ] {
+        let began = std::time::Instant::now();
+        let _ = apply_filter_report(tilted.clone(), &f);
+        eprintln!("{name}: {} ms", began.elapsed().as_millis());
+    }
 }

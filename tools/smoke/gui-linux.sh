@@ -56,7 +56,7 @@ xdotool mousemove 804 596 click 1            # Start scanning
 sleep 8
 import -window root "$out/scan-done.png"
 # Read the job bar back: three sheets from the feeder are "3 pages".
-convert "$out/scan-done.png" -crop 200x30+300+752 +repage -colorspace Gray -threshold 25% -negate -resize 300% "$work/bar.png"
+convert "$out/scan-done.png" -crop 420x30+300+752 +repage -colorspace Gray -threshold 25% -negate -resize 300% "$work/bar.png"
 bar="$(tesseract "$work/bar.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
 echo "job bar reads: $bar"
 case "$bar" in *"3 pages"*) ;; *) echo "FAIL expected the job bar to say 3 pages"; exit 1;; esac

@@ -37,6 +37,7 @@ pub enum Msg {
     Thumb {
         key: crate::textures::TexKey,
         image: Option<egui::ColorImage>,
+        note: Option<sheaf_core::proto::FilterNote>,
     },
     Imported(Result<Vec<ImportReportDto>, ErrorDto>),
     /// A command that has nothing to report but may have failed.
@@ -336,7 +337,7 @@ impl SheafApp {
                         self.refresh();
                     }
                 }
-                Msg::Thumb { key, image } => self.tex.arrived(&self.ctx, key, image),
+                Msg::Thumb { key, image, note } => self.tex.arrived(&self.ctx, key, image, note),
                 Msg::Imported(r) => match r {
                     Ok(_) => {}
                     Err(e) => self.show_error(&e),
@@ -751,12 +752,22 @@ impl SheafApp {
                         pal.faint,
                         format!("{}%", (job.progress * 100.0).floor() as u32),
                     ),
+                    // A scan: how far the page in transfer is (the driver's figure, or "about" from the pace
+                    // of the earlier pages). The bar starts over with each page; the words say which page.
+                    _ if job.kind == "scan" => match crate::jobs::scan_fraction(&job) {
+                        Some((f, estimate)) => (
+                            Track::Fraction(f),
+                            pal.accent,
+                            format!("{}{}%", if estimate { "~" } else { "" }, (f * 100.0).round() as u32),
+                        ),
+                        // Before the first page there is nothing to measure yet.
+                        None => (Track::Moving, pal.accent, String::new()),
+                    },
                     _ if known => (
                         Track::Fraction(job.progress),
                         pal.accent,
                         format!("{}%", (job.progress * 100.0).floor() as u32),
                     ),
-                    // Nobody knows how many pages a feeder holds: keep moving instead of sitting at 0 %.
                     _ => (Track::Moving, pal.accent, String::new()),
                 };
                 track(ui, kind, colour, 150.0);

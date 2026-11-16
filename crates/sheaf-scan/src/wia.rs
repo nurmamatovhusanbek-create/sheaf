@@ -46,6 +46,10 @@ impl ScanBackend for WiaBackend {
         let profile = profile.clone();
         on_sta(move || unsafe { scan_pages(&profile, pages, cancel) })
     }
+
+    fn meter(&self) -> Option<std::sync::Arc<crate::ScanMeter>> {
+        Some(std::sync::Arc::clone(crate::meter::driver()))
+    }
 }
 
 /// Run `f` on a new thread that is a COM single-threaded apartment.
@@ -382,6 +386,11 @@ impl IWiaTransferCallback_Impl for Collector_Impl {
                 map_hresult(params.hrErrorStatus, self.sent.get() > 0).unwrap_or_else(|| device_error("scanner error"));
             return Err(self.fail(e));
         }
+        // How far the page in transfer is; drivers that fill this in make the window's bar real.
+        if params.lMessage as u32 == WIA_TRANSFER_MSG_STATUS {
+            let percent = params.lPercentComplete.clamp(0, 100) as u8;
+            crate::meter::driver().set(self.sent.get() as u32 + 1, percent);
+        }
         if params.lMessage as u32 == WIA_TRANSFER_MSG_END_OF_STREAM {
             if let Err(e) = self.finish_page() {
                 return Err(self.fail(e));
@@ -402,6 +411,7 @@ impl IWiaTransferCallback_Impl for Collector_Impl {
         // too small the stream simply grows again, as it always did.
         // SAFETY: `stream` is a live stream we just made.
         let _ = unsafe { stream.SetSize(self.buffer) };
+        crate::meter::driver().set(self.sent.get() as u32 + 1, 0);
         crate::diag::note(format!("page {} starts", self.sent.get() + 1));
         *self.current.borrow_mut() = Some(stream.clone());
         Ok(stream)
@@ -412,6 +422,7 @@ unsafe fn scan_pages(profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: 
     if cancel.is_cancelled() {
         return Err(AppError::new(ErrorCode::Cancelled, "cancelled"));
     }
+    crate::meter::driver().reset();
     crate::diag::begin(format!(
         "scan: {:?}, {} dpi, {:?}, {:?}{}",
         profile.source,

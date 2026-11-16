@@ -13,7 +13,7 @@
 //! Frames, both directions in bytes: a tag byte, a `u32` little-endian length,
 //! then the payload. Helper to app: `D` a device (`id`, newline, `name`), `P` a
 //! page (`p` or `j`, then the image bytes), `E` a failure (JSON of the error),
-//! `Z` the end of a successful run. App to helper: any byte means "cancel";
+//! `S` how far the page in transfer is (a `u32` page number, a percentage byte), `Z` the end of a successful run. App to helper: any byte means "cancel";
 //! closing the pipe means the app is gone.
 
 use crate::{
@@ -63,6 +63,11 @@ enum Frame {
     Failed(AppError),
     /// A timed note from the helper (SCAN-TIMING).
     Note(String),
+    /// How far the page being transferred is (SCAN-PROGRESS).
+    Progress {
+        page: u32,
+        percent: u8,
+    },
     Done,
     /// The helper broke the protocol; the text says how (no content from the helper).
     Bad(&'static str),
@@ -115,6 +120,13 @@ fn read_frames(mut input: impl Read, tx: Sender<Frame>) {
                 Err(_) => Frame::Bad("an error report was malformed"),
             },
             b'T' => Frame::Note(String::from_utf8_lossy(&payload).into_owned()),
+            b'S' => match payload[..] {
+                [a, b, c, d, percent] => Frame::Progress {
+                    page: u32::from_le_bytes([a, b, c, d]),
+                    percent,
+                },
+                _ => Frame::Bad("a progress report was malformed"),
+            },
             b'Z' => Frame::Done,
             _ => Frame::Bad("an unknown frame arrived"),
         };
@@ -137,6 +149,8 @@ pub struct ProcessBackend {
     env: Vec<(OsString, OsString)>,
     /// Timed notes about the last scan: the helper's, and ours about what reached the app (SCAN-TIMING).
     notes: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// How far the page in transfer is, as the helper last reported it.
+    meter: std::sync::Arc<crate::ScanMeter>,
 }
 
 impl ProcessBackend {
@@ -146,6 +160,7 @@ impl ProcessBackend {
             prefix,
             env: Vec::new(),
             notes: Default::default(),
+            meter: crate::ScanMeter::new(),
         }
     }
 
@@ -213,6 +228,11 @@ impl ProcessBackend {
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(Frame::Done) => finished = true,
                 Ok(Frame::Note(line)) => self.note(line),
+                Ok(Frame::Progress { page, percent }) => {
+                    // Also proof of life: a driver that reports progress is not hung.
+                    last_heard = Instant::now();
+                    self.meter.set(page, percent);
+                }
                 Ok(Frame::Failed(e)) => failure = Some(e),
                 Ok(Frame::Bad(why)) => {
                     failure = Some(crashed(format!("the scanner helper broke the protocol: {why}")));
@@ -351,6 +371,7 @@ impl ScanBackend for ProcessBackend {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
         let began = Instant::now();
+        self.meter.reset();
         self.note("app: scanner helper starting".to_string());
         let mut number = 0usize;
         let result = self.drive(&profile_args(profile), &cancel, SCAN_IDLE, |frame| {
@@ -379,6 +400,10 @@ impl ScanBackend for ProcessBackend {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    fn meter(&self) -> Option<std::sync::Arc<crate::ScanMeter>> {
+        Some(std::sync::Arc::clone(&self.meter))
     }
 }
 
@@ -431,7 +456,27 @@ pub fn run_helper(args: &[OsString], backend: &dyn ScanBackend) -> i32 {
             let (tx, rx) = mpsc::channel::<ScannedPage>();
             let result = std::thread::scope(|scope| {
                 let scanning = scope.spawn(|| backend.scan(&profile, tx, cancel.clone()));
-                for page in rx {
+                // Pages go out as they arrive; between them the driver's progress goes out when it changes.
+                let mut last_sent = (u32::MAX, u8::MAX);
+                loop {
+                    let page = match rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok(page) => Some(page),
+                        Err(RecvTimeoutError::Timeout) => None,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    };
+                    if let Some(meter) = backend.meter() {
+                        let now = meter.raw();
+                        if now != last_sent {
+                            last_sent = now;
+                            let mut payload = now.0.to_le_bytes().to_vec();
+                            payload.push(now.1);
+                            if write_frame(&mut out, b'S', &payload).is_err() {
+                                cancel.cancel(); // the app is gone
+                                break;
+                            }
+                        }
+                    }
+                    let Some(page) = page else { continue };
                     let mut payload = Vec::with_capacity(page.data.len() + 1);
                     payload.push(if page.ext == "jpg" { b'j' } else { b'p' });
                     payload.extend_from_slice(&page.data);
@@ -483,14 +528,16 @@ mod tests {
     fn frames_are_read_and_oversized_ones_refused() {
         let mut wire = Vec::new();
         write_frame(&mut wire, b'D', b"id1\nMy scanner").expect("write");
+        write_frame(&mut wire, b'S', &[7, 0, 0, 0, 42]).expect("write");
         write_frame(&mut wire, b'P', b"pPNGDATA").expect("write");
         write_frame(&mut wire, b'Z', b"").expect("write");
         let (tx, rx) = mpsc::channel();
         read_frames(&wire[..], tx);
         let got: Vec<Frame> = rx.iter().collect();
         assert!(matches!(&got[0], Frame::Device(d) if d.id == "id1" && d.name == "My scanner"));
-        assert!(matches!(&got[1], Frame::Page { ext: "png", data } if data == b"PNGDATA"));
-        assert!(matches!(got[2], Frame::Done));
+        assert!(matches!(got[1], Frame::Progress { page: 7, percent: 42 }));
+        assert!(matches!(&got[2], Frame::Page { ext: "png", data } if data == b"PNGDATA"));
+        assert!(matches!(got[3], Frame::Done));
 
         // A length far beyond the limit is refused before anything is allocated for it.
         let mut lie = vec![b'P'];

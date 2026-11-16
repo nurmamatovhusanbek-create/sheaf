@@ -15,7 +15,10 @@ pub use codec::{
     check_dimensions, decode_bytes, decode_file, decode_page, dimensions, encode_jpeg, encode_png, encode_ppm, is_jpeg,
     jpeg_passthrough, page_count,
 };
-pub use transform::{apply_filter, crop_norm, despeckle, downsample, fit_within, rotate_quarter, rotate_small, white};
+pub use transform::{
+    apply_filter, apply_filter_report, crop_norm, despeckle, despeckle_report, downsample, fit_within, rotate_quarter,
+    rotate_small, white,
+};
 
 pub use image::{DynamicImage, GrayImage, RgbaImage};
 

@@ -17,6 +17,17 @@ pub fn kind_label(t: &I18n, kind: &str) -> String {
 fn scan_summary(t: &I18n, job: &JobView, pages: i64) -> String {
     let count = t.tn("job.pages", pages, &[]);
     let kept = || t.tv("job.pages_kept", &[("pages", &count)]);
+    let d = &job.detail;
+    let num = |k: &str| d.get(k).and_then(|v| v.as_u64());
+    // The time so far (or in all) and the seconds a page takes: what a person needs to judge the speed.
+    let timing = |parts: &mut Vec<String>| {
+        if let Some(ms) = num("elapsedMs") {
+            parts.push(clock(ms));
+        }
+        if let Some(per) = num("perPageMs") {
+            parts.push(t.tv("job.scan_rate", &[("seconds", &format!("{:.1}", per as f64 / 1000.0))]));
+        }
+    };
     match job.state {
         "failed" => {
             let why = t.t(job.error.as_ref().map_or("error.internal", |e| e.key));
@@ -29,12 +40,47 @@ fn scan_summary(t: &I18n, job: &JobView, pages: i64) -> String {
         "cancelled" if pages > 0 => format!("{} · {}", t.t("job.cancelled"), kept()),
         "cancelled" => t.t("job.cancelled"),
         "queued" => t.t("job.queued"),
-        _ => count,
+        "running" => {
+            // Which page, how far it is (the driver's figure, or about), what is done, how long it has taken.
+            let page = num("page").unwrap_or(pages as u64 + 1).to_string();
+            let mut parts = vec![
+                match (num("pagePercent"), d.get("percentKind").and_then(|k| k.as_str())) {
+                    (Some(p), Some("estimate")) => {
+                        t.tv("job.scan_page_est", &[("page", &page), ("percent", &p.to_string())])
+                    }
+                    (Some(p), _) => t.tv("job.scan_page_pct", &[("page", &page), ("percent", &p.to_string())]),
+                    _ => t.tv("job.scan_page", &[("page", &page)]),
+                },
+            ];
+            if pages > 0 {
+                parts.push(t.tv("job.scan_done", &[("pages", &count)]));
+            }
+            timing(&mut parts);
+            parts.join(" · ")
+        }
+        _ => {
+            let mut parts = vec![count];
+            timing(&mut parts);
+            parts.join(" · ")
+        }
     }
 }
 
-/// Does this job report how far it is? A scan does not (nobody knows how many pages a feeder holds),
-/// so it gets a moving bar and a page count rather than a percentage stuck at 0.
+/// `m:ss` for a time in milliseconds.
+pub fn clock(ms: u64) -> String {
+    let s = ms / 1000;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// The fraction of the page in transfer, and whether it is only an estimate, for a running scan.
+pub fn scan_fraction(job: &JobView) -> Option<(f32, bool)> {
+    let p = job.detail.get("pagePercent")?.as_u64()?;
+    let estimate = job.detail.get("percentKind").and_then(|k| k.as_str()) == Some("estimate");
+    Some((p.min(100) as f32 / 100.0, estimate))
+}
+
+/// Does this job report how far it is? A scan reports the page in transfer ([`scan_fraction`]), so it is
+/// handled apart; the others report their own fraction.
 pub fn knows_progress(job: &JobView) -> bool {
     job.kind != "scan" && (job.progress > 0.0 || job.state == "queued")
 }
@@ -160,7 +206,7 @@ mod tests {
 
         // A scan shows the pages kept so far, also when it stopped early.
         let scan = |state: &'static str, pages: u64| job("scan", state, json!({ "pages": pages }));
-        assert_eq!(summary(&en, &scan("running", 1)), "1 page");
+        assert_eq!(summary(&en, &scan("running", 1)), "Page 2 · 1 page scanned");
         assert_eq!(summary(&en, &scan("done", 12)), "12 pages");
         assert_eq!(summary(&en, &scan("cancelled", 3)), "Cancelled · 3 pages kept");
         assert_eq!(summary(&en, &scan("cancelled", 0)), "Cancelled");
@@ -184,5 +230,49 @@ mod tests {
             summary(&en, &job("preset", "done", json!({"count": 3, "failed": 1}))),
             "3 files · 1 failed"
         );
+    }
+
+    #[test]
+    fn a_running_scan_says_which_page_how_far_it_is_and_how_fast_it_goes() {
+        let en = I18n::new("en");
+        let live = |detail: serde_json::Value| job("scan", "running", detail);
+        // The driver reports the page in transfer.
+        let driver = live(
+            json!({"pages": 2, "page": 3, "pagePercent": 42, "percentKind": "driver",
+                                 "elapsedMs": 21_400, "perPageMs": 6_900}),
+        );
+        assert_eq!(
+            summary(&en, &driver),
+            "Page 3: 42% · 2 pages scanned · 0:21 · 6.9 s per page"
+        );
+        assert_eq!(scan_fraction(&driver), Some((0.42, false)));
+        // No figure from the driver: an estimate from the earlier pages, and it says so.
+        let estimate = live(
+            json!({"pages": 2, "page": 3, "pagePercent": 50, "percentKind": "estimate",
+                                   "elapsedMs": 65_000, "perPageMs": 5_000}),
+        );
+        assert_eq!(
+            summary(&en, &estimate),
+            "Page 3: about 50% · 2 pages scanned · 1:05 · 5.0 s per page"
+        );
+        assert_eq!(scan_fraction(&estimate), Some((0.5, true)));
+        // Before the first page: nothing to measure, but the time is already running.
+        let start = live(
+            json!({"pages": 0, "page": 1, "pagePercent": null, "percentKind": "none",
+                                "elapsedMs": 4_000, "perPageMs": null}),
+        );
+        assert_eq!(summary(&en, &start), "Page 1 · 0:04");
+        assert_eq!(scan_fraction(&start), None);
+        // Finished: the pages, the time, the pace.
+        let done = job(
+            "scan",
+            "done",
+            json!({"pages": 3, "elapsedMs": 19_000, "perPageMs": 6_300}),
+        );
+        assert_eq!(summary(&en, &done), "3 pages · 0:19 · 6.3 s per page");
+        assert_eq!(clock(3_599_000), "59:59");
+        // The other languages have the words too.
+        assert!(summary(&I18n::new("ru"), &driver).contains("Страница 3: 42%"));
+        assert!(summary(&I18n::new("uz"), &driver).contains("3-sahifa: 42%"));
     }
 }

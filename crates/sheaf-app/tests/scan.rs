@@ -298,3 +298,79 @@ fn how_fast_does_the_app_take_full_size_pages() {
         );
     }
 }
+
+/// What the job published while it ran: `(pages, page, pagePercent, percentKind)` from each event.
+fn live_figures(rig: &Rig, id: u64) -> Vec<(u64, u64, Option<u64>, String)> {
+    rig.events
+        .0
+        .lock()
+        .expect("events")
+        .iter()
+        .filter_map(|e| match e {
+            Event::Job(v) if v.id == id => {
+                let d = serde_json::to_value(&v.detail).expect("detail");
+                Some((
+                    d["pages"].as_u64()?,
+                    d["page"].as_u64().unwrap_or(0),
+                    d["pagePercent"].as_u64(),
+                    d["percentKind"].as_str().unwrap_or("").to_string(),
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_running_scan_publishes_how_far_the_page_is_and_how_fast_it_goes() {
+    // A slow page and a driver that reports as it goes.
+    let rig = rig(FakeBackend::new().with_sheets(3).with_delay(Duration::from_millis(400)));
+    let id = rig.backend.scan_start(feeder(false)).expect("start");
+    let done = rig.wait(id);
+    assert_eq!(done["state"], "done", "{done}");
+
+    let live = live_figures(&rig, id);
+    assert!(
+        live.iter()
+            .any(|(_, _, p, kind)| kind == "driver" && p.is_some_and(|p| (1..100).contains(&p))),
+        "a percentage between the ends, from the driver: {live:?}"
+    );
+    assert!(
+        live.iter().any(|(pages, page, ..)| *pages == 1 && *page == 2),
+        "page 2 after page 1: {live:?}"
+    );
+    // The finished job keeps the time and the pace.
+    assert_eq!(done["detail"]["pages"], 3);
+    assert!(
+        done["detail"]["elapsedMs"].as_u64().is_some_and(|ms| ms >= 1000),
+        "{done}"
+    );
+    assert!(
+        done["detail"]["perPageMs"].as_u64().is_some_and(|ms| ms >= 300),
+        "{done}"
+    );
+}
+
+#[test]
+fn a_driver_without_progress_gets_an_honest_estimate_after_the_first_page() {
+    let rig = rig(FakeBackend::new()
+        .with_sheets(3)
+        .with_delay(Duration::from_millis(400))
+        .without_progress());
+    let id = rig.backend.scan_start(feeder(false)).expect("start");
+    assert_eq!(rig.wait(id)["state"], "done");
+    let live = live_figures(&rig, id);
+    // Never a percentage the driver did not give: none before a page has set the pace, "estimate" after.
+    assert!(live.iter().all(|(_, _, _, kind)| kind != "driver"), "{live:?}");
+    assert!(
+        live.iter()
+            .filter(|(pages, ..)| *pages == 0)
+            .all(|(_, _, p, _)| p.is_none()),
+        "nothing to estimate from before the first page: {live:?}"
+    );
+    assert!(
+        live.iter()
+            .any(|(pages, _, p, kind)| *pages >= 1 && kind == "estimate" && p.is_some_and(|p| p <= 95)),
+        "an estimate once a page has been timed: {live:?}"
+    );
+}

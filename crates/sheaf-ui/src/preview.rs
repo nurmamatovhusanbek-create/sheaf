@@ -27,6 +27,8 @@ pub struct PreviewState {
     pub doubtful: Option<usize>,
     /// The last picture shown, kept while a sharper one loads so the page never flickers.
     last: Option<(u64, TextureId, [usize; 2])>,
+    /// What the filters did to the picture now shown: the page, its version, and the report.
+    note: Option<(u64, String, Option<sheaf_core::proto::FilterNote>)>,
 }
 
 impl Default for PreviewState {
@@ -40,6 +42,7 @@ impl Default for PreviewState {
             asked_words_for: None,
             doubtful: None,
             last: None,
+            note: None,
         }
     }
 }
@@ -133,9 +136,14 @@ impl SheafApp {
         // Round to steps so a resize does not render a new picture for every pixel.
         let px = ((longest / 256.0).ceil() as u32 * 256).clamp(512, 4096);
         let pic = self.picture(page.id, &page.ver, px);
+        // The new picture is on its way and the old one is still showing: say so, instead of leaving a
+        // person to wonder why a click on a filter seems to have done nothing.
+        let updating = !matches!(pic, Pic::Ready(..) | Pic::Failed);
         let shown = match pic {
             Pic::Ready(id, size) => {
                 self.preview.last = Some((page.id, id, size));
+                let note = self.tex.note(&(page.id, page.ver.clone(), px));
+                self.preview.note = Some((page.id, page.ver.clone(), note));
                 Some((id, size))
             }
             _ => self
@@ -178,6 +186,32 @@ impl SheafApp {
             self.crop_overlay(ui, rect, &page);
         });
         self.page_dock(ui.ctx(), region, &page);
+        if updating {
+            self.updating_cue(ui.ctx(), region);
+        }
+    }
+
+    /// A small "Updating…" at the corner of the desk while the page is being drawn again.
+    fn updating_cue(&self, ctx: &egui::Context, region: Rect) {
+        let p = crate::theme::Palette::of_ctx(ctx);
+        egui::Area::new(egui::Id::unique("page-updating"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(region.right_top() + vec2(-14.0, 12.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(p.surface)
+                    .stroke(Stroke::new(1.0, p.line))
+                    .corner_radius(8)
+                    .inner_margin(egui::Margin::symmetric(8, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(egui::RichText::new(self.t.t("preview.updating")).small().color(p.weak));
+                        });
+                    });
+            });
+        ctx.request_repaint();
     }
 
     /// Nothing is open: the desk itself says what to do. One focal point (a stack of paper and the
@@ -276,6 +310,33 @@ impl SheafApp {
             (ColorMode::BW, t.t("filter.BW")),
         ];
         let (deskew_l, clean_l, text_l) = (t.t("filter.deskew"), t.t("filter.despeckle"), t.t("preview.text"));
+        // What each filter did to the picture on the desk now (only when it is the picture of this
+        // version of the page): a figure on the chip, and the sentence in its tooltip.
+        let note = self
+            .preview
+            .note
+            .as_ref()
+            .filter(|(id, ver, _)| *id == page.id && *ver == page.ver)
+            .and_then(|(_, _, n)| *n);
+        let (mut deskew_label, mut deskew_tip) = (deskew_l.clone(), t.t("filter.deskew_tip"));
+        if let (true, Some(deg)) = (f.deskew != Deskew::Off, note.and_then(|n| n.skew_deg)) {
+            let shown = format!("{:.1}", deg.abs());
+            deskew_label = format!("{deskew_l}  {shown}°");
+            deskew_tip = if deg.abs() < 0.05 {
+                t.t("filter.deskew_none")
+            } else {
+                t.tv("filter.deskew_done", &[("deg", &shown)])
+            };
+        }
+        let (mut clean_label, mut clean_tip) = (clean_l.clone(), t.t("filter.despeckle_tip"));
+        if let (true, Some(n)) = (f.despeckle, note.and_then(|n| n.specks)) {
+            clean_label = format!("{clean_l}  {n}");
+            clean_tip = if n == 0 {
+                t.t("filter.despeckle_none")
+            } else {
+                t.tn("filter.despeckle_done", i64::from(n), &[])
+            };
+        }
         let crop_label = if page.crop.is_some() && self.preview.crop.is_none() {
             t.t("preview.crop_reset")
         } else {
@@ -309,7 +370,10 @@ impl SheafApp {
                             ui.add_space(4.0);
                             ui.separator();
                             ui.add_space(4.0);
-                            if crate::icons::chip(ui, &deskew_l, f.deskew != Deskew::Off).clicked() {
+                            if crate::icons::chip(ui, &deskew_label, f.deskew != Deskew::Off)
+                                .on_hover_text(&deskew_tip)
+                                .clicked()
+                            {
                                 self.set_filter(sheaf_core::Filter {
                                     deskew: if f.deskew == Deskew::Off {
                                         Deskew::Auto
@@ -319,7 +383,10 @@ impl SheafApp {
                                     ..f
                                 });
                             }
-                            if crate::icons::chip(ui, &clean_l, f.despeckle).clicked() {
+                            if crate::icons::chip(ui, &clean_label, f.despeckle)
+                                .on_hover_text(&clean_tip)
+                                .clicked()
+                            {
                                 self.set_filter(sheaf_core::Filter {
                                     despeckle: !f.despeckle,
                                     ..f

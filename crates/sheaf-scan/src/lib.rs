@@ -10,6 +10,7 @@
 
 mod diag;
 mod fake;
+mod meter;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod pipeline;
 mod proc;
@@ -17,6 +18,7 @@ mod proc;
 mod wia;
 
 pub use fake::FakeBackend;
+pub use meter::{Reading, ScanMeter};
 pub use proc::{run_helper, ProcessBackend, HELPER_FLAG};
 #[cfg(windows)]
 pub use wia::WiaBackend;
@@ -166,6 +168,12 @@ pub trait ScanBackend: Send + Sync {
     /// Timed notes about the last scan (SCAN-TIMING): sizes and times only, never content.
     fn diagnostics(&self) -> Vec<String> {
         Vec::new()
+    }
+
+    /// How far the page being transferred is, as the driver reports it (SCAN-PROGRESS). `None` for a
+    /// backend that cannot say; the scan then shows page counts and times only.
+    fn meter(&self) -> Option<Arc<ScanMeter>> {
+        None
     }
 }
 

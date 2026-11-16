@@ -173,11 +173,27 @@ pub struct RenderArgs {
     pub out: String,
 }
 
+/// What the page's filters did to this picture, so the window can say so instead of leaving a person
+/// to squint at a result that may be unchanged because there was nothing to change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct FilterNote {
+    /// Degrees the page was rotated to level the text; `Some(0.0)` when it checked and it was level.
+    /// `None` when straightening is off.
+    #[serde(default)]
+    pub skew_deg: Option<f32>,
+    /// Specks painted out; `Some(0)` when it looked and found none. `None` when cleaning is off.
+    #[serde(default)]
+    pub specks: Option<u32>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderResult {
     pub out: String,
     pub width: u32,
     pub height: u32,
+    /// What the filters did, for the picture just made.
+    #[serde(default)]
+    pub filter: Option<FilterNote>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

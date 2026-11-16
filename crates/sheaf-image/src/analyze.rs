@@ -114,6 +114,10 @@ fn to_gray(img: &RgbaImage) -> GrayImage {
 /// little ink to tell.
 pub fn estimate_skew(gray: &GrayImage) -> f32 {
     const MAX_SKEW: f32 = 10.0;
+    /// How much sharper the row histogram must get at the chosen angle than at none.
+    const MIN_SHARPENING: f64 = 1.05;
+    /// The least width of ink, as a fraction of the page, that a skew can be read from.
+    const MIN_SPAN: f32 = 0.3;
     let small = shrink(gray, 800);
     let (w, h) = small.dimensions();
     let t = otsu_threshold(&small);
@@ -124,6 +128,14 @@ pub fn estimate_skew(gray: &GrayImage) -> f32 {
         .collect();
     // No contrast (Otsu splits noise) or almost no ink: nothing to measure.
     if ink.len() < 50 || ink.len() * 2 > (w * h) as usize {
+        return 0.0;
+    }
+    // A skew shows only across a long run of text: over a 60-pixel word a degree moves the line by one
+    // pixel, which is noise. The ink must span a good part of the page's width.
+    let (left, right) = ink
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(l, r), &(x, _)| (l.min(x), r.max(x)));
+    if right - left < w as f32 * MIN_SPAN {
         return 0.0;
     }
     // Sharpness of the row histogram once the page is counter-rotated by `deg`.
@@ -159,10 +171,15 @@ pub fn estimate_skew(gray: &GrayImage) -> f32 {
     let coarse = search(0.0, MAX_SKEW, 0.5);
     let fine = search(coarse, 0.5, 0.05);
     if fine.abs() < 0.05 {
-        0.0
-    } else {
-        fine
+        return 0.0;
     }
+    // Evidence, not a best guess among noise: turning the page must make its text lines clearly
+    // sharper than leaving it. A page with one short line of text (or a photo) has almost nothing to
+    // measure, and without this it "finds" a skew of a degree in a page that is perfectly straight.
+    if score(fine) < score(0.0) * MIN_SHARPENING {
+        return 0.0;
+    }
+    fine
 }
 
 /// Fraction of the page covered by ink, ignoring a 3% margin (scanner edge

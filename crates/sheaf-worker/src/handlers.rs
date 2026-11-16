@@ -2,9 +2,9 @@ use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use sheaf_core::consts::{MAX_PAGE_PIXELS, MAX_PAGE_SIDE, RASTER_DPI};
 use sheaf_core::proto::{
-    ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, ImageFormat,
-    MetadataArgs, MetadataResult, OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs,
-    ProbeResult, RenderArgs, RenderResult, RepairArgs, RepairResult, Request, SourceRef,
+    ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, FilterNote,
+    ImageFormat, MetadataArgs, MetadataResult, OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult,
+    ProbeArgs, ProbeResult, RenderArgs, RenderResult, RepairArgs, RepairResult, Request, SourceRef,
 };
 use sheaf_core::{AppError, ErrorCode, Result, Rot, SourceKind};
 use sheaf_image::RgbaImage;
@@ -108,6 +108,16 @@ fn pixels(
     page: &PageSpec,
     box_px: (u32, u32),
 ) -> Result<(RgbaImage, u32)> {
+    pixels_noted(engine, source, page, box_px).map(|(img, dpi, _)| (img, dpi))
+}
+
+/// [`pixels`], and what the page's filters did to them.
+fn pixels_noted(
+    engine: Option<&Engine>,
+    source: &SourceRef,
+    page: &PageSpec,
+    box_px: (u32, u32),
+) -> Result<(RgbaImage, u32, FilterNote)> {
     let opened = Opened::of(source)?;
     let (img, dpi) = match source.kind {
         SourceKind::Pdf => {
@@ -129,7 +139,8 @@ fn pixels(
         _ => img,
     };
     page.filter.validate()?;
-    Ok((sheaf_image::apply_filter(img, &page.filter), dpi))
+    let (img, note) = sheaf_image::apply_filter_report(img, &page.filter);
+    Ok((img, dpi, note))
 }
 
 /// True when the page can be imported from its PDF as is (PERF-LOSSLESS).
@@ -143,11 +154,21 @@ fn is_untouched_pdf(source: &SourceRef, page: &PageSpec) -> bool {
 
 /// The page as the user sees it: pixels, then `rot`.
 fn displayed(engine: Option<&Engine>, page: &PageSpec, box_px: (u32, u32)) -> Result<RgbaImage> {
+    displayed_noted(engine, page, box_px).map(|(img, _)| img)
+}
+
+/// [`displayed`], and what the page's filters did.
+fn displayed_noted(engine: Option<&Engine>, page: &PageSpec, box_px: (u32, u32)) -> Result<(RgbaImage, FilterNote)> {
+    let mut note = FilterNote::default();
     let turned = matches!(page.rot, Rot::R90 | Rot::R270);
     // Fit is judged after rotation, so the pre-rotation box is swapped.
     let pre = if turned { (box_px.1, box_px.0) } else { box_px };
     let img = match &page.source {
-        Some(source) => pixels(engine, source, page, pre)?.0,
+        Some(source) => {
+            let (img, _, n) = pixels_noted(engine, source, page, pre)?;
+            note = n;
+            img
+        }
         None => {
             let (w_pt, h_pt) = blank_size(page)?;
             // Same pixel budget as a rendered PDF page (SEC-LIMITS): a blank page's size comes
@@ -162,7 +183,7 @@ fn displayed(engine: Option<&Engine>, page: &PageSpec, box_px: (u32, u32)) -> Re
             sheaf_image::white(w, h)
         }
     };
-    Ok(sheaf_image::rotate_quarter(img, page.rot))
+    Ok((sheaf_image::rotate_quarter(img, page.rot), note))
 }
 
 fn needs_pdfium(page: &PageSpec) -> bool {
@@ -312,12 +333,15 @@ impl Worker {
             args.max_px.1.clamp(1, MAX_PAGE_SIDE),
         );
         let engine = self.engine_for(&args.page)?;
-        let img = sheaf_image::fit_within(displayed(engine, &args.page, max)?, max.0, max.1);
+        let (shown, note) = displayed_noted(engine, &args.page, max)?;
+        let img = sheaf_image::fit_within(shown, max.0, max.1);
         sheaf_store::write_atomic(&out, &sheaf_image::encode_png(&img)?)?;
         Ok(RenderResult {
             out: args.out.clone(),
             width: img.width(),
             height: img.height(),
+            // Said only when a filter was asked for: nothing to report otherwise.
+            filter: (note.skew_deg.is_some() || note.specks.is_some()).then_some(note),
         })
     }
 
