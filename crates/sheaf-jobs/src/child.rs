@@ -1,6 +1,5 @@
 //! One worker process and its pipes.
 
-use crate::contain::{self, Containment};
 use crate::PoolConfig;
 use sheaf_core::{AppError, ErrorCode, Result};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -12,6 +11,11 @@ use std::time::Duration;
 /// files, so its output is not trusted either (SEC-TB2).
 const MAX_LINE: u64 = 1 << 20;
 
+/// Per-process memory the operating system itself refuses to exceed: twice the
+/// default worker limit, a backstop under the polling check (SEC-LIMITS).
+#[cfg(windows)]
+const HARD_CAP_MB: u64 = 2 * sheaf_core::consts::DEFAULT_WORKER_RSS_MB;
+
 pub(crate) enum Line {
     Text(String),
     Nothing,
@@ -20,39 +24,31 @@ pub(crate) enum Line {
 }
 
 pub(crate) struct WorkerProc {
+    // Declared before `child` so the job (and everything in it) goes first on drop.
+    #[cfg(windows)]
+    _job: Option<crate::winjob::Contained>,
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
-    /// Holds the worker's whole process tree (SEC-ISOLATE).
-    contained: Containment,
 }
 
 impl WorkerProc {
     pub(crate) fn spawn(cfg: &PoolConfig) -> Result<WorkerProc> {
         // Argument array, never a shell string. Only the three stdio handles
         // are inherited by the child.
-        let mut cmd = Command::new(&cfg.program);
-        cmd.args(&cfg.args)
+        let mut child = Command::new(&cfg.program)
+            .args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        contain::prepare(&mut cmd);
-        let mut child = cmd
+            .stderr(Stdio::null())
             .spawn()
             .map_err(|_| AppError::new(ErrorCode::EngineMissing, "worker process could not be started"))?;
-        // Contain it before it is sent anything to parse.
-        let contained = match Containment::attach(&child) {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(e);
-            }
-        };
+        // SEC-ISOLATE: contain the worker (and tesseract below it) before it reads a byte of a document.
+        #[cfg(windows)]
+        let job = crate::winjob::contain(&child, HARD_CAP_MB);
         let (stdin, stdout) = match (child.stdin.take(), child.stdout.take()) {
             (Some(i), Some(o)) => (i, o),
             _ => {
-                contained.kill_tree();
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(AppError::internal("worker pipes missing"));
@@ -77,10 +73,11 @@ impl WorkerProc {
             }
         });
         Ok(WorkerProc {
+            #[cfg(windows)]
+            _job: job,
             child,
             stdin,
             lines,
-            contained,
         })
     }
 
@@ -100,14 +97,31 @@ impl WorkerProc {
 
     /// Resident memory in MiB, where the platform lets us read it.
     pub(crate) fn rss_mb(&self) -> Option<u64> {
-        self.contained.rss_mb(&self.child)
+        #[cfg(target_os = "linux")]
+        {
+            let status = std::fs::read_to_string(format!("/proc/{}/status", self.child.id())).ok()?;
+            let kb: u64 = status
+                .lines()
+                .find_map(|l| l.strip_prefix("VmRSS:"))?
+                .split_whitespace()
+                .next()?
+                .parse()
+                .ok()?;
+            Some(kb / 1024)
+        }
+        #[cfg(windows)]
+        {
+            crate::winjob::working_set_mb(&self.child)
+        }
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            None
+        }
     }
 }
 
 impl Drop for WorkerProc {
     fn drop(&mut self) {
-        // The tree first, while the worker's pid is still ours (not yet reaped).
-        self.contained.kill_tree();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

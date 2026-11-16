@@ -6,6 +6,14 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # The D-Bus stack that accessibility support (AccessKit) uses on Linux. The accesskit feature is
+    # enabled for Windows only (crates/sheaf-ui/Cargo.toml), so none of these is compiled into the
+    # product or into a Linux build; they appear only because the lock file lists every platform.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: D-Bus on Linux only, not built (Windows-only product)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: D-Bus on Linux only, not built (Windows-only product)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: D-Bus on Linux only, not built (Windows-only product)" },
+]
 
 [licenses]
 # Extend deliberately, one license at a time, as dependencies arrive.
@@ -16,6 +24,10 @@ allow = [
     "Unicode-3.0",
     "ISC",      # libloading (via pdfium-render)
     "MPL-2.0",  # imbl: file-level copyleft, used unmodified
+    "OFL-1.1",  # fonts embedded by the egui toolkit (and the bundled Noto Sans); embedding is allowed
+    "Ubuntu-font-1.0", # the Ubuntu font embedded by the egui toolkit; embedding is allowed
+    "Zlib",     # foldhash (via tauri-utils' HTML handling); permissive
+    "Apache-2.0 WITH LLVM-exception", # target-lexicon (via tauri-build's cfg handling); Apache-2.0 plus a linking exception
 ]
 
 [licenses.private]
@@ -23,6 +35,15 @@ ignore = true # the workspace's own unpublished crates
 
 [bans]
 multiple-versions = "warn"
+# SEC-NONET: no code that can speak over a network is compiled into the app. Any of these
+# showing up in the dependency tree fails CI; adding a network feature is a spec decision first.
+deny = [
+    { crate = "reqwest" }, { crate = "hyper" }, { crate = "ureq" }, { crate = "isahc" }, { crate = "attohttpc" },
+    { crate = "curl" }, { crate = "curl-sys" }, { crate = "h2" }, { crate = "tungstenite" }, { crate = "tokio-tungstenite" },
+    { crate = "openssl" }, { crate = "openssl-sys" }, { crate = "native-tls" }, { crate = "rustls" }, { crate = "tiny_http" },
+    { crate = "axum" }, { crate = "warp" }, { crate = "actix-web" }, { crate = "rouille" }, { crate = "quinn" },
+    { crate = "tokio" }, { crate = "async-std" },
+]
 wildcards = "deny"
 allow-wildcard-paths = true
 

@@ -1,0 +1,47 @@
+[package]
+name = "sheaf-shell"
+description = "MOD-SHELL: the sheaf executable: window, headless actions, tray helper, action wheel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[lib]
+name = "sheaf_shell"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sheaf"
+path = "src/main.rs"
+
+[[bin]]
+name = "sheafc"
+path = "src/bin/sheafc.rs"
+
+[dependencies]
+sheaf-app = { path = "../sheaf-app" }
+sheaf-cli = { path = "../sheaf-cli" }
+sheaf-core = { path = "../sheaf-core" }
+sheaf-store = { path = "../sheaf-store" }
+sheaf-ui = { path = "../sheaf-ui" }
+
+# The tray helper and the Explorer/desktop selection are Windows-only (NG-XPLAT).
+[target.'cfg(windows)'.dependencies]
+tray-icon = { version = "0.25", default-features = false }
+global-hotkey = "0.10"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_Security",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+] }

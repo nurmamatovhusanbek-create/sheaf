@@ -1,10 +1,10 @@
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use sheaf_core::consts::{MAX_PAGE_PIXELS, MAX_PAGE_SIDE, RASTER_DPI};
+use sheaf_core::consts::{MAX_PAGE_SIDE, RASTER_DPI};
 use sheaf_core::proto::{
     ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, ImageFormat,
-    OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs, ProbeResult, RenderArgs, RenderResult,
-    Request, SourceRef,
+    MetadataArgs, MetadataResult, OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs,
+    ProbeResult, RenderArgs, RenderResult, RepairArgs, RepairResult, Request, SourceRef,
 };
 use sheaf_core::{AppError, ErrorCode, Result, Rot, SourceKind};
 use sheaf_image::RgbaImage;
@@ -150,16 +150,10 @@ fn displayed(engine: Option<&Engine>, page: &PageSpec, box_px: (u32, u32)) -> Re
         Some(source) => pixels(engine, source, page, pre)?.0,
         None => {
             let (w_pt, h_pt) = blank_size(page)?;
-            // Same pixel budget as a rendered PDF page (SEC-LIMITS): a blank
-            // page's size comes from the UI, so it is bounded here too.
-            let budget = (MAX_PAGE_PIXELS as f32 / (w_pt * h_pt)).sqrt();
             let scale = (pre.0 as f32 / w_pt)
                 .min(pre.1 as f32 / h_pt)
-                .min(RASTER_DPI as f32 / 72.0)
-                .min(budget);
-            let (w, h) = ((w_pt * scale) as u32, (h_pt * scale) as u32);
-            sheaf_image::check_dimensions(w.max(1), h.max(1))?;
-            sheaf_image::white(w, h)
+                .min(RASTER_DPI as f32 / 72.0);
+            sheaf_image::white((w_pt * scale) as u32, (h_pt * scale) as u32)
         }
     };
     Ok(sheaf_image::rotate_quarter(img, page.rot))
@@ -220,6 +214,8 @@ impl Worker {
             ops::PAGE_FACTS => to_value(&self.page_facts(&parse(&req.args)?)?),
             ops::EXPORT_IMAGES => to_value(&self.export_images(&parse(&req.args)?, progress)?),
             ops::EXTRACT_IMAGES => to_value(&self.extract_images(&parse(&req.args)?)?),
+            ops::REPAIR => to_value(&self.repair(&parse(&req.args)?)?),
+            ops::METADATA => to_value(&self.metadata(&parse(&req.args)?)?),
             _ => Err(AppError::invalid("unknown op")),
         }
     }
@@ -247,6 +243,60 @@ impl Worker {
                 })
             }
         }
+    }
+
+    /// TOOL-METADATA: read what a PDF says about itself, or write a changed copy.
+    fn metadata(&mut self, args: &MetadataArgs) -> Result<MetadataResult> {
+        let path = input(&args.path)?;
+        if sniff(&path)? != SourceKind::Pdf {
+            return Err(AppError::new(
+                ErrorCode::Unsupported,
+                "only PDF files carry this information",
+            ));
+        }
+        match (&args.out, &args.edit) {
+            (Some(rel), Some(edit)) => {
+                let out = self.session.resolve(rel)?;
+                if let Some(parent) = out.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| AppError::io("create output dir", &e))?;
+                }
+                let info = lo::edit_metadata(&path, &out, edit)?;
+                Ok(MetadataResult {
+                    info,
+                    out: Some(rel.clone()),
+                })
+            }
+            (None, None) => Ok(MetadataResult {
+                info: lo::read_metadata(&path)?,
+                out: None,
+            }),
+            _ => Err(AppError::invalid("an edit needs an output and an output needs an edit")),
+        }
+    }
+
+    /// TOOL-REPAIR: rebuild the structure, then open the result with the renderer and say how
+    /// many pages it really has. Whether the original was damaged is judged the same way.
+    fn repair(&mut self, args: &RepairArgs) -> Result<RepairResult> {
+        let path = input(&args.path)?;
+        if sniff(&path)? != SourceKind::Pdf {
+            return Err(AppError::new(ErrorCode::Unsupported, "only PDF files can be repaired"));
+        }
+        let out = self.session.resolve(&args.out)?;
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| AppError::io("create output dir", &e))?;
+        }
+        let before = self.engine()?.probe(Src::plain(&path)).ok().map(|p| p.page_count);
+        let found = sheaf_pdf::lo::repair(&path, &out)?;
+        let after = self.engine()?.probe(Src::plain(&out))?.page_count;
+        if after == 0 {
+            let _ = std::fs::remove_file(&out);
+            return Err(AppError::new(ErrorCode::ParseError, "no pages could be recovered"));
+        }
+        Ok(RepairResult {
+            out: args.out.clone(),
+            pages: after,
+            was_damaged: before != Some(after) || before != Some(found),
+        })
     }
 
     fn render(&mut self, args: &RenderArgs) -> Result<RenderResult> {

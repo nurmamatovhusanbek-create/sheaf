@@ -4,7 +4,7 @@
 //! session dir; inputs are absolute paths the main process has already passed
 //! through the path policy (SEC-PATHS).
 
-use crate::error::{AppError, ErrorCode};
+use crate::error::{AppError, ErrorCode, Result};
 use crate::model::{Filter, NormRect, Rot, SourceKind};
 use crate::tools::{CompressLevel, ImageFit, Password, Protect, Stamp};
 use serde::{Deserialize, Serialize};
@@ -92,6 +92,8 @@ pub mod ops {
     pub const PAGE_FACTS: &str = "page_facts";
     pub const EXPORT_IMAGES: &str = "export_images";
     pub const EXTRACT_IMAGES: &str = "extract_images";
+    pub const REPAIR: &str = "repair";
+    pub const METADATA: &str = "metadata";
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -309,6 +311,100 @@ pub struct ExtractImagesArgs {
     pub source: SourceRef,
     pub index: u32,
     pub out_dir: String,
+}
+
+/// The document information fields people look at (TOOL-METADATA), as plain text.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MetaFields {
+    pub title: String,
+    pub author: String,
+    pub subject: String,
+    pub keywords: String,
+    pub creator: String,
+    pub producer: String,
+}
+
+/// Longest value of one field, in characters.
+pub const MAX_META_CHARS: usize = 1_000;
+
+impl MetaFields {
+    /// SEC-IPC: these come from a form (or a command line) and end up inside a file.
+    pub fn validate(&self) -> Result<()> {
+        for (what, v) in [
+            ("title", &self.title),
+            ("author", &self.author),
+            ("subject", &self.subject),
+            ("keywords", &self.keywords),
+            ("creator", &self.creator),
+            ("producer", &self.producer),
+        ] {
+            if v.chars().count() > MAX_META_CHARS || v.chars().any(char::is_control) {
+                return Err(AppError::invalid(format!(
+                    "the {what} is too long or has control characters"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What a file says about itself.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct MetadataInfo {
+    pub fields: MetaFields,
+    /// The creation and modification dates exactly as the file spells them (`D:20260101120000Z`).
+    pub created: String,
+    pub modified: String,
+    /// The file carries an XMP packet (a second copy of the same facts, and more).
+    pub has_xmp: bool,
+    pub pages: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetaEdit {
+    /// Remove the information fields and the XMP packet.
+    Strip,
+    /// Write these fields to both places; an empty field is left out.
+    Set(MetaFields),
+}
+
+/// `metadata` (TOOL-METADATA): read a PDF's information, or write a changed copy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MetadataArgs {
+    /// Absolute, already validated by the main process.
+    pub path: String,
+    /// With `edit`: the session-relative file to write.
+    #[serde(default)]
+    pub out: Option<String>,
+    #[serde(default)]
+    pub edit: Option<MetaEdit>,
+}
+
+/// What the file says: the input when nothing was written, the new file when something was
+/// (read back from it, so it is what is really in the file).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MetadataResult {
+    pub info: MetadataInfo,
+    pub out: Option<String>,
+}
+
+/// `repair` (TOOL-REPAIR): rebuild a damaged PDF's structure into a new file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepairArgs {
+    /// Absolute, already validated by the main process.
+    pub path: String,
+    /// Session-relative output.
+    pub out: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RepairResult {
+    pub out: String,
+    /// Pages the repaired file has when opened again by the renderer: the honest count.
+    pub pages: u32,
+    /// The original did not open cleanly (or opened with a different number of pages).
+    pub was_damaged: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

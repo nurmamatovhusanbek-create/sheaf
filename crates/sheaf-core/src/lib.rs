@@ -8,7 +8,9 @@ pub mod job;
 pub mod model;
 pub mod ocr;
 pub mod op;
+pub mod preset;
 pub mod proto;
+pub mod quick;
 pub mod tools;
 pub mod workspace;
 
@@ -21,5 +23,7 @@ pub use model::{
 };
 pub use ocr::{OcrResult, Script, Word};
 pub use op::{NewPage, Op};
+pub use preset::{Preset, PresetCleanup, PresetOcr, PresetScan, PresetSplit};
+pub use quick::{classify, FileKind, QuickAction, QuickRequest};
 pub use tools::{Anchor, CompressLevel, ImageFit, NameContext, PageFacts, Password, Protect, SplitRule, Stamp};
 pub use workspace::Workspace;

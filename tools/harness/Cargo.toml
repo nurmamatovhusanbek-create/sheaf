@@ -1,6 +1,6 @@
 [package]
 name = "harness"
-description = "Headless harness for PH-1: import, page ops, thumbnails, export and the perf bench, without the Tauri shell"
+description = "Headless harness: import, page ops, thumbnails, export, OCR and the perf bench, without the Tauri shell"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,7 @@ name = "sheaf-harness"
 path = "src/main.rs"
 
 [dependencies]
+sheaf-app = { path = "../../crates/sheaf-app" }
 sheaf-core = { path = "../../crates/sheaf-core" }
 sheaf-store = { path = "../../crates/sheaf-store" }
 sheaf-jobs = { path = "../../crates/sheaf-jobs" }

@@ -5,13 +5,13 @@
 //! is killed and replaced; the job fails and the app carries on (FLOW-ERROR).
 //! See `ARCHITECTURE.md`, anchor `mod-jobs`.
 //!
-//! Memory caps are enforced by polling the worker's resident size (Linux and
-//! Windows) with a hard per-process cap as backstop (Windows Job Object). A
-//! worker and everything it starts, Tesseract included, is ended together
-//! (`contain`). Still open for PH-7: a reduced token for the worker.
+//! Memory caps are enforced by polling the worker's resident size, which is
+//! implemented for Linux (`/proc`) and Windows (working set). On Windows each
+//! worker also sits in a Job Object (hard cap, kill-on-close, see `winjob`).
 
 mod child;
-mod contain;
+#[cfg(windows)]
+mod winjob;
 
 use child::{Line, WorkerProc};
 use serde_json::Value;
@@ -164,8 +164,15 @@ impl Pool {
 
     /// Submit and block until the job ends.
     pub fn run(&self, spec: JobSpec) -> Result<Value> {
+        self.run_notify(spec, |_| {})
+    }
+
+    /// Like [`Pool::run`], and tells the caller the job's id as soon as it is
+    /// queued, so another thread can [`Pool::cancel`] it.
+    pub fn run_notify(&self, spec: JobSpec, queued: impl FnOnce(JobId)) -> Result<Value> {
         let (tx, rx) = mpsc::channel();
-        self.enqueue(spec, Some(tx));
+        let id = self.enqueue(spec, Some(tx));
+        queued(id);
         rx.recv()
             .unwrap_or_else(|_| Err(AppError::new(ErrorCode::Cancelled, "pool shut down")))
     }

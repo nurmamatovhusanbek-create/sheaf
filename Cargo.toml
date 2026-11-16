@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/*", "tools/*"]
-# src-tauri (MOD-SHELL) joins the workspace in PH-4.
+# tools/smoke holds scripts, not a crate.
+exclude = ["tools/smoke", "tools/package", "third_party/egui-winit"]
 
 [workspace.package]
 version = "0.0.0"
@@ -27,6 +28,7 @@ zeroize = "1"
 tiff = "0.11"
 getrandom = "0.4"
 
-# Build scripts compress the embedded engines; unoptimized that takes minutes.
-[profile.dev.build-override]
-opt-level = 3
+# One change to egui-winit (see third_party/egui-winit/README-SHEAF.md): a transparent window drawn through
+# DirectComposition needs to be created without a redirection bitmap.
+[patch.crates-io]
+egui-winit = { path = "third_party/egui-winit" }

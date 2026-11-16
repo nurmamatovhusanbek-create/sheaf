@@ -35,15 +35,10 @@ fn is_reserved_name(component: &str) -> bool {
         .unwrap_or("")
         .trim_end_matches(' ')
         .to_ascii_uppercase();
-    // `COM¹` is as reserved as `COM1`; the superscript digits are two bytes
-    // each, so the suffix is counted in characters.
-    let port = |prefix: &str| {
-        stem.strip_prefix(prefix).is_some_and(|rest| {
-            let mut chars = rest.chars();
-            matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_digit() || "¹²³".contains(c))
-        })
-    };
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || port("COM") || port("LPT")
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        || (stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem[3..].chars().all(|c| c.is_ascii_digit() || "¹²³".contains(c)))
 }
 
 /// Lexical Windows rules, applied before the file system is touched: no
@@ -115,20 +110,13 @@ pub fn allow_input(p: &Path) -> Result<AllowedInput> {
     })
 }
 
-/// Bidirectional overrides, isolates and zero-width characters: invisible,
-/// and able to make a name read differently from what it is. Output names can
-/// be built from document text (`{match:…}`), so they are taken out.
-fn is_invisible_format(c: char) -> bool {
-    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
-}
-
 /// Make `name` safe as a single file name: no separators or control
 /// characters, no reserved names, no trailing dot or space, bounded length.
 pub fn sanitize_file_name(name: &str) -> String {
     let mut clean: String = name
         .chars()
         .map(|c| {
-            if c.is_control() || "<>:\"/\\|?*".contains(c) || is_invisible_format(c) {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) {
                 '_'
             } else {
                 c
@@ -166,11 +154,19 @@ fn checked_out_dir(dir: &Path) -> Result<PathBuf> {
     if cfg!(windows) {
         check_windows_path_rules(dir.to_str().ok_or_else(|| rejected("path is not valid Unicode"))?)?;
     }
-    let dir = dir.canonicalize().map_err(|e| AppError::io("resolve output dir", &e))?;
+    // The plain form (`C:\dir`, not `\\?\C:\dir`): every path built from this one is shown
+    // to people and handed to scripts and other programs.
+    let dir = simplify_verbatim(dir.canonicalize().map_err(|e| AppError::io("resolve output dir", &e))?);
     if !dir.is_dir() {
         return Err(rejected("output location is not a directory"));
     }
     Ok(dir)
+}
+
+/// Validate a folder the user picked for outputs: it must exist, be a
+/// directory and pass the Windows path rules (SEC-PATHS). Returns it canonical.
+pub fn check_output_dir(dir: &Path) -> Result<PathBuf> {
+    checked_out_dir(dir)
 }
 
 /// A path in `dir` for `name` that does not exist right now; collisions get

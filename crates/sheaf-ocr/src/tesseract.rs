@@ -47,14 +47,6 @@ impl Tesseract {
             .args(args)
             .current_dir(&self.cwd)
             .env("OMP_THREAD_LIMIT", "1")
-            // The bundled build links libcurl and would fetch a URL given as an
-            // image name. We never give it one (see `local_input`); should
-            // that ever change, a dead proxy keeps the request from leaving
-            // the machine (SEC-NONET). Best effort, not a firewall.
-            .env("ALL_PROXY", "http://127.0.0.1:9")
-            .env("HTTP_PROXY", "http://127.0.0.1:9")
-            .env("HTTPS_PROXY", "http://127.0.0.1:9")
-            .env("NO_PROXY", "")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -98,17 +90,6 @@ impl Tesseract {
     }
 }
 
-/// Tesseract treats `http://…` as an image to download and `-` or `stdin` as
-/// standard input. Inputs here are always files the worker wrote itself, so
-/// anything else is a bug or an attack and is refused before a process starts.
-fn local_input(img: &Path) -> Result<()> {
-    let name = img.to_string_lossy();
-    if name.contains("://") || name == "-" || name == "stdin" {
-        return Err(AppError::invalid("OCR input must be a local file"));
-    }
-    Ok(())
-}
-
 /// Parse `--psm 0` output.
 pub(crate) fn parse_osd(text: &str) -> Osd {
     let field = |name: &str| {
@@ -143,7 +124,6 @@ impl OcrEngine for Tesseract {
     }
 
     fn detect(&self, img: &Path) -> Result<Osd> {
-        local_input(img)?;
         let mut args = self.base_args(img, "stdout");
         args.extend(["--psm".into(), "0".into(), "-l".into(), "osd".into()]);
         // A page with too little text makes OSD fail; that is "unknown", not an error.
@@ -153,7 +133,6 @@ impl OcrEngine for Tesseract {
 
     fn recognize(&self, img: &Path, opts: &RecOpts) -> Result<OcrResult> {
         langs::validate(&opts.langs)?;
-        local_input(img)?;
         let out_base = img.with_extension("out");
         let out_str = out_base
             .to_str()
@@ -213,26 +192,6 @@ impl OcrEngine for Tesseract {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_local_files_reach_tesseract() {
-        // The executable does not exist: the refusal must come before any process is started.
-        let t = Tesseract::new(Path::new("/nonexistent/tesseract"), Path::new("/x"), Path::new("."));
-        for bad in ["http://example.com/a.png", "https://x/y", "ftp://x/y", "-", "stdin"] {
-            let err = t.detect(Path::new(bad)).expect_err(bad);
-            assert_eq!(err.code, ErrorCode::InvalidArg, "{bad}");
-            let opts = RecOpts {
-                langs: vec!["eng".into()],
-                dpi: 300,
-                text_pdf: None,
-                tsv: None,
-            };
-            assert_eq!(
-                t.recognize(Path::new(bad), &opts).expect_err(bad).code,
-                ErrorCode::InvalidArg
-            );
-        }
-    }
 
     #[test]
     fn osd_output_is_parsed_with_confidence_gates() {

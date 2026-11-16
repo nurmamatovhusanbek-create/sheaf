@@ -6,12 +6,8 @@ use crate::token;
 use sheaf_core::{AppError, ErrorCode, Result, APP_NAME};
 use std::fs::{self, File};
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime};
 
 const LOCK_FILE: &str = ".lock";
-/// A session dir younger than this is never swept: another instance may be
-/// in the middle of creating it (directory made, lock file not yet locked).
-const SWEEP_GRACE: Duration = Duration::from_secs(30);
 const PREFIX: &str = "session-";
 
 /// Where session dirs live: `%LOCALAPPDATA%\Sheaf` on Windows, the XDG cache
@@ -38,13 +34,15 @@ pub struct Session {
 impl Session {
     /// Create `<base>/session-<pid>-<rand>/`, private to the current user.
     pub fn create(base: &Path) -> Result<Session> {
-        create_private_tree(base).map_err(|e| AppError::io("create session base", &e))?;
+        fs::create_dir_all(base).map_err(|e| AppError::io("create session base", &e))?;
         let base = base
             .canonicalize()
             .map_err(|e| AppError::io("resolve session base", &e))?;
         let base = crate::paths::simplify_verbatim(base);
         let dir = base.join(format!("{PREFIX}{}-{}", std::process::id(), token()));
         create_private_dir(&dir)?;
+        // Before anything is made inside it, so all of it inherits the label a low-integrity worker needs.
+        crate::harden::label_session_low(&dir);
         let lock = File::create(dir.join(LOCK_FILE)).map_err(|e| AppError::io("create session lock", &e))?;
         lock.try_lock()
             .map_err(|_| AppError::new(ErrorCode::Io, "session lock is already held"))?;
@@ -105,18 +103,6 @@ impl Drop for Session {
     }
 }
 
-/// `create_dir_all`, with directories private to the user where that is a concept.
-fn create_private_tree(dir: &Path) -> std::io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(dir)
-}
-
 fn create_private_dir(dir: &Path) -> Result<()> {
     #[cfg(unix)]
     let builder = {
@@ -136,11 +122,6 @@ fn create_private_dir(dir: &Path) -> Result<()> {
 /// session keeps its lock file locked, so it is never touched. Returns how
 /// many were removed.
 pub fn sweep_stale(base: &Path) -> usize {
-    sweep_stale_after(base, SWEEP_GRACE)
-}
-
-/// [`sweep_stale`] with an explicit grace period for fresh directories.
-pub fn sweep_stale_after(base: &Path, grace: Duration) -> usize {
     let Ok(entries) = fs::read_dir(base) else {
         return 0;
     };
@@ -152,17 +133,11 @@ pub fn sweep_stale_after(base: &Path, grace: Duration) -> usize {
         if !named || !real_dir {
             continue;
         }
-        // A directory is created before its lock file exists and before the lock
-        // is held, so "nobody holds it" only means "dead" once it is not brand new.
-        let settled = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .is_ok_and(|t| SystemTime::now().duration_since(t).unwrap_or_default() >= grace);
-        let unowned = match File::open(dir.join(LOCK_FILE)) {
+        let stale = match File::open(dir.join(LOCK_FILE)) {
             Ok(lock) => lock.try_lock().is_ok(),
             Err(e) => e.kind() == std::io::ErrorKind::NotFound,
         };
-        if settled && unowned && fs::remove_dir_all(&dir).is_ok() {
+        if stale && fs::remove_dir_all(&dir).is_ok() {
             removed += 1;
         }
     }

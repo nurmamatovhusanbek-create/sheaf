@@ -26,13 +26,18 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@v4
       - name: Toolchain
         run: rustup show active-toolchain || rustup toolchain install
       - name: Format
         run: cargo fmt --all -- --check
       - name: Spec link check
         run: cargo run --locked -p link-check
+      - name: THIRD_PARTY_LICENSES is current
+        if: runner.os == 'Linux'
+        run: |
+          bash tools/fetch-vendor
+          cargo run --locked -q -p licenses -- --check
       - name: Tesseract for tests (Linux; Windows uses the vendored build)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends tesseract-ocr
@@ -41,18 +46,105 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
       - name: Perf budgets (PERF-BUDGETS)
         run: |
           cargo build --workspace --release --locked
           ./target/release/sheaf-harness bench --enforce
 
+  gui-linux:
+    name: gui smoke (Linux, virtual display)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Virtual display, software GL, ImageMagick, Tesseract
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libxkbcommon-x11-0 libx11-xcb1 libxcursor1 libxi6 libxrandr2 imagemagick xdotool tesseract-ocr
+      - name: Fetch and verify vendored assets
+        run: bash tools/fetch-vendor
+      - run: cargo build --locked -p sheaf-shell -p sheaf-worker
+      - name: The window, the wheel and a headless action draw and work (development check; the product is Windows only)
+        run: bash tools/smoke/gui-linux.sh target/debug/sheaf "$RUNNER_TEMP/shots"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gui-screenshots
+          path: ${{ runner.temp }}/shots/*.png
+
+  windows-smoke:
+    name: windows smoke (the real executable)
+    runs-on: windows-latest
+    # The native Windows parts (tray helper, hotkey, Explorer selection) were written without a
+    # Windows machine; their first runs may need adjusting. Remove this line once it has passed
+    # (ARCHITECTURE.md, RISK-WIN-SHELL).
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Fetch and verify vendored assets
+        run: bash tools/fetch-vendor
+      - name: Build the app and its worker
+        run: cargo build --release --locked -p sheaf-shell -p sheaf-worker
+      - name: A fixture to open
+        run: cargo run --release --locked -p fixture-gen --bin write-fixture -- "$RUNNER_TEMP/smoke.pdf" 4
+      - name: Smoke test
+        shell: pwsh
+        env:
+          SHEAF_SMOKE_SHOTS: ${{ github.workspace }}\dist\screens
+        run: ./tools/smoke/windows.ps1 -Exe target/release/sheaf.exe -Fixture "$env:RUNNER_TEMP/smoke.pdf"
+      # PH-7: the installer, built from exactly what ships, installed on this clean runner, run through
+      # the same smoke test, and removed again. These steps run even when the smoke test above failed,
+      # so one run shows everything that is wrong.
+      - name: Installer (Inno Setup)
+        if: success() || failure()
+        shell: pwsh
+        env:
+          SIGNING_PFX_BASE64: ${{ secrets.SIGNING_PFX_BASE64 }}
+          SIGNING_PFX_PASSWORD: ${{ secrets.SIGNING_PFX_PASSWORD }}
+        run: |
+          choco install innosetup -y --no-progress
+          ./tools/package/stage.ps1 -Out dist\stage
+          # Signs when a certificate is configured (repository secrets); otherwise says so and goes on.
+          ./tools/package/sign.ps1 -Files dist\stage\sheaf.exe, dist\stage\sheafc.exe, dist\stage\sheaf-worker.exe
+          $version = ((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages | Where-Object name -eq "sheaf-shell").version
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer\sheaf.iss "/DVersion=$version" "/DStage=$PWD\dist\stage" "/O$PWD\dist"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC exited with $LASTEXITCODE" }
+          Get-ChildItem dist\Sheaf-Setup-*.exe | ForEach-Object { "{0} {1:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+          ./tools/package/sign.ps1 -Files (Get-ChildItem dist\Sheaf-Setup-*.exe).FullName
+      - name: Clean install, smoke test of the installed program, uninstall
+        if: success() || failure()
+        shell: pwsh
+        run: ./tools/package/verify-install.ps1 -Setup (Get-ChildItem dist\Sheaf-Setup-*.exe | Select-Object -First 1).FullName -Fixture "$env:RUNNER_TEMP/smoke.pdf"
+      - name: Signing pipeline (throw-away certificate)
+        if: success() || failure()
+        shell: pwsh
+        run: ./tools/package/test-signing.ps1 -Files target\release\sheaf.exe, target\release\sheafc.exe
+      - name: Keep the screenshots
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-screenshots
+          path: dist/screens/*.png
+          if-no-files-found: ignore
+      - name: Keep the installer
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheaf-installer
+          path: dist/Sheaf-Setup-*.exe
+          if-no-files-found: ignore
+
   supply-chain:
     name: cargo-deny + cargo-audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny,cargo-audit
       - run: cargo deny check

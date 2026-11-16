@@ -1,0 +1,32 @@
+[package]
+name = "sheaf-ui"
+description = "MOD-UI: native egui views, the main window and the action wheel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sheaf-app = { path = "../sheaf-app" }
+sheaf-core = { path = "../sheaf-core" }
+sheaf-store = { path = "../sheaf-store" }
+serde.workspace = true
+serde_json.workspace = true
+image.workspace = true
+zeroize.workspace = true
+# The window toolkit (ADR-NATIVE-UI): OpenGL rendering, no web view, no network features.
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "x11"] }
+
+# Native open/folder dialogs on Windows; elsewhere the app is for development only (NG-XPLAT).
+# Screen-reader support through Windows UI Automation. Not on Linux: there it would pull a D-Bus
+# stack with an async runtime, which SEC-NONET bans.
+[target.'cfg(windows)'.dependencies]
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "wgpu_no_default_features"] }
+# The fallback renderer for machines where OpenGL is unusable (remote desktop, virtual machines, no
+# graphics driver): Direct3D 12, which Windows can also run in software. Only that backend is built in.
+wgpu = { version = "30", default-features = false, features = ["std", "dx12", "wgsl"] }
+egui-wgpu = { version = "0.37", default-features = false }
+rfd = { version = "0.17", default-features = false }

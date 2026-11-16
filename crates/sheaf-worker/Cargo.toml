@@ -21,6 +21,3 @@ sheaf-core = { path = "../sheaf-core" }
 [dev-dependencies]
 fixture-gen = { path = "../../tools/fixture-gen" }
 image.workspace = true
-
-[target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_System_Threading"] }

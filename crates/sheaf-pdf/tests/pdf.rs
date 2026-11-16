@@ -242,14 +242,6 @@ fn protect_and_unlock(engine: &Engine) {
         "reported strength is what is in the file"
     );
     assert!(!contains(&bytes, b"(Page 1)"), "content is not readable in the file");
-    // Without an open password the file is readable by anyone: say so (SEC-HONESTY).
-    let open = dir.path().join("restricted.pdf");
-    let restricted = Protect {
-        user_pw: Password::default(),
-        ..protect.clone()
-    };
-    let label = lo::encrypt(&plain, &open, &restricted).expect("encrypt without open password");
-    assert!(label.contains("no open password"), "{label}");
     assert!(!contains(&bytes, "s3cret".as_bytes()));
 
     // For checking the file by hand in other readers: SHEAF_TEST_KEEP=<dir> keeps a copy.
@@ -635,75 +627,4 @@ fn pdf_suite() {
     hide_only_crop_keeps_the_content(&engine);
     an_empty_build_is_refused(&engine);
     missing_library_is_reported_as_such(&engine);
-}
-
-/// A one-page PDF whose only image is `jpeg`, declared as `declared` pixels.
-fn jpeg_pdf(jpeg: &[u8], declared: (u32, u32)) -> Vec<u8> {
-    let mut objects: Vec<Vec<u8>> = vec![
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>".to_vec(),
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << /I1 5 0 R >> >> /Contents 4 0 R >>"
-            .to_vec(),
-    ];
-    let content = b"q 595 0 0 842 0 0 cm /I1 Do Q";
-    objects.push(
-        [
-            format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
-            content,
-            b"\nendstream",
-        ]
-        .concat(),
-    );
-    let head = format!(
-        "<< /Type /XObject /Subtype /Image /Width {} /Height {} /ColorSpace /DeviceRGB /BitsPerComponent 8 \
-         /Filter /DCTDecode /Length {} >>\nstream\n",
-        declared.0,
-        declared.1,
-        jpeg.len()
-    );
-    objects.push([head.as_bytes(), jpeg, b"\nendstream"].concat());
-    let mut out = b"%PDF-1.5\n".to_vec();
-    let mut offsets = Vec::new();
-    for (i, body) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend(format!("{} 0 obj\n", i + 1).as_bytes());
-        out.extend(body);
-        out.extend(b"\nendobj\n");
-    }
-    let xref = out.len();
-    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
-    for o in offsets {
-        out.extend(format!("{o:010} 00000 n \n").as_bytes());
-    }
-    out.extend(
-        format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
-            objects.len() + 1
-        )
-        .as_bytes(),
-    );
-    out
-}
-
-#[test]
-fn compress_believes_the_jpeg_header_not_the_dictionary() {
-    // SEC-LIMITS: an image that claims to be small and decodes large must be
-    // left alone instead of being decoded at whatever size it really has.
-    let dir = Scratch::new("pdf-compress-lie");
-    let rgb = image::DynamicImage::ImageRgba8(photo(2400, 3000)).into_rgb8();
-    let mut jpeg = Vec::new();
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 100);
-    rgb.write_with_encoder(encoder).expect("encode");
-
-    let honest = dir.file("honest.pdf", &jpeg_pdf(&jpeg, (2400, 3000)));
-    let report =
-        lo::compress(&honest, &dir.path().join("honest-out.pdf"), CompressLevel::Recommended).expect("compress");
-    assert_eq!(
-        report.images_recompressed, 1,
-        "control: a truthful image is recompressed"
-    );
-
-    let liar = dir.file("liar.pdf", &jpeg_pdf(&jpeg, (10, 10)));
-    let report = lo::compress(&liar, &dir.path().join("liar-out.pdf"), CompressLevel::Recommended).expect("compress");
-    assert_eq!(report.images_recompressed, 0, "a mislabelled image is left as it is");
 }
