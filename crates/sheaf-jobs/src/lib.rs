@@ -5,11 +5,13 @@
 //! is killed and replaced; the job fails and the app carries on (FLOW-ERROR).
 //! See `ARCHITECTURE.md`, anchor `mod-jobs`.
 //!
-//! Memory caps are enforced by polling the worker's resident size, which is
-//! implemented for Linux only so far. The Windows Job Object (hard cap,
-//! kill-on-close) is PH-7 hardening.
+//! Memory caps are enforced by polling the worker's resident size (Linux and
+//! Windows) with a hard per-process cap as backstop (Windows Job Object). A
+//! worker and everything it starts, Tesseract included, is ended together
+//! (`contain`). Still open for PH-7: a reduced token for the worker.
 
 mod child;
+mod contain;
 
 use child::{Line, WorkerProc};
 use serde_json::Value;

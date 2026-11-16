@@ -7,11 +7,11 @@ pub mod session;
 pub mod settings;
 
 pub use paths::{allow_input, allow_output, create_output_dir, publish, AllowedInput};
-pub use session::{default_base_dir, sweep_stale, Session};
+pub use session::{default_base_dir, sweep_stale, sweep_stale_after, Session};
 pub use settings::{config_dir, Settings};
 
 use sha2::{Digest, Sha256};
-use sheaf_core::{AppError, Result};
+use sheaf_core::{AppError, ErrorCode, Result};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -74,6 +74,51 @@ pub fn hash_bytes(parts: &[&[u8]]) -> [u8; 32] {
         hasher.update(part);
     }
     hasher.finalize().into()
+}
+
+/// SEC-SUPPLY: check the bundled third-party files against `<root>/SHA256SUMS`
+/// (`sha256sum` format, paths relative to `root`) before anything is loaded
+/// from them. Listed files that are not in this bundle are skipped, and so is
+/// `dl/`, which holds build inputs; every path in `required` must be present,
+/// listed and intact. A mismatch is an `EngineMissing` error naming the file.
+///
+/// This narrows the window, it does not close it: a file replaced after the
+/// check is not noticed. The install folder must not be writable by other
+/// software for the check to mean anything (SEC-TB4).
+pub fn verify_bundle(root: &Path, required: &[&str]) -> Result<()> {
+    let failed =
+        |what: &str, path: &str| AppError::new(ErrorCode::EngineMissing, format!("bundled component {what}: {path}"));
+    let list = fs::read_to_string(root.join("SHA256SUMS")).map_err(|_| failed("has no hash list", "SHA256SUMS"))?;
+    let mut checked: Vec<&str> = Vec::new();
+    for line in list.lines() {
+        let Some((want, path)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let path = path.trim_start().trim_start_matches('*');
+        let escapes = path.is_empty()
+            || path.starts_with(['/', '\\'])
+            || path.contains(':')
+            || path.split('/').any(|s| s == "..");
+        if escapes {
+            return Err(failed("lists an unsafe path", path));
+        }
+        if path.starts_with("dl/") {
+            continue;
+        }
+        let file = root.join(path);
+        if !file.is_file() {
+            continue;
+        }
+        let got = hex(&hash_file(&file)?);
+        if !got.eq_ignore_ascii_case(want.trim()) {
+            return Err(failed("does not match its pinned hash", path));
+        }
+        checked.push(path);
+    }
+    match required.iter().find(|r| !checked.contains(r)) {
+        Some(missing) => Err(failed("is missing or not pinned", missing)),
+        None => Ok(()),
+    }
 }
 
 pub fn hex(bytes: &[u8]) -> String {

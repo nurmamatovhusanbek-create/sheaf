@@ -1,5 +1,6 @@
 //! One worker process and its pipes.
 
+use crate::contain::{self, Containment};
 use crate::PoolConfig;
 use sheaf_core::{AppError, ErrorCode, Result};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -22,22 +23,36 @@ pub(crate) struct WorkerProc {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
+    /// Holds the worker's whole process tree (SEC-ISOLATE).
+    contained: Containment,
 }
 
 impl WorkerProc {
     pub(crate) fn spawn(cfg: &PoolConfig) -> Result<WorkerProc> {
         // Argument array, never a shell string. Only the three stdio handles
         // are inherited by the child.
-        let mut child = Command::new(&cfg.program)
-            .args(&cfg.args)
+        let mut cmd = Command::new(&cfg.program);
+        cmd.args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        contain::prepare(&mut cmd);
+        let mut child = cmd
             .spawn()
             .map_err(|_| AppError::new(ErrorCode::EngineMissing, "worker process could not be started"))?;
+        // Contain it before it is sent anything to parse.
+        let contained = match Containment::attach(&child) {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e);
+            }
+        };
         let (stdin, stdout) = match (child.stdin.take(), child.stdout.take()) {
             (Some(i), Some(o)) => (i, o),
             _ => {
+                contained.kill_tree();
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(AppError::internal("worker pipes missing"));
@@ -61,7 +76,12 @@ impl WorkerProc {
                 }
             }
         });
-        Ok(WorkerProc { child, stdin, lines })
+        Ok(WorkerProc {
+            child,
+            stdin,
+            lines,
+            contained,
+        })
     }
 
     pub(crate) fn send(&mut self, line: &str) -> std::io::Result<()> {
@@ -80,27 +100,14 @@ impl WorkerProc {
 
     /// Resident memory in MiB, where the platform lets us read it.
     pub(crate) fn rss_mb(&self) -> Option<u64> {
-        #[cfg(target_os = "linux")]
-        {
-            let status = std::fs::read_to_string(format!("/proc/{}/status", self.child.id())).ok()?;
-            let kb: u64 = status
-                .lines()
-                .find_map(|l| l.strip_prefix("VmRSS:"))?
-                .split_whitespace()
-                .next()?
-                .parse()
-                .ok()?;
-            Some(kb / 1024)
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            None
-        }
+        self.contained.rss_mb(&self.child)
     }
 }
 
 impl Drop for WorkerProc {
     fn drop(&mut self) {
+        // The tree first, while the worker's pid is still ours (not yet reaped).
+        self.contained.kill_tree();
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

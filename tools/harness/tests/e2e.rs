@@ -173,6 +173,19 @@ fn a_stale_session_is_swept_at_startup() {
     std::fs::create_dir_all(stale.join("cache")).expect("mkdir");
     std::fs::write(stale.join(".lock"), b"").expect("lock");
     std::fs::write(stale.join("cache/page.png"), b"left behind by a crash").expect("leftover");
+    // A directory younger than the sweep's grace period might still be an
+    // instance starting up, so the crash has to be a while ago.
+    let mut open = std::fs::OpenOptions::new();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        open.write(true).custom_flags(0x0200_0000); // FILE_FLAG_BACKUP_SEMANTICS: open a directory
+    }
+    #[cfg(not(windows))]
+    open.read(true);
+    open.open(&stale)
+        .and_then(|dir| dir.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(3600)))
+        .expect("age the directory");
     let app = app(&base);
     assert!(!stale.exists(), "leftovers from a crashed run are removed at startup");
     assert!(app.session_dir().exists());

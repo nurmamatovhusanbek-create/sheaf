@@ -7,6 +7,7 @@
 
 use lopdf::encryption::crypt_filters::{Aes256CryptFilter, CryptFilter};
 use lopdf::{Document, EncryptionState, EncryptionVersion, Object, ObjectId, Permissions};
+use sheaf_core::consts::{MAX_PAGE_PIXELS, MAX_PAGE_SIDE};
 use sheaf_core::{AppError, CompressLevel, ErrorCode, Protect, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -105,7 +106,24 @@ fn decode(doc: &Document, id: ObjectId) -> Option<image::DynamicImage> {
     let filters = stream.filters().unwrap_or_default();
     match filters.as_slice() {
         [b"DCTDecode"] => {
-            let img = image::load_from_memory_with_format(&stream.content, image::ImageFormat::Jpeg).ok()?;
+            // The dictionary's Width and Height are the file's claim; the JPEG
+            // header says what a decoder will actually allocate. Check the
+            // header first, against the same pixel budget as everything else,
+            // and drop images whose two disagree (SEC-LIMITS).
+            use image::ImageDecoder;
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(MAX_PAGE_SIDE);
+            limits.max_image_height = Some(MAX_PAGE_SIDE);
+            limits.max_alloc = Some(MAX_IMAGE_BYTES as u64);
+            let mut reader =
+                image::ImageReader::with_format(std::io::Cursor::new(&stream.content), image::ImageFormat::Jpeg);
+            reader.limits(limits);
+            let decoder = reader.into_decoder().ok()?;
+            let (jw, jh) = decoder.dimensions();
+            if i64::from(jw) != w || i64::from(jh) != h || u64::from(jw) * u64::from(jh) > MAX_PAGE_PIXELS {
+                return None;
+            }
+            let img = image::DynamicImage::from_decoder(decoder).ok()?;
             // CMYK and other exotic JPEGs come back in forms we do not rewrite.
             matches!(
                 img,
@@ -234,6 +252,9 @@ pub fn compress(input: &Path, out: &Path, level: CompressLevel) -> Result<Compre
 
 /// The protection [`encrypt`] applies, as shown to the user (SEC-HONESTY).
 pub const ENCRYPTION_LABEL: &str = "AES-256";
+/// With no open password anybody can read the file; the permission flags are a
+/// request that well-behaved programs honour, not protection (SEC-HONESTY).
+pub const ENCRYPTION_LABEL_NO_OPEN_PASSWORD: &str = "AES-256, no open password: restrictions only";
 
 /// TOOL-PROTECT: AES-256 (PDF 2.0 security handler, revision 6). Returns the
 /// label of what was applied, after reading it back from the written file.
@@ -310,7 +331,11 @@ pub fn encrypt(input: &Path, out: &Path, protect: &Protect) -> Result<String> {
     doc.save_to(&mut bytes)
         .map_err(|e| AppError::io("write protected file", &e))?;
     std::fs::write(out, &bytes).map_err(|e| AppError::io("write protected file", &e))?;
-    Ok(ENCRYPTION_LABEL.to_string())
+    Ok(match protect.user_pw.is_empty() {
+        true => ENCRYPTION_LABEL_NO_OPEN_PASSWORD,
+        false => ENCRYPTION_LABEL,
+    }
+    .to_string())
 }
 
 /// TOOL-PDF2IMG, alternative mode: write the images embedded in one page into

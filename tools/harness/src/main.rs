@@ -86,7 +86,8 @@ fn parse() -> std::result::Result<Args, String> {
 }
 
 fn start(a: &Args) -> Result<App> {
-    let base = std::env::temp_dir().join("sheaf-harness");
+    // Per-user cache dir, not the shared temp dir (SEC-TEMP).
+    let base = sheaf_store::default_base_dir()?;
     App::start(&Engines::vendored()?, &base, a.workers)
 }
 

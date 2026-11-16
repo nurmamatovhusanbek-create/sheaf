@@ -68,6 +68,36 @@ pub struct Exported {
     pub built: BuildResult,
 }
 
+/// What a worker cannot run without, relative to the bundle's `vendor/` dir.
+fn required_files() -> Vec<&'static str> {
+    let mut files = vec![
+        "tessdata/eng.traineddata",
+        "tessdata/osd.traineddata",
+        "tessdata/pdf.ttf",
+        "fonts/NotoSans-Regular.ttf",
+    ];
+    if cfg!(windows) {
+        files.extend([
+            "pdfium/win-x64/pdfium.dll",
+            "tesseract/win-x64/tesseract.exe",
+            "tesseract/win-x64/libtesseract-5.dll",
+        ]);
+    } else {
+        // Linux uses the distribution's Tesseract, which is not ours to pin.
+        files.push("pdfium/linux-x64/libpdfium.so");
+    }
+    files
+}
+
+/// SEC-SUPPLY: verify the bundled engines against their pinned hashes, once
+/// per process (FLOW-LIFECYCLE startup).
+fn verified(vendor: &Path) -> Result<()> {
+    static RESULT: std::sync::OnceLock<Result<()>> = std::sync::OnceLock::new();
+    RESULT
+        .get_or_init(|| sheaf_store::verify_bundle(vendor, &required_files()))
+        .clone()
+}
+
 impl Engines {
     /// The vendored engines of a development checkout, with the worker
     /// binary that sits beside the running executable.
@@ -77,6 +107,7 @@ impl Engines {
         // executables, laid out like the checkout's `vendor/`. It wins over
         // the checkout, whose location is only known on the build machine.
         if let Some(vendor) = worker.parent().map(|d| d.join("vendor")).filter(|d| d.is_dir()) {
+            verified(&vendor)?;
             let (platform, tesseract) = if cfg!(windows) {
                 (
                     "win-x64",
@@ -92,6 +123,7 @@ impl Engines {
                 font: Some(vendor.join("fonts").join("NotoSans-Regular.ttf")),
             });
         }
+        verified(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor"))?;
         Ok(Engines {
             worker,
             pdfium_dir: fixture_gen::vendored_pdfium_dir(),

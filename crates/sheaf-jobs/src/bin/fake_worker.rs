@@ -16,6 +16,12 @@ fn say(resp: &Response) {
 }
 
 fn main() {
+    // Started by "spawn_sleeper": a grandchild that outlives its parent unless
+    // somebody ends the whole tree (SEC-ISOLATE).
+    if std::env::args().nth(1).as_deref() == Some("--sleeper") {
+        std::thread::sleep(Duration::from_secs(600));
+        return;
+    }
     for line in std::io::stdin().lock().lines() {
         let Ok(line) = line else { break };
         let Ok(req) = serde_json::from_str::<Request>(&line) else {
@@ -40,6 +46,12 @@ fn main() {
                 req.id,
                 AppError::new(ErrorCode::Timeout, "not really"),
             )),
+            "spawn_sleeper" => {
+                match std::env::current_exe().and_then(|exe| std::process::Command::new(exe).arg("--sleeper").spawn()) {
+                    Ok(child) => say(&Response::done(req.id, json!(child.id()))),
+                    Err(_) => say(&Response::failed(req.id, AppError::internal("spawn failed"))),
+                }
+            }
             "crash" => std::process::exit(3),
             "hang" => loop {
                 std::thread::sleep(Duration::from_secs(60));

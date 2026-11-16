@@ -100,7 +100,14 @@ fn sweep_removes_dead_sessions_but_not_live_ones() {
     let other = base.path().join("settings-backup");
     fs::create_dir_all(&other).expect("mkdir");
 
-    assert_eq!(sweep_stale(base.path()), 2);
+    // A brand-new directory may be another instance still setting up: left alone.
+    assert_eq!(
+        sweep_stale(base.path()),
+        0,
+        "fresh directories survive the default sweep"
+    );
+    assert!(dead.exists() && half.exists());
+    assert_eq!(sweep_stale_after(base.path(), std::time::Duration::ZERO), 2);
     assert!(!dead.exists() && !half.exists());
     assert!(other.exists());
     assert!(live.dir().exists(), "a live session survives the sweep");
@@ -335,4 +342,49 @@ fn settings_round_trip_and_tolerate_garbage() {
     fs::write(dir.path().join("settings.json"), b"not json").expect("write");
     assert_eq!(Settings::load(dir.path()), Settings::default());
     assert!(Settings::default().worker_count() >= 1);
+}
+
+#[test]
+fn bundled_files_are_checked_against_their_pinned_hashes() {
+    // SEC-SUPPLY: verified before anything is loaded from the bundle.
+    let dir = Scratch::new("bundle");
+    let root = dir.path();
+    fs::create_dir_all(root.join("pdfium")).expect("mkdir");
+    fs::write(root.join("pdfium/lib.dll"), b"engine").expect("write");
+    fs::write(root.join("other.bin"), b"other").expect("write");
+    let h = |bytes: &[u8]| hex(&hash_bytes(&[bytes]));
+    let sums = |extra: &str| {
+        let text = format!(
+            "{}  pdfium/lib.dll\n{} *other.bin\n{}  dl/archive.tgz\n{}  not/in/this/bundle.bin\n{extra}",
+            h(b"engine"),
+            h(b"other"),
+            h(b"never present"),
+            h(b"never present")
+        );
+        fs::write(root.join("SHA256SUMS"), text).expect("sums");
+    };
+
+    sums("");
+    verify_bundle(root, &["pdfium/lib.dll"]).expect("intact bundle");
+
+    // Listed but absent files are other platforms' or build inputs; required ones must be there.
+    let err = verify_bundle(root, &["pdfium/lib.dll", "not/in/this/bundle.bin"]).expect_err("required file absent");
+    assert_eq!(err.code, ErrorCode::EngineMissing);
+    let err = verify_bundle(root, &["unlisted.dll"]).expect_err("required file not pinned");
+    assert_eq!(err.code, ErrorCode::EngineMissing);
+
+    // A swapped library is caught, and the message names it.
+    fs::write(root.join("pdfium/lib.dll"), b"evil").expect("tamper");
+    let err = verify_bundle(root, &[]).expect_err("tampered");
+    assert_eq!(err.code, ErrorCode::EngineMissing);
+    assert!(err.msg.contains("pdfium/lib.dll"), "{}", err.msg);
+    fs::write(root.join("pdfium/lib.dll"), b"engine").expect("restore");
+
+    // A hash list cannot point outside the bundle, and cannot be missing.
+    for evil in ["../x", "/etc/passwd", "C:/x", "a/../../x"] {
+        sums(&format!("{}  {evil}\n", h(b"x")));
+        assert!(verify_bundle(root, &[]).is_err(), "{evil}");
+    }
+    fs::remove_file(root.join("SHA256SUMS")).expect("remove");
+    assert!(verify_bundle(root, &[]).is_err(), "no hash list, no trust");
 }
