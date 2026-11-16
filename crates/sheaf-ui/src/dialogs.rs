@@ -178,20 +178,18 @@ impl SheafApp {
             if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 submit = true;
             }
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !f.busy,
-                        egui::Button::new(self.t.t("password.unlock")).fill(ui.visuals().selection.bg_fill),
-                    )
-                    .clicked()
-                {
-                    submit = true;
-                }
-                if ui.button(self.t.t("password.skip")).clicked() {
-                    keep = false;
-                }
-            });
+            let pressed = crate::kit::footer(
+                ui,
+                &self.t.t("password.unlock"),
+                !f.busy,
+                &[(self.t.t("password.skip"), true)],
+            );
+            if pressed.primary {
+                submit = true;
+            }
+            if pressed.secondary.is_some() {
+                keep = false;
+            }
         });
         if ui_escape(ctx) {
             keep = false;
@@ -288,14 +286,14 @@ impl SheafApp {
             ui.label(self.t.t("settings.engines"));
             let e = &self.engines;
             ui.horizontal_wrapped(|ui| {
+                // A dot in the state's colour and the words: never colour alone.
                 let badge = |ui: &mut egui::Ui, ok: bool, yes: String, no: String| {
-                    ui.label(
-                        RichText::new(if ok { format!("[ok] {yes}") } else { format!("[!] {no}") }).color(if ok {
-                            egui::Color32::from_rgb(0x2e, 0x9e, 0x5b)
-                        } else {
-                            ui.visuals().error_fg_color
-                        }),
-                    );
+                    let pal = crate::theme::Palette::of(ui);
+                    let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 16.0), egui::Sense::hover());
+                    ui.painter()
+                        .circle_filled(dot.center(), 3.5, if ok { pal.ok } else { pal.bad });
+                    ui.label(RichText::new(if ok { yes } else { no }).color(if ok { pal.weak } else { pal.bad }));
+                    ui.add_space(8.0);
                 };
                 let verifying = if e.verified == Some(false) {
                     self.t.t("settings.verify_failed")
@@ -326,17 +324,9 @@ impl SheafApp {
                     about = true;
                 }
             });
-            ui.horizontal(|ui| {
-                if ui
-                    .add(egui::Button::new(self.t.t("common.save")).fill(ui.visuals().selection.bg_fill))
-                    .clicked()
-                {
-                    save = true;
-                }
-                if ui.button(self.t.t("common.cancel")).clicked() {
-                    close = true;
-                }
-            });
+            let pressed = crate::kit::footer(ui, &self.t.t("common.save"), true, &[(self.t.t("common.cancel"), true)]);
+            save = pressed.primary;
+            close = pressed.secondary.is_some();
         });
         if ui_escape(ctx) {
             close = true;
@@ -371,30 +361,36 @@ impl SheafApp {
             egui::ScrollArea::vertical()
                 .max_height(ctx.content_rect().height() - 180.0)
                 .show(ui, |ui| {
-                    ui.label(self.t.t("export.scope"));
-                    ui.radio_value(
+                    crate::kit::field_label(ui, &self.t.t("export.scope"));
+                    let has_selection = !f.selected.is_empty();
+                    crate::kit::segmented(
+                        ui,
                         &mut f.scope_selected,
-                        false,
-                        self.t.tv("export.scope_all", &[("n", &f.total.to_string())]),
+                        &[
+                            (
+                                false,
+                                self.t.tv("export.scope_all", &[("n", &f.total.to_string())]),
+                                true,
+                            ),
+                            (
+                                true,
+                                self.t
+                                    .tv("export.scope_selected", &[("n", &f.selected.len().to_string())]),
+                                has_selection,
+                            ),
+                        ],
                     );
-                    ui.add_enabled_ui(!f.selected.is_empty(), |ui| {
-                        ui.radio_value(
-                            &mut f.scope_selected,
-                            true,
-                            self.t
-                                .tv("export.scope_selected", &[("n", &f.selected.len().to_string())]),
-                        );
-                    });
-                    ui.label(self.t.t("export.format"));
-                    ui.horizontal(|ui| {
-                        for (i, k) in ["export.format_pdf", "export.format_images", "export.format_text"]
-                            .iter()
-                            .enumerate()
-                        {
-                            ui.selectable_value(&mut f.format, i, self.t.t(k));
-                        }
-                    });
-                    ui.label(self.t.t("export.name"));
+                    crate::kit::field_label(ui, &self.t.t("export.format"));
+                    crate::kit::segmented(
+                        ui,
+                        &mut f.format,
+                        &[
+                            (0, self.t.t("export.format_pdf"), true),
+                            (1, self.t.t("export.format_images"), true),
+                            (2, self.t.t("export.format_text"), true),
+                        ],
+                    );
+                    crate::kit::field_label(ui, &self.t.t("export.name"));
                     let placeholder = ["{source}.edited", "{source}-images", "{source}"][f.format];
                     ui.add(
                         egui::TextEdit::singleline(&mut f.name)
@@ -403,7 +399,7 @@ impl SheafApp {
                     );
                     ui.label(RichText::new(self.t.t("export.name_hint")).weak().small());
                     if f.format == 0 {
-                        ui.label(self.t.t("export.split"));
+                        crate::kit::field_label(ui, &self.t.t("export.split"));
                         egui::ComboBox::from_id_salt("exsplit")
                             .selected_text(self.t.t(&format!("export.split_{}", SPLITS[f.split])))
                             .width(ui.available_width())
@@ -413,11 +409,12 @@ impl SheafApp {
                                 }
                             });
                         if matches!(SPLITS[f.split], "EveryN" | "TextMatch" | "Ranges") {
-                            ui.label(self.t.t(&format!("export.split_arg_{}", SPLITS[f.split])));
+                            crate::kit::field_label(ui, &self.t.t(&format!("export.split_arg_{}", SPLITS[f.split])));
                             ui.text_edit_singleline(&mut f.split_arg);
                         }
-                        ui.label(self.t.t("export.compress"));
+                        crate::kit::field_label(ui, &self.t.t("export.compress"));
                         egui::ComboBox::from_id_salt("excompress")
+                            .width(ui.available_width())
                             .selected_text(match f.compress {
                                 None => self.t.t("export.compress_none"),
                                 Some(0) => self.t.t("compress.low"),
@@ -432,13 +429,13 @@ impl SheafApp {
                             });
                         ui.checkbox(&mut f.protect, self.t.t("export.protect"));
                         if f.protect {
-                            ui.label(self.t.t("lock.user_pw"));
+                            crate::kit::field_label(ui, &self.t.t("lock.user_pw"));
                             ui.add(
                                 egui::TextEdit::singleline(&mut *f.user_pw)
                                     .password(true)
                                     .desired_width(f32::INFINITY),
                             );
-                            ui.label(self.t.t("lock.owner_pw"));
+                            crate::kit::field_label(ui, &self.t.t("lock.owner_pw"));
                             ui.add(
                                 egui::TextEdit::singleline(&mut *f.owner_pw)
                                     .password(true)
@@ -450,15 +447,15 @@ impl SheafApp {
                         ui.checkbox(&mut f.hide_only, self.t.t("export.hide_only"));
                         if f.hide_only {
                             // SEC-HONESTY: say what this mode does.
-                            ui.colored_label(
-                                egui::Color32::from_rgb(0xc9, 0x8a, 0x00),
-                                self.t.t("export.hide_only_warn"),
-                            );
+                            ui.colored_label(crate::theme::Palette::of(ui).warn, self.t.t("export.hide_only_warn"));
                         }
                     } else if f.format == 1 {
                         ui.horizontal(|ui| {
-                            ui.selectable_value(&mut f.image_png, true, "PNG");
-                            ui.selectable_value(&mut f.image_png, false, "JPG");
+                            crate::kit::segmented(
+                                ui,
+                                &mut f.image_png,
+                                &[(true, "PNG".to_string(), true), (false, "JPG".to_string(), true)],
+                            );
                             egui::ComboBox::from_id_salt("exdpi")
                                 .selected_text(format!("{} dpi", f.dpi))
                                 .show_ui(ui, |ui| {
@@ -469,7 +466,7 @@ impl SheafApp {
                         });
                     }
                     ui.separator();
-                    ui.label(self.t.t("export.folder"));
+                    crate::kit::field_label(ui, &self.t.t("export.folder"));
                     ui.horizontal_wrapped(|ui| {
                         ui.label(
                             RichText::new(
@@ -497,17 +494,14 @@ impl SheafApp {
                         ui.colored_label(ui.visuals().error_fg_color, e);
                     }
                 });
-            ui.horizontal(|ui| {
-                if ui
-                    .add(egui::Button::new(self.t.t("export.start")).fill(ui.visuals().selection.bg_fill))
-                    .clicked()
-                {
-                    start = true;
-                }
-                if ui.button(self.t.t("common.cancel")).clicked() {
-                    close = true;
-                }
-            });
+            let pressed = crate::kit::footer(
+                ui,
+                &self.t.t("export.start"),
+                true,
+                &[(self.t.t("common.cancel"), true)],
+            );
+            start = pressed.primary;
+            close = pressed.secondary.is_some();
         });
         if ui_escape(ctx) {
             close = true;
@@ -765,21 +759,10 @@ impl SheafApp {
                 }
             }
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let ready = f.profile().is_some() && matches!(&f.devices, Some(Ok(l)) if !l.is_empty());
-                if ui
-                    .add_enabled(
-                        ready,
-                        egui::Button::new(self.t.t("scan.start")).fill(ui.visuals().selection.bg_fill),
-                    )
-                    .clicked()
-                {
-                    start = true;
-                }
-                if ui.button(self.t.t("common.cancel")).clicked() {
-                    close = true;
-                }
-            });
+            let ready = f.profile().is_some() && matches!(&f.devices, Some(Ok(l)) if !l.is_empty());
+            let pressed = crate::kit::footer(ui, &self.t.t("scan.start"), ready, &[(self.t.t("common.cancel"), true)]);
+            start = pressed.primary;
+            close = pressed.secondary.is_some();
         });
         if ui_escape(ctx) {
             close = true;

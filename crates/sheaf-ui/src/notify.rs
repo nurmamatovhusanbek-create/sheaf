@@ -186,10 +186,10 @@ pub fn ago(t: &crate::i18n::I18n, age: Duration) -> String {
 
 fn accent(kind: Kind, ui: &egui::Ui) -> Color32 {
     match kind {
-        Kind::Error => ui.visuals().error_fg_color,
-        Kind::Warning => ui.visuals().warn_fg_color,
-        Kind::Success => Color32::from_rgb(46, 160, 90),
-        Kind::Info => ui.visuals().selection.bg_fill,
+        Kind::Error => crate::theme::Palette::of(ui).bad,
+        Kind::Warning => crate::theme::Palette::of(ui).warn,
+        Kind::Success => crate::theme::Palette::of(ui).ok,
+        Kind::Info => crate::theme::Palette::of(ui).accent,
     }
 }
 
@@ -310,7 +310,7 @@ impl SheafApp {
             let color = if self.notices.unread_errors() > 0 {
                 ui.visuals().error_fg_color
             } else {
-                ui.visuals().selection.bg_fill
+                crate::theme::Palette::of(ui).accent
             };
             let at = response.rect.right_top() + vec2(-6.0, 7.0);
             ui.painter().circle_filled(at, 4.5, color);

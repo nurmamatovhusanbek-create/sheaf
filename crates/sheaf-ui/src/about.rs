@@ -99,7 +99,7 @@ impl SheafApp {
             ui.set_width(560.0);
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
-                paint(ui.painter(), r, Icon::Presets, ui.visuals().selection.bg_fill);
+                paint(ui.painter(), r, Icon::Presets, crate::theme::Palette::of(ui).accent);
                 ui.vertical(|ui| {
                     ui.heading(self.t.t("about.title"));
                     ui.label(RichText::new(self.t.tv("about.version", &[("version", &self.version)])).weak());
@@ -255,7 +255,7 @@ fn card(ui: &mut egui::Ui, icon: Icon, title: &str, body: &str, button: Option<&
         ui.set_width(ui.available_width());
         ui.horizontal_top(|ui| {
             let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), egui::Sense::hover());
-            paint(ui.painter(), r, icon, ui.visuals().selection.bg_fill);
+            paint(ui.painter(), r, icon, crate::theme::Palette::of(ui).accent);
             ui.vertical(|ui| {
                 ui.label(RichText::new(title).strong());
                 ui.label(body);

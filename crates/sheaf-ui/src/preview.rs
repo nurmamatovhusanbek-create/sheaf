@@ -113,7 +113,7 @@ impl SheafApp {
 
     pub(crate) fn preview_ui(&mut self, ui: &mut egui::Ui) {
         if self.pages.is_empty() {
-            ui.centered_and_justified(|ui| ui.label(egui::RichText::new(self.t.t("preview.empty")).weak()));
+            self.empty_desk(ui);
             return;
         }
         let Some(page) = self.current_page().cloned() else {
@@ -125,9 +125,7 @@ impl SheafApp {
             self.preview.crop = None;
             self.preview.doubtful = None;
         }
-        self.preview_bar(ui, &page);
-        ui.separator();
-
+        let region = ui.max_rect();
         let avail = ui.available_size();
         let ppp = ui.ctx().pixels_per_point();
         let zoom = self.preview.zoom;
@@ -157,20 +155,19 @@ impl SheafApp {
             return;
         };
         let aspect = w as f32 / h as f32;
-        let pad = 16.0;
-        let (aw, ah) = ((avail.x - 2.0 * pad).max(80.0), (avail.y - 2.0 * pad).max(80.0));
+        // Room around the page, and below it for the floating adjust palette.
+        let pad = 28.0;
+        let dock = 48.0;
+        let (aw, ah) = ((avail.x - 2.0 * pad).max(80.0), (avail.y - 2.0 * pad - dock).max(80.0));
         let fit_w = if aspect >= aw / ah { aw } else { ah * aspect };
         let size = vec2(fit_w * zoom, fit_w * zoom / aspect);
+        let dark = ui.visuals().dark_mode;
         egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
-            let outer = vec2(size.x + 2.0 * pad, size.y + 2.0 * pad).max(ui.available_size());
+            let outer = vec2(size.x + 2.0 * pad, size.y + 2.0 * pad + dock).max(ui.available_size());
             let (area, _) = ui.allocate_exact_size(outer, Sense::hover());
-            let rect = Rect::from_center_size(area.center(), size);
+            let rect = Rect::from_center_size(area.center() - vec2(0.0, dock / 2.0), size);
             let painter = ui.painter_at(area);
-            painter.rect_filled(
-                rect.expand(1.0),
-                0.0,
-                ui.visuals().widgets.noninteractive.bg_stroke.color,
-            );
+            crate::theme::paper_shadow(&painter, rect, dark);
             painter.image(
                 tex,
                 rect,
@@ -180,132 +177,244 @@ impl SheafApp {
             self.draw_words(&painter, rect);
             self.crop_overlay(ui, rect, &page);
         });
+        self.page_dock(ui.ctx(), region, &page);
     }
 
-    fn preview_bar(&mut self, ui: &mut egui::Ui, page: &sheaf_app::api::PageDto) {
-        let at = self.pages.iter().position(|p| p.id == page.id).unwrap_or(0);
-        let total = self.pages.len();
+    /// Nothing is open: the desk itself says what to do. One focal point (a stack of paper and the
+    /// words under it), not three separate "empty" captions in three corners.
+    fn empty_desk(&mut self, ui: &mut egui::Ui) {
+        let p = crate::theme::Palette::of(ui);
+        let hovering = self.drop_hover;
+        let area = ui.max_rect();
+        // A dashed frame says "drop here"; it turns to the accent while a file is over the window.
+        let frame = area.shrink(20.0);
+        let colour = if hovering { p.accent } else { p.line_strong };
+        for shape in egui::Shape::dashed_line(
+            &[
+                frame.left_top(),
+                frame.right_top(),
+                frame.right_bottom(),
+                frame.left_bottom(),
+                frame.left_top(),
+            ],
+            Stroke::new(if hovering { 2.0 } else { 1.0 }, colour),
+            7.0,
+            6.0,
+        ) {
+            ui.painter().add(shape);
+        }
+        // One block, centred as a whole: the stack, the words under it, the two buttons.
+        let sheet = vec2(86.0, 112.0);
+        let block_h = sheet.y + 28.0 + 26.0 + 38.0 + 14.0 + 28.0;
+        let top = area.center().y - block_h / 2.0 - 10.0;
+        let centre = egui::pos2(area.center().x, top + sheet.y / 2.0);
+        // The stack: three sheets, each a little off the one below, the top one with its lines of text.
+        let paper = if p.dark {
+            Color32::from_rgb(0xee, 0xea, 0xe0)
+        } else {
+            Color32::from_rgb(0xfd, 0xfc, 0xf8)
+        };
+        let painter = ui.painter();
+        for (i, (dx, dy)) in [(10.0, -8.0), (5.0, -4.0), (0.0, 0.0)].into_iter().enumerate() {
+            let r = Rect::from_center_size(centre + vec2(dx - 5.0, dy + 4.0), sheet);
+            crate::theme::paper_shadow(painter, r, p.dark);
+            painter.rect_filled(r, 1.0, paper);
+            painter.rect_stroke(r, 1.0, Stroke::new(1.0, p.line), StrokeKind::Outside);
+            if i == 2 {
+                for (n, w) in [0.62, 0.8, 0.7, 0.8, 0.5].into_iter().enumerate() {
+                    let y = r.top() + 20.0 + n as f32 * 13.0;
+                    let bar = Rect::from_min_size(egui::pos2(r.left() + 12.0, y), vec2((sheet.x - 24.0) * w, 4.0));
+                    painter.rect_filled(bar, 2.0, crate::theme::tint(p.accent, if n == 0 { 200 } else { 90 }));
+                }
+            }
+        }
+        let mut open = false;
+        let mut scan = false;
+        let column = Rect::from_min_size(
+            egui::pos2(area.center().x - 190.0, top + sheet.y + 28.0),
+            vec2(380.0, block_h - sheet.y - 28.0),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(column), |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(self.t.t("empty.title")).heading());
+                ui.add_space(2.0);
+                ui.label(egui::RichText::new(self.t.t("empty.hint")).color(p.weak));
+                ui.add_space(12.0);
+                let (open_l, scan_l) = (self.t.t("toolbar.open"), self.t.t("toolbar.scan"));
+                let widths = crate::icons::labeled_width(ui, &open_l)
+                    + crate::icons::labeled_width(ui, &scan_l)
+                    + ui.spacing().item_spacing.x;
+                ui.horizontal(|ui| {
+                    ui.add_space(((ui.available_width() - widths) / 2.0).max(0.0));
+                    if crate::icons::labeled_button(ui, crate::icons::Icon::Open, &open_l, true, "Ctrl+O").clicked() {
+                        open = true;
+                    }
+                    if crate::icons::labeled_button(ui, crate::icons::Icon::Scan, &scan_l, false, "").clicked() {
+                        scan = true;
+                    }
+                });
+            });
+        });
+        if open {
+            self.open_dialog();
+        }
+        if scan {
+            self.open_scan();
+        }
+    }
+
+    /// The page's own adjustments, floating at the foot of the desk: colour mode, straighten, clean,
+    /// crop and recognized text. They act on the page in front of you, so they live on it, not in a
+    /// second toolbar row.
+    fn page_dock(&mut self, ctx: &egui::Context, region: Rect, page: &sheaf_app::api::PageDto) {
+        let p = crate::theme::Palette::of_ctx(ctx);
+        let f = page.filter;
         let t = &self.t;
-        let (cw, ccw, zin, zout, fit) = (
-            t.t("menu.rotate_cw"),
-            t.t("menu.rotate_ccw"),
-            t.t("preview.zoom_in"),
-            t.t("preview.zoom_out"),
-            t.t("preview.fit"),
-        );
-        let label = t.tv(
-            "preview.page_of",
-            &[("n", &(at + 1).to_string()), ("total", &total.to_string())],
-        );
+        let modes = [
+            (ColorMode::Color, t.t("filter.Color")),
+            (ColorMode::Gray, t.t("filter.Gray")),
+            (ColorMode::BW, t.t("filter.BW")),
+        ];
+        let (deskew_l, clean_l, text_l) = (t.t("filter.deskew"), t.t("filter.despeckle"), t.t("preview.text"));
         let crop_label = if page.crop.is_some() && self.preview.crop.is_none() {
             t.t("preview.crop_reset")
         } else {
             t.t("preview.crop")
         };
-        let text_label = t.t("preview.text");
         let text_hint = if page.ocr.state == "done" {
             t.t("preview.text_title")
         } else {
             t.t("preview.text_needs_ocr")
         };
-        let modes = [
-            ("Color", t.t("filter.Color")),
-            ("Gray", t.t("filter.Gray")),
-            ("BW", t.t("filter.BW")),
-        ];
-        let (deskew_l, clean_l) = (t.t("filter.deskew"), t.t("filter.despeckle"));
-        let f = page.filter;
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(at > 0, egui::Button::new(" < "))
-                .on_hover_text(self.t.t("preview.prev"))
-                .clicked()
-            {
-                self.select_only(at - 1);
-                self.tray.scroll_to = Some(at - 1);
-            }
-            ui.label(label);
-            if ui
-                .add_enabled(at + 1 < total, egui::Button::new(" > "))
-                .on_hover_text(self.t.t("preview.next"))
-                .clicked()
-            {
-                self.select_only(at + 1);
-                self.tray.scroll_to = Some(at + 1);
-            }
+        let popup_shadow = ctx.global_style().visuals.popup_shadow;
+        egui::Area::new(egui::Id::unique("page-dock"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(region.center().x, region.bottom() - 14.0))
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(p.surface)
+                    .stroke(Stroke::new(1.0, p.line_strong))
+                    .corner_radius(9)
+                    .shadow(popup_shadow)
+                    .inner_margin(egui::Margin::symmetric(5, 4))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        ui.horizontal(|ui| {
+                            for (mode, name) in &modes {
+                                if crate::icons::chip(ui, name, f.mode == *mode).clicked() && f.mode != *mode {
+                                    self.set_filter(sheaf_core::Filter { mode: *mode, ..f });
+                                }
+                            }
+                            ui.add_space(4.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            if crate::icons::chip(ui, &deskew_l, f.deskew != Deskew::Off).clicked() {
+                                self.set_filter(sheaf_core::Filter {
+                                    deskew: if f.deskew == Deskew::Off {
+                                        Deskew::Auto
+                                    } else {
+                                        Deskew::Off
+                                    },
+                                    ..f
+                                });
+                            }
+                            if crate::icons::chip(ui, &clean_l, f.despeckle).clicked() {
+                                self.set_filter(sheaf_core::Filter {
+                                    despeckle: !f.despeckle,
+                                    ..f
+                                });
+                            }
+                            ui.add_space(4.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            if crate::icons::chip(ui, &crop_label, self.preview.crop.is_some()).clicked() {
+                                if page.crop.is_some() {
+                                    let id = page.id;
+                                    self.command(move |b| {
+                                        b.apply(UiOp::Crop {
+                                            ids: vec![id],
+                                            rect: None,
+                                        })
+                                        .map(|_| ())
+                                    });
+                                } else if self.preview.crop.is_some() {
+                                    self.preview.crop = None;
+                                } else {
+                                    self.preview.crop = Some(DEFAULT_CROP);
+                                }
+                            }
+                            ui.add_enabled_ui(page.ocr.state == "done", |ui| {
+                                if crate::icons::chip(ui, &text_l, self.preview.show_text)
+                                    .on_hover_text(&text_hint)
+                                    .on_disabled_hover_text(&text_hint)
+                                    .clicked()
+                                {
+                                    self.preview.show_text = !self.preview.show_text;
+                                }
+                            });
+                        });
+                    });
+            });
+    }
+
+    /// One slim row above the desk: where you are in the document, turning the page, and the zoom.
+    pub(crate) fn preview_bar(&mut self, ui: &mut egui::Ui, page: &sheaf_app::api::PageDto) {
+        use crate::icons::{icon_button, Icon};
+        let at = self.pages.iter().position(|p| p.id == page.id).unwrap_or(0);
+        let total = self.pages.len();
+        let t = &self.t;
+        let (cw, ccw, zin, zout, fit, prev, next) = (
+            t.t("menu.rotate_cw"),
+            t.t("menu.rotate_ccw"),
+            t.t("preview.zoom_in"),
+            t.t("preview.zoom_out"),
+            t.t("preview.fit"),
+            t.t("preview.prev"),
+            t.t("preview.next"),
+        );
+        let label = t.tv(
+            "preview.page_of",
+            &[("n", &(at + 1).to_string()), ("total", &total.to_string())],
+        );
+        let weak = ui.visuals().weak_text_color();
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(at > 0, |ui| {
+                if icon_button(ui, Icon::Prev, &prev).clicked() {
+                    self.select_only(at - 1);
+                    self.tray.scroll_to = Some(at - 1);
+                }
+            });
+            ui.label(egui::RichText::new(label).monospace());
+            ui.add_enabled_ui(at + 1 < total, |ui| {
+                if icon_button(ui, Icon::Next, &next).clicked() {
+                    self.select_only(at + 1);
+                    self.tray.scroll_to = Some(at + 1);
+                }
+            });
+            ui.add_space(6.0);
             ui.separator();
-            if crate::icons::icon_button(ui, crate::icons::Icon::RotateCcw, &ccw).clicked() {
+            ui.add_space(2.0);
+            if icon_button(ui, Icon::RotateCcw, &ccw).clicked() {
                 self.rotate_pages(vec![page.id], -90);
             }
-            if crate::icons::icon_button(ui, crate::icons::Icon::RotateCw, &cw).clicked() {
+            if icon_button(ui, Icon::RotateCw, &cw).clicked() {
                 self.rotate_pages(vec![page.id], 90);
             }
-            ui.separator();
-            if crate::icons::icon_button(ui, crate::icons::Icon::ZoomOut, &zout).clicked() {
-                self.preview.step_zoom(-1);
-            }
-            ui.label(format!("{}%", (self.preview.zoom * 100.0).round() as i32));
-            if crate::icons::icon_button(ui, crate::icons::Icon::ZoomIn, &zin).clicked() {
-                self.preview.step_zoom(1);
-            }
-            if crate::icons::icon_button(ui, crate::icons::Icon::Fit, &fit).clicked() {
-                self.preview.zoom = 1.0;
-            }
-        });
-        ui.horizontal(|ui| {
-            for (id, name) in modes {
-                let mode = match id {
-                    "Gray" => ColorMode::Gray,
-                    "BW" => ColorMode::BW,
-                    _ => ColorMode::Color,
-                };
-                if ui.selectable_label(f.mode == mode, name).clicked() && f.mode != mode {
-                    self.set_filter(sheaf_core::Filter { mode, ..f });
-                }
-            }
-            if ui.selectable_label(f.deskew != Deskew::Off, deskew_l).clicked() {
-                self.set_filter(sheaf_core::Filter {
-                    deskew: if f.deskew == Deskew::Off {
-                        Deskew::Auto
-                    } else {
-                        Deskew::Off
-                    },
-                    ..f
-                });
-            }
-            if ui.selectable_label(f.despeckle, clean_l).clicked() {
-                self.set_filter(sheaf_core::Filter {
-                    despeckle: !f.despeckle,
-                    ..f
-                });
-            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let enabled = page.ocr.state == "done";
-                if ui
-                    .add_enabled(enabled, egui::Button::new(text_label).selected(self.preview.show_text))
-                    .on_hover_text(text_hint)
-                    .clicked()
-                {
-                    self.preview.show_text = !self.preview.show_text;
+                if icon_button(ui, Icon::Fit, &fit).clicked() {
+                    self.preview.zoom = 1.0;
                 }
-                if ui
-                    .add(egui::Button::new(crop_label.clone()).selected(self.preview.crop.is_some()))
-                    .clicked()
-                {
-                    if page.crop.is_some() {
-                        let id = page.id;
-                        self.command(move |b| {
-                            b.apply(UiOp::Crop {
-                                ids: vec![id],
-                                rect: None,
-                            })
-                            .map(|_| ())
-                        });
-                    } else if self.preview.crop.is_some() {
-                        self.preview.crop = None;
-                    } else {
-                        self.preview.crop = Some(DEFAULT_CROP);
-                    }
+                if icon_button(ui, Icon::ZoomIn, &zin).clicked() {
+                    self.preview.step_zoom(1);
+                }
+                ui.label(
+                    egui::RichText::new(format!("{}%", (self.preview.zoom * 100.0).round() as i32))
+                        .monospace()
+                        .color(weak),
+                );
+                if icon_button(ui, Icon::ZoomOut, &zout).clicked() {
+                    self.preview.step_zoom(-1);
                 }
             });
         });
@@ -327,7 +436,7 @@ impl SheafApp {
         let Some((_, result)) = self.preview.words.as_ref().filter(|_| self.preview.show_text) else {
             return;
         };
-        let accent = painter.ctx().global_style().visuals.selection.bg_fill;
+        let accent = crate::theme::Palette::of_ctx(painter.ctx()).accent;
         for (i, w) in result.words.iter().enumerate() {
             let current = self.preview.doubtful == Some(i);
             let class = conf_class(w.conf);
@@ -408,7 +517,7 @@ impl SheafApp {
             0.0,
             dim,
         );
-        let accent = ui.visuals().selection.bg_fill;
+        let accent = crate::theme::Palette::of(ui).accent;
         painter.rect_stroke(frame, 0.0, Stroke::new(2.0, accent), StrokeKind::Outside);
 
         let handles = [

@@ -8,6 +8,7 @@ mod dialogs;
 mod help;
 mod icons;
 mod jobs;
+mod kit;
 mod meta_ui;
 mod notify;
 mod platform;

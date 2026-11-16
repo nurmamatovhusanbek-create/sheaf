@@ -303,62 +303,105 @@ pub fn paint(painter: &Painter, rect: Rect, icon: Icon, color: Color32) {
 
 /// A square icon-only button.
 pub fn icon_button(ui: &mut egui::Ui, icon: Icon, tooltip: &str) -> egui::Response {
-    let size = vec2(30.0, 30.0);
+    let size = vec2(28.0, 28.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let visuals = ui.style().interact(&response);
-    if response.hovered() || response.has_focus() {
-        ui.painter().rect_filled(rect, 6.0, visuals.bg_fill);
+    let p = crate::theme::Palette::of(ui);
+    let enabled = ui.is_enabled();
+    if enabled && (response.hovered() || response.has_focus()) {
+        ui.painter().rect_filled(rect, 5.0, p.hover);
     }
-    let color = if ui.is_enabled() {
-        ui.visuals().text_color()
+    let color = if !enabled {
+        p.faint
+    } else if response.hovered() {
+        p.text
     } else {
-        ui.visuals().weak_text_color()
+        p.weak
     };
     paint(
         ui.painter(),
-        Rect::from_center_size(rect.center(), vec2(18.0, 18.0)),
+        Rect::from_center_size(rect.center(), vec2(16.0, 16.0)),
         icon,
         color,
     );
     response.on_hover_text(tooltip)
 }
 
-/// An icon with a label, as a flat button; `primary` fills it with the accent.
+/// How wide [`labeled_button`] will be for this label (to centre a row of them by measuring, not guessing).
+pub fn labeled_width(ui: &egui::Ui, label: &str) -> f32 {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    10.0 + 16.0
+        + 6.0
+        + ui.painter()
+            .layout_no_wrap(label.to_string(), font, Color32::PLACEHOLDER)
+            .size()
+            .x
+        + 12.0
+}
+
+/// An icon with a label, as a flat button; `primary` fills it with the accent: the one primary
+/// action of the window and nothing else.
 pub fn labeled_button(ui: &mut egui::Ui, icon: Icon, label: &str, primary: bool, tooltip: &str) -> egui::Response {
     let font = egui::TextStyle::Button.resolve(ui.style());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_string(), font, Color32::PLACEHOLDER);
-    let size = vec2(12.0 + 18.0 + 6.0 + galley.size().x + 12.0, 32.0);
+    let size = vec2(10.0 + 16.0 + 6.0 + galley.size().x + 12.0, 28.0);
     let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
     let enabled = ui.is_enabled();
-    let accent = ui.visuals().selection.bg_fill;
+    let p = crate::theme::Palette::of(ui);
     let (fill, fg) = if primary {
-        let f = if response.hovered() {
-            accent.gamma_multiply(1.12)
-        } else {
-            accent
-        };
-        (Some(f), Color32::WHITE)
+        (
+            Some(if response.hovered() { p.accent_hover } else { p.accent }),
+            p.on_accent,
+        )
     } else {
-        let f = response.hovered().then(|| ui.visuals().widgets.hovered.bg_fill);
-        (f, ui.visuals().text_color())
+        (response.hovered().then_some(p.hover), p.text)
     };
     let fg = if enabled { fg } else { fg.gamma_multiply(0.45) };
     if let Some(f) = fill {
         ui.painter()
-            .rect_filled(rect, 7.0, if enabled { f } else { f.gamma_multiply(0.5) });
+            .rect_filled(rect, 5.0, if enabled { f } else { f.gamma_multiply(0.5) });
     }
     paint(
         ui.painter(),
-        Rect::from_min_size(rect.min + vec2(12.0, 7.0), vec2(18.0, 18.0)),
+        Rect::from_min_size(rect.min + vec2(10.0, 6.0), vec2(16.0, 16.0)),
         icon,
-        fg,
+        if enabled && !primary { p.weak } else { fg },
     );
     ui.painter().galley(
-        pos2(rect.min.x + 12.0 + 18.0 + 6.0, rect.center().y - galley.size().y / 2.0),
+        pos2(rect.min.x + 10.0 + 16.0 + 6.0, rect.center().y - galley.size().y / 2.0),
         galley,
         fg,
     );
     response.on_hover_text(tooltip)
+}
+
+/// A small text toggle (a colour mode, a filter): washed accent when on, a hairline of fill when hovered.
+pub fn chip(ui: &mut egui::Ui, label: &str, on: bool) -> egui::Response {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let p = crate::theme::Palette::of(ui);
+    let enabled = ui.is_enabled();
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font, Color32::PLACEHOLDER);
+    let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 20.0, 24.0), egui::Sense::click());
+    if on {
+        ui.painter()
+            .rect_filled(rect, 5.0, crate::theme::tint(p.accent, if p.dark { 56 } else { 34 }));
+    } else if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, 5.0, p.hover);
+    }
+    let color = if !enabled {
+        p.faint
+    } else if on {
+        p.accent
+    } else {
+        p.text
+    };
+    ui.painter().galley(
+        pos2(rect.min.x + 10.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    response
 }

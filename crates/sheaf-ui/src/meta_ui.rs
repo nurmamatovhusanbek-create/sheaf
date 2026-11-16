@@ -124,27 +124,21 @@ impl SheafApp {
                 }
             }
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let ready = f.info.is_some();
-                if ui
-                    .add_enabled(
-                        ready,
-                        egui::Button::new(self.t.t("meta.save")).fill(ui.visuals().selection.bg_fill),
-                    )
-                    .clicked()
-                {
-                    change = Some(MetaEdit::Set(f.edit.clone()));
-                }
-                if ui
-                    .add_enabled(ready, egui::Button::new(self.t.t("meta.strip")))
-                    .clicked()
-                {
-                    change = Some(MetaEdit::Strip);
-                }
-                if ui.button(self.t.t("common.close")).clicked() {
-                    close = true;
-                }
-            });
+            let ready = f.info.is_some();
+            let pressed = crate::kit::footer(
+                ui,
+                &self.t.t("meta.save"),
+                ready,
+                &[(self.t.t("meta.strip"), ready), (self.t.t("common.close"), true)],
+            );
+            if pressed.primary {
+                change = Some(MetaEdit::Set(f.edit.clone()));
+            }
+            match pressed.secondary {
+                Some(0) => change = Some(MetaEdit::Strip),
+                Some(_) => close = true,
+                None => {}
+            }
         });
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             close = true;

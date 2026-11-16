@@ -113,6 +113,7 @@ impl SheafApp {
             .default_size([780.0, 600.0])
             .default_pos(ctx.content_rect().center() - egui::vec2(390.0, 300.0))
             .min_size([520.0, 340.0])
+            .collapsible(false)
             .show(ctx, |ui| {
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {

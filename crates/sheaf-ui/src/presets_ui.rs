@@ -267,21 +267,18 @@ impl SheafApp {
                 });
             });
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                let named = !f.edit.name.trim().is_empty();
-                save = ui
-                    .add_enabled(
-                        named,
-                        egui::Button::new(self.t.t("common.save")).fill(ui.visuals().selection.bg_fill),
-                    )
-                    .clicked();
-                run = ui
-                    .add_enabled(named, egui::Button::new(self.t.t("presets.run")))
-                    .clicked();
-                if ui.button(self.t.t("common.close")).clicked() {
-                    close = true;
-                }
-            });
+            let named = !f.edit.name.trim().is_empty();
+            let pressed = crate::kit::footer(
+                ui,
+                &self.t.t("common.save"),
+                named,
+                &[(self.t.t("presets.run"), named), (self.t.t("common.close"), true)],
+            );
+            save = pressed.primary;
+            run = pressed.secondary == Some(0);
+            if pressed.secondary == Some(1) {
+                close = true;
+            }
         });
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             close = true;

@@ -21,11 +21,15 @@ impl SearchState {
 impl SheafApp {
     pub(crate) fn search_box(&mut self, ui: &mut egui::Ui) {
         let hint = self.t.t("search.placeholder");
-        let resp = ui.add(
-            egui::TextEdit::singleline(&mut self.search.query)
-                .hint_text(hint)
-                .desired_width(200.0),
-        );
+        let has_pages = !self.pages.is_empty();
+        let resp = ui
+            .add_enabled(
+                has_pages,
+                egui::TextEdit::singleline(&mut self.search.query)
+                    .hint_text(hint)
+                    .desired_width(180.0),
+            )
+            .on_hover_text(self.t.t("search.label"));
         if std::mem::take(&mut self.search.focus_next) {
             resp.request_focus();
         }

@@ -151,8 +151,8 @@ impl SheafApp {
                         } else {
                             "update.install"
                         });
-                        let button = egui::Button::new(RichText::new(label).color(egui::Color32::WHITE))
-                            .fill(ui.visuals().selection.bg_fill);
+                        let pal = crate::theme::Palette::of(ui);
+                        let button = egui::Button::new(RichText::new(label).color(pal.on_accent)).fill(pal.accent);
                         if ui.add(button).clicked() {
                             install = Some(r.clone());
                         }

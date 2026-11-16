@@ -240,58 +240,93 @@ const GROUPS: [(&str, &[Tool]); 3] = [
     ),
 ];
 
-/// One row of the tools list: icon and name; what it does is in the tooltip.
-fn tool_row(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), egui::Sense::click());
-    let v = ui.visuals().clone();
-    let hovered = resp.hovered();
-    let p = ui.painter();
+/// Tools that work on the pages that are open. Without a document they would only produce an error.
+fn needs_pages(tool: Tool) -> bool {
+    !matches!(
+        tool,
+        Tool::Merge | Tool::Img2Pdf | Tool::Scan | Tool::Repair | Tool::Info
+    )
+}
+
+/// One row of the tools list: icon and name; what it does is in the tooltip. The icon is quiet until
+/// the row is under the pointer, so sixteen rows do not each shout in the accent colour.
+fn tool_row(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str, enabled: bool, why_not: &str) -> bool {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), sense);
+    let p = crate::theme::Palette::of(ui);
+    let hovered = enabled && resp.hovered();
+    let painter = ui.painter();
     if hovered {
-        p.rect_filled(rect, 6.0, v.widgets.hovered.bg_fill);
+        painter.rect_filled(rect, 5.0, p.hover);
     }
+    let (icon_colour, text_colour) = if !enabled {
+        (p.faint, p.faint)
+    } else if hovered {
+        (p.accent, p.text)
+    } else {
+        (p.weak, p.text)
+    };
     crate::icons::paint(
-        p,
-        egui::Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)),
+        painter,
+        egui::Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(16.0, 16.0)),
         tool_icon(tool),
-        v.selection.bg_fill,
+        icon_colour,
     );
-    p.text(
-        rect.min + vec2(34.0, 14.0),
+    painter.text(
+        rect.min + vec2(32.0, 13.0),
         egui::Align2::LEFT_CENTER,
         name,
-        egui::FontId::proportional(13.5),
-        v.text_color(),
+        egui::FontId::proportional(13.0),
+        text_colour,
     );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(hint)
-        .clicked()
+    let resp = if enabled {
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(hint)
+    } else {
+        resp.on_hover_text(why_not)
+    };
+    enabled && resp.clicked()
 }
 
 impl SheafApp {
     pub(crate) fn side_ui(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(6.0);
+        let p = crate::theme::Palette::of(ui);
+        // Two quiet tabs: the active one is ink-coloured with an accent underline; no filled pills.
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 14.0;
             let (a, b) = (self.t.t("side.tools"), self.t.t("side.ocr"));
-            let w = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
             for (tab, label) in [(Tab::Tools, a), (Tab::Ocr, b)] {
                 let on = self.side.tab == tab;
-                let button = egui::Button::new(egui::RichText::new(label).color(if on {
-                    egui::Color32::WHITE
-                } else {
-                    ui.visuals().text_color()
-                }))
-                .fill(if on {
-                    ui.visuals().selection.bg_fill
-                } else {
-                    ui.visuals().faint_bg_color
-                })
-                .min_size(vec2(w, 26.0));
-                if ui.add(button).clicked() {
+                let galley = ui.painter().layout_no_wrap(
+                    label,
+                    egui::FontId::proportional(13.0),
+                    if on { p.text } else { p.weak },
+                );
+                let (rect, resp) = ui.allocate_exact_size(vec2(galley.size().x, 26.0), egui::Sense::click());
+                let colour = if on || resp.hovered() { p.text } else { p.weak };
+                ui.painter().galley(
+                    egui::pos2(rect.min.x, rect.center().y - galley.size().y / 2.0),
+                    galley,
+                    colour,
+                );
+                if on {
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(egui::pos2(rect.min.x, rect.bottom() - 2.0), vec2(rect.width(), 2.0)),
+                        1.0,
+                        p.accent,
+                    );
+                }
+                if resp.clicked() {
                     self.side.tab = tab;
                 }
             }
         });
-        ui.add_space(4.0);
+        ui.add_space(2.0);
+        ui.separator();
+        ui.add_space(2.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| match self.side.tab {
@@ -326,11 +361,18 @@ impl SheafApp {
     }
 
     fn tool_grid(&mut self, ui: &mut egui::Ui) {
+        let has_pages = !self.pages.is_empty();
+        let why_not = self.t.t("side.needs_pages");
         ui.add(
             egui::TextEdit::singleline(&mut self.side.query)
                 .hint_text(self.t.t("side.search_tools"))
                 .desired_width(f32::INFINITY),
         );
+        if has_pages {
+            // What every tool below will act on: the thing a person most needs to know before clicking.
+            ui.add_space(2.0);
+            self.scope_note(ui);
+        }
         let q = self.side.query.trim().to_lowercase();
         let mut any = false;
         for (heading, tools) in GROUPS {
@@ -350,10 +392,12 @@ impl SheafApp {
                 continue;
             }
             any = true;
-            ui.add_space(6.0);
-            ui.label(RichText::new(self.t.t(heading).to_uppercase()).small().weak().strong());
+            ui.add_space(8.0);
+            ui.label(RichText::new(self.t.t(heading).to_uppercase()).small().weak());
+            ui.add_space(2.0);
             for (tool, name, hint) in entries {
-                if tool_row(ui, tool, &name, &hint) {
+                let enabled = has_pages || !needs_pages(tool);
+                if tool_row(ui, tool, &name, &hint, enabled, &why_not) {
                     self.open_tool(tool);
                 }
             }
@@ -402,7 +446,7 @@ impl SheafApp {
     }
 
     fn form_header(&mut self, ui: &mut egui::Ui, tool: Tool) {
-        if ui.button(format!("< {}", self.t.t("common.back"))).clicked() {
+        if crate::kit::back_link(ui, &self.t.t("common.back")) {
             self.side.form = None;
         }
         let id = TOOLS.iter().find(|(t, _)| *t == tool).map_or("", |(_, id)| *id);
@@ -471,7 +515,7 @@ impl SheafApp {
         ui.label(name_l);
         ui.text_edit_singleline(&mut s.split_name);
         ui.label(RichText::new(name_h).weak().small());
-        if ui.button(run).clicked() {
+        if crate::kit::primary_wide(ui, &run, true) {
             let rule = match s.split_rule {
                 0 => json!({ "EveryN": s.split_n.max(1) }),
                 1 => json!("BlankSheet"),
@@ -496,7 +540,7 @@ impl SheafApp {
             ui.label(RichText::new(hint).weak().small());
         }
         ui.label(RichText::new(self.t.t("compress.report")).weak());
-        if ui.button(self.t.t("common.run")).clicked() {
+        if crate::kit::primary_wide(ui, &self.t.t("common.run"), true) {
             let level = levels[self.side.compress_level].0;
             self.run_tool("compress", json!({ "level": level }));
         }
@@ -531,7 +575,7 @@ impl SheafApp {
                 });
         }
         ui.label(RichText::new(note).weak());
-        if ui.button(self.t.t("common.run")).clicked() {
+        if crate::kit::primary_wide(ui, &self.t.t("common.run"), true) {
             let s = &self.side;
             let params = json!({ "mode": if s.pdf2img_extract { "extract" } else { "render" }, "format": if s.pdf2img_png { "png" } else { "jpg" }, "dpi": s.pdf2img_dpi });
             self.run_tool("pdf2img", params);
@@ -545,7 +589,7 @@ impl SheafApp {
             self.t.t("stamp.image"),
         ];
         let before = self.side.stamp_kind;
-        ui.label(self.t.t("stamp.kind"));
+        crate::kit::field_label(ui, &self.t.t("stamp.kind"));
         egui::ComboBox::from_id_salt("stamp-kind")
             .selected_text(&kinds[self.side.stamp_kind])
             .width(ui.available_width())
@@ -579,7 +623,7 @@ impl SheafApp {
                 ui.label(RichText::new(name).weak());
             });
         } else {
-            ui.label(self.t.t("stamp.text"));
+            crate::kit::field_label(ui, &self.t.t("stamp.text"));
             ui.text_edit_singleline(&mut self.side.stamp_text);
             ui.label(RichText::new(self.t.t("stamp.text_hint")).weak().small());
         }
@@ -638,7 +682,7 @@ impl SheafApp {
             }
         });
         ui.label(RichText::new(note).weak().small());
-        if ui.button(self.t.t("common.run")).clicked() {
+        if crate::kit::primary_wide(ui, &self.t.t("common.run"), true) {
             let s = &self.side;
             if s.stamp_kind == 2 && s.picked.is_none() {
                 let text = self.t.t("stamp.need_image");
@@ -711,7 +755,7 @@ impl SheafApp {
         if let Some(e) = &s.error {
             ui.colored_label(ui.visuals().error_fg_color, e);
         }
-        if ui.button(self.t.t("lock.protect_run")).clicked() {
+        if crate::kit::primary_wide(ui, &self.t.t("lock.protect_run"), true) {
             let s = &mut self.side;
             s.error = None;
             if s.lock_user.is_empty() && s.lock_owner.is_empty() {
@@ -748,7 +792,7 @@ impl SheafApp {
             });
         }
         ui.label(RichText::new(self.t.t("lock.remove_note")).weak().small());
-        if ui.button(self.t.t("lock.remove_run")).clicked() {
+        if crate::kit::primary_wide(ui, &self.t.t("lock.remove_run"), true) {
             self.run_tool("unlock", json!({}));
         }
     }
@@ -760,10 +804,10 @@ impl SheafApp {
             self.t.tv("ocr.scope_selected", &[("n", &n.to_string())]),
             self.t.tv("ocr.scope_all", &[("n", &self.pages.len().to_string())]),
         );
-        ui.label(self.t.t("ocr.scope"));
+        crate::kit::field_label(ui, &self.t.t("ocr.scope"));
         ui.radio_value(&mut self.side.ocr_all, false, sel_l);
         ui.radio_value(&mut self.side.ocr_all, true, all_l);
-        ui.label(self.t.t("ocr.mode"));
+        crate::kit::field_label(ui, &self.t.t("ocr.mode"));
         for (i, id) in ["add", "redo", "text"].iter().enumerate() {
             let l = self.t.t(&format!("ocr.mode_{id}"));
             ui.radio_value(&mut self.side.ocr_mode, i, l);
@@ -774,7 +818,7 @@ impl SheafApp {
                 .weak()
                 .small(),
         );
-        ui.label(self.t.t("ocr.langs"));
+        crate::kit::field_label(ui, &self.t.t("ocr.langs"));
         ui.checkbox(&mut self.side.ocr_auto, self.t.t("ocr.langs_auto"));
         ui.add_enabled_ui(!self.side.ocr_auto, |ui| {
             for (i, (_, name)) in OCR_LANGS.iter().enumerate() {
@@ -786,13 +830,7 @@ impl SheafApp {
             ui.colored_label(ui.visuals().error_fg_color, self.t.t("ocr.no_engine"));
         }
         let off = self.settings.ocr_mode == "Off";
-        if ui
-            .add_enabled(
-                !no_engine && !off,
-                egui::Button::new(self.t.t("ocr.run")).fill(ui.visuals().selection.bg_fill),
-            )
-            .clicked()
-        {
+        if crate::kit::primary_wide(ui, &self.t.t("ocr.run"), !no_engine && !off) {
             let langs: Option<Vec<String>> = if self.side.ocr_auto {
                 None
             } else {

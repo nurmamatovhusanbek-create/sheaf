@@ -245,7 +245,7 @@ impl SheafApp {
             // Stays on screen until closed, with Details and "Report a problem" behind it.
             let (title, detail) = (app.t.t("notice.unclean"), app.t.t("notice.unclean_detail"));
             app.notify(
-                crate::notify::Kind::Error,
+                crate::notify::Kind::Warning,
                 title,
                 detail,
                 Some(sheaf_core::ErrorCode::Internal),
@@ -519,7 +519,6 @@ impl SheafApp {
         );
         let (scan, presets) = (t.t("toolbar.scan"), t.t("toolbar.presets"));
         let help_tip = format!("{}  F1", t.t("help.tooltip"));
-        let update_tip = t.t("update.tooltip");
         let ocr_off = self.settings.ocr_mode == "Off";
         let (can_undo, can_redo) = (self.can_undo, self.can_redo);
         ui.horizontal(|ui| {
@@ -555,26 +554,50 @@ impl SheafApp {
                 self.open_presets();
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Right to left: the one primary action sits on the edge, then the quiet utilities.
                 ui.add_space(6.0);
-                if icon_button(ui, Icon::Settings, &settings).clicked() {
-                    self.modal = Some(Modal::Settings(crate::dialogs::SettingsForm::new(&self.settings)));
-                }
-                if icon_button(ui, Icon::Update, &update_tip).clicked() {
-                    self.open_update();
-                }
-                if icon_button(ui, Icon::Help, &help_tip).clicked() {
-                    self.toggle_help();
-                }
-                self.bell(ui);
                 ui.add_enabled_ui(!no_pages, |ui| {
                     if labeled_button(ui, Icon::Export, &export, true, "Ctrl+E").clicked() {
                         self.open_export(false);
                     }
                 });
-                ui.add_space(8.0);
+                ui.add_space(6.0);
+                if icon_button(ui, Icon::Settings, &settings).clicked() {
+                    self.modal = Some(Modal::Settings(crate::dialogs::SettingsForm::new(&self.settings)));
+                }
+                self.help_menu(ui, &help_tip);
+                self.bell(ui);
+                ui.add_space(6.0);
                 self.search_box(ui);
             });
         });
+    }
+
+    /// Help, updates, About and the problem report behind one button: three of the four are used
+    /// rarely, so they do not each get a permanent place in the toolbar.
+    fn help_menu(&mut self, ui: &mut egui::Ui, tip: &str) {
+        let response = crate::icons::icon_button(ui, crate::icons::Icon::Help, tip);
+        let (mut help, mut update, mut about, mut report) = (false, false, false, false);
+        egui::Popup::menu(&response).show(|ui| {
+            ui.set_min_width(190.0);
+            help = ui.button(format!("{}   F1", self.t.t("help.tooltip"))).clicked();
+            update = ui.button(self.t.t("update.tooltip")).clicked();
+            ui.separator();
+            about = ui.button(self.t.t("about.title")).clicked();
+            report = ui.button(self.t.t("report.open")).clicked();
+            if help || update || about || report {
+                ui.close();
+            }
+        });
+        if help {
+            self.toggle_help();
+        } else if update {
+            self.open_update();
+        } else if about {
+            self.open_about();
+        } else if report {
+            self.open_report(None);
+        }
     }
 
     pub(crate) fn undo(&mut self, redo: bool) {
@@ -686,89 +709,69 @@ impl SheafApp {
 
     // ---- job bar and toasts --------------------------------------------------
 
-    fn job_bar(&mut self, ui: &mut egui::Ui) {
-        let rows: Vec<JobView> = {
-            let finished: Vec<u64> = self
-                .jobs
-                .values()
-                .filter(|j| matches!(j.state, "done" | "failed" | "cancelled"))
-                .map(|j| j.id)
-                .collect();
-            let keep: HashSet<u64> = finished.iter().rev().take(4).copied().collect();
-            self.jobs
-                .values()
-                .filter(|j| !self.dismissed.contains(&j.id) && !(j.kind == "import" && j.state == "done"))
-                .filter(|j| !matches!(j.state, "done" | "failed" | "cancelled") || keep.contains(&j.id))
-                .cloned()
-                .collect()
-        };
-        if rows.is_empty() {
-            ui.label(egui::RichText::new(self.t.t("job.none")).weak());
-            return;
-        }
+    /// The jobs worth showing: the running ones and the last few that ended, minus what was dismissed.
+    fn visible_jobs(&self) -> Vec<JobView> {
+        let finished: Vec<u64> = self
+            .jobs
+            .values()
+            .filter(|j| matches!(j.state, "done" | "failed" | "cancelled"))
+            .map(|j| j.id)
+            .collect();
+        let keep: HashSet<u64> = finished.iter().rev().take(4).copied().collect();
+        self.jobs
+            .values()
+            .filter(|j| !self.dismissed.contains(&j.id) && !(j.kind == "import" && j.state == "done"))
+            .filter(|j| !matches!(j.state, "done" | "failed" | "cancelled") || keep.contains(&j.id))
+            .cloned()
+            .collect()
+    }
+
+    fn job_bar(&mut self, ui: &mut egui::Ui, rows: Vec<JobView>) {
+        use crate::kit::{track, Track};
         for job in rows {
             let running = matches!(job.state, "running" | "queued");
             ui.horizontal(|ui| {
+                let pal = crate::theme::Palette::of(ui);
                 ui.allocate_ui_with_layout(
-                    egui::vec2(130.0, 18.0),
+                    egui::vec2(124.0, 18.0),
                     egui::Layout::left_to_right(egui::Align::Center),
                     |ui| {
-                        ui.set_min_width(130.0);
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(crate::jobs::kind_label(&self.t, &job.kind)).strong())
-                                .truncate(),
-                        );
+                        ui.set_min_width(124.0);
+                        ui.add(egui::Label::new(crate::jobs::kind_label(&self.t, &job.kind)).truncate());
                     },
                 );
-                let done_color = egui::Color32::from_rgb(0x2e, 0x9e, 0x5b);
-                match job.state {
-                    "done" => {
-                        // A finished job shows a full bar, like every other program does.
-                        ui.add(
-                            egui::ProgressBar::new(1.0)
-                                .desired_width(150.0)
-                                .fill(done_color)
-                                .text(egui::RichText::new("100%").color(egui::Color32::WHITE)),
-                        );
-                    }
-                    "failed" => {
-                        // A red, full bar: it ended, and not well. No percentage that could read as success.
-                        ui.add(
-                            egui::ProgressBar::new(1.0)
-                                .desired_width(150.0)
-                                .fill(ui.visuals().error_fg_color.gamma_multiply(0.55))
-                                .text(""),
-                        );
-                    }
-                    "cancelled" => {
-                        ui.add(
-                            egui::ProgressBar::new(job.progress)
-                                .desired_width(150.0)
-                                .fill(ui.visuals().weak_text_color())
-                                .text(format!("{}%", (job.progress * 100.0).floor() as u32)),
-                        );
-                    }
-                    _ if crate::jobs::knows_progress(&job) => {
-                        ui.add(
-                            egui::ProgressBar::new(job.progress)
-                                .desired_width(150.0)
-                                .show_percentage(),
-                        );
-                    }
-                    _ => {
-                        // Nobody knows how many pages a feeder holds: keep moving instead of sitting at 0 %.
-                        ui.add(egui::ProgressBar::new(0.0).desired_width(150.0).animate(true));
-                    }
-                }
+                // The bar, then its figure: the same place on every row, so a column of jobs reads at a glance.
+                let known = crate::jobs::knows_progress(&job);
+                let (kind, colour, figure) = match job.state {
+                    "done" => (Track::Fraction(1.0), pal.ok, "100%".to_string()),
+                    // Red and full: it ended, and not well. No percentage that could read as success.
+                    "failed" => (Track::Fraction(1.0), pal.bad, "—".to_string()),
+                    "cancelled" => (
+                        Track::Fraction(job.progress),
+                        pal.faint,
+                        format!("{}%", (job.progress * 100.0).floor() as u32),
+                    ),
+                    _ if known => (
+                        Track::Fraction(job.progress),
+                        pal.accent,
+                        format!("{}%", (job.progress * 100.0).floor() as u32),
+                    ),
+                    // Nobody knows how many pages a feeder holds: keep moving instead of sitting at 0 %.
+                    _ => (Track::Moving, pal.accent, String::new()),
+                };
+                track(ui, kind, colour, 150.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(38.0, 18.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        ui.label(egui::RichText::new(figure).monospace().color(pal.weak));
+                    },
+                );
                 let text = crate::jobs::summary(&self.t, &job);
                 if running {
-                    ui.label(text);
+                    ui.label(egui::RichText::new(text).color(pal.weak));
                 } else {
-                    let color = match job.state {
-                        "failed" => ui.visuals().error_fg_color,
-                        "done" => done_color,
-                        _ => ui.visuals().weak_text_color(),
-                    };
+                    let color = if job.state == "failed" { pal.bad } else { pal.weak };
                     ui.label(egui::RichText::new(text).color(color));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -781,7 +784,8 @@ impl SheafApp {
                             });
                         }
                     } else {
-                        if ui.small_button("x").on_hover_text(self.t.t("job.dismiss")).clicked() {
+                        if crate::icons::icon_button(ui, crate::icons::Icon::Close, &self.t.t("job.dismiss")).clicked()
+                        {
                             self.dismissed.insert(job.id);
                         }
                         if !job.outputs.is_empty() && ui.button(self.t.t("job.reveal")).clicked() {
@@ -822,7 +826,7 @@ impl SheafApp {
                 .order(egui::Order::Tooltip)
                 .show(ctx, |ui| {
                     egui::Frame::popup(ui.style())
-                        .stroke(egui::Stroke::new(2.0, ui.visuals().selection.bg_fill))
+                        .stroke(egui::Stroke::new(2.0, crate::theme::Palette::of(ui).accent))
                         .inner_margin(28.0)
                         .show(ui, |ui| {
                             ui.label(egui::RichText::new(self.t.t("drop.text")).size(18.0));
@@ -864,34 +868,66 @@ impl eframe::App for SheafApp {
         self.shortcuts(&ctx);
         self.drops(&ctx);
 
+        let p = crate::theme::Palette::of(ui);
         egui::Panel::top("toolbar")
             .frame(
                 egui::Frame::new()
-                    .fill(ui.visuals().window_fill)
-                    .inner_margin(egui::Margin::symmetric(6, 5))
-                    .stroke(egui::Stroke::new(
-                        1.0,
-                        ui.visuals().widgets.noninteractive.bg_stroke.color,
-                    )),
+                    .fill(p.panel)
+                    .inner_margin(egui::Margin::symmetric(6, 5)),
             )
             .show(ui, |ui| {
                 self.toolbar(ui);
             });
-        egui::Panel::bottom("jobbar").resizable(false).show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(120.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| self.job_bar(ui));
-        });
-        egui::Panel::left("tray")
-            .default_size(176.0)
-            .size_range(130.0..=420.0)
-            .show(ui, |ui| self.tray_ui(ui));
+        // Jobs appear when there are any and go away when there are none: no permanent "no jobs" strip.
+        let jobs = self.visible_jobs();
+        if !jobs.is_empty() {
+            egui::Panel::bottom("jobbar")
+                .resizable(false)
+                .frame(
+                    egui::Frame::new()
+                        .fill(p.panel)
+                        .inner_margin(egui::Margin::symmetric(10, 6)),
+                )
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .max_height(120.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| self.job_bar(ui, jobs));
+                });
+        }
+        // With no pages the tray has nothing to hold: the desk gets the room and says what to do.
+        if !self.pages.is_empty() {
+            egui::Panel::left("tray")
+                .default_size(168.0)
+                .size_range(130.0..=420.0)
+                .frame(
+                    egui::Frame::new()
+                        .fill(p.panel)
+                        .inner_margin(egui::Margin::symmetric(8, 6)),
+                )
+                .show(ui, |ui| self.tray_ui(ui));
+        }
         egui::Panel::right("side")
-            .default_size(300.0)
+            .default_size(288.0)
             .size_range(260.0..=520.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(p.panel)
+                    .inner_margin(egui::Margin::symmetric(10, 8)),
+            )
             .show(ui, |ui| self.side_ui(ui));
-        egui::CentralPanel::default().show(ui, |ui| self.preview_ui(ui));
+        if let Some(page) = self.current_page().cloned() {
+            egui::Panel::top("previewbar")
+                .frame(
+                    egui::Frame::new()
+                        .fill(p.panel)
+                        .inner_margin(egui::Margin::symmetric(8, 3)),
+                )
+                .show(ui, |ui| self.preview_bar(ui, &page));
+        }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(p.desk))
+            .show(ui, |ui| self.preview_ui(ui));
 
         self.modal_ui(&ctx);
         self.help_ui(&ctx);

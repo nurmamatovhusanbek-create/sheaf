@@ -50,12 +50,9 @@ fn click_select(app: &mut SheafApp, index: usize, shift: bool, ctrl: bool) {
     }
 }
 
-fn badges(app: &SheafApp, page: &PageDto) -> Vec<(String, Color32)> {
+fn badges(app: &SheafApp, page: &PageDto, p: &crate::theme::Palette) -> Vec<(String, Color32)> {
     let t = &app.t;
-    let ok = Color32::from_rgb(0x2e, 0x9e, 0x5b);
-    let warn = Color32::from_rgb(0xc9, 0x8a, 0x00);
-    let bad = Color32::from_rgb(0xd0, 0x3b, 0x32);
-    let plain = Color32::GRAY;
+    let (ok, warn, bad, plain) = (p.ok, p.warn, p.bad, p.weak);
     let mut out = Vec::new();
     match page.ocr.state {
         "queued" => out.push((t.t("badge.ocr_queued"), plain)),
@@ -64,11 +61,17 @@ fn badges(app: &SheafApp, page: &PageDto) -> Vec<(String, Color32)> {
         "failed" => out.push((t.t("badge.ocr_failed"), bad)),
         _ => {}
     }
-    if page.has_text == Some(true) && page.ocr.state != "done" {
-        out.push((t.t("badge.text"), plain));
+    // A text layer is the normal case and says nothing. A page WITHOUT one is the thing worth a badge:
+    // it is what recognition can fix.
+    if page.has_text == Some(false)
+        && page.ocr.state != "done"
+        && page.ocr.state != "running"
+        && page.ocr.state != "queued"
+    {
+        out.push((t.t("badge.no_text"), warn));
     }
     if page.crop.is_some() {
-        out.push((t.t("badge.crop"), warn));
+        out.push((t.t("badge.crop"), plain));
     }
     let f = &page.filter;
     if f.mode != sheaf_core::ColorMode::Color || f.deskew != sheaf_core::Deskew::Off || f.despeckle || f.contrast != 0 {
@@ -81,7 +84,6 @@ impl SheafApp {
     pub(crate) fn tray_ui(&mut self, ui: &mut egui::Ui) {
         self.tex.new_frame();
         let total = self.pages.len();
-        ui.add_space(4.0);
         let mut head = self.t.tn("tray.count", total as i64, &[]);
         if self.sel.ids.len() > 1 {
             head = format!(
@@ -89,8 +91,12 @@ impl SheafApp {
                 self.t.tn("tray.selected", self.sel.ids.len() as i64, &[])
             );
         }
-        ui.label(egui::RichText::new(if total == 0 { String::new() } else { head }).weak());
-        ui.separator();
+        ui.label(
+            egui::RichText::new(if total == 0 { String::new() } else { head })
+                .small()
+                .weak(),
+        );
+        ui.add_space(2.0);
         if total == 0 {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
@@ -126,23 +132,24 @@ impl SheafApp {
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click_and_drag());
         let selected = self.sel.ids.contains(&page.id);
         let visuals = ui.visuals().clone();
+        let pal = crate::theme::Palette::of(ui);
         let painter = ui.painter_at(rect);
         if selected {
-            painter.rect_filled(rect, 6.0, visuals.selection.bg_fill.gamma_multiply(0.25));
-            painter.rect_stroke(
+            // A wash of the accent and a ring: quiet enough that eight selected pages are not a wall of blue.
+            painter.rect_filled(
                 rect,
-                6.0,
-                Stroke::new(2.0, visuals.selection.bg_fill),
-                StrokeKind::Inside,
+                7.0,
+                crate::theme::tint(pal.accent, if pal.dark { 46 } else { 30 }),
             );
+            painter.rect_stroke(rect, 7.0, Stroke::new(1.5, pal.accent), StrokeKind::Inside);
         } else if resp.hovered() {
-            painter.rect_filled(rect, 6.0, visuals.widgets.hovered.weak_bg_fill);
+            painter.rect_filled(rect, 7.0, pal.hover);
         }
-        if self.sel.focus == Some(index) {
+        if self.sel.focus == Some(index) && !selected {
             painter.rect_stroke(
                 rect.shrink(1.0),
-                5.0,
-                Stroke::new(1.0, visuals.text_color().gamma_multiply(0.5)),
+                6.0,
+                Stroke::new(1.0, pal.line_strong),
                 StrokeKind::Inside,
             );
         }
@@ -151,23 +158,14 @@ impl SheafApp {
             Pic::Ready(id, [w, h]) => {
                 let scale = (thumb.width() / w as f32).min(thumb.height() / h as f32);
                 let img = Rect::from_center_size(thumb.center(), vec2(w as f32 * scale, h as f32 * scale));
-                painter.rect_filled(
-                    img.translate(vec2(0.0, 2.0)).expand(1.0),
-                    3.0,
-                    Color32::from_black_alpha(if visuals.dark_mode { 90 } else { 35 }),
-                );
+                crate::theme::paper_shadow(&painter, img, visuals.dark_mode);
                 painter.image(
                     id,
                     img,
                     Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                     Color32::WHITE,
                 );
-                painter.rect_stroke(
-                    img,
-                    0.0,
-                    Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color),
-                    StrokeKind::Outside,
-                );
+                painter.rect_stroke(img, 0.0, Stroke::new(1.0, pal.line), StrokeKind::Outside);
             }
             Pic::Loading => {
                 painter.rect_filled(
@@ -187,7 +185,7 @@ impl SheafApp {
             }
         }
         let mut x = thumb.left() + 4.0;
-        for (text, color) in badges(self, &page) {
+        for (text, color) in badges(self, &page, &pal) {
             let galley = painter.layout_no_wrap(text, FontId::proportional(11.0), Color32::WHITE);
             let r = Rect::from_min_size(
                 egui::pos2(x, thumb.bottom() - galley.size().y - 8.0),
@@ -201,12 +199,8 @@ impl SheafApp {
             egui::pos2(rect.center().x, rect.bottom() - 14.0),
             Align2::CENTER_CENTER,
             self.t.tv("tray.page", &[("n", &(index + 1).to_string())]),
-            FontId::proportional(13.0),
-            if selected {
-                visuals.strong_text_color()
-            } else {
-                visuals.weak_text_color()
-            },
+            FontId::proportional(12.0),
+            if selected { pal.text } else { pal.weak },
         );
 
         let m = ui.input(|i| i.modifiers);
@@ -313,7 +307,7 @@ impl SheafApp {
             ui.painter().hline(
                 view.x_range().shrink(8.0),
                 y,
-                Stroke::new(3.0, ui.visuals().selection.bg_fill),
+                Stroke::new(3.0, crate::theme::Palette::of(ui).accent),
             );
         }
         let speed = if pos.y < view.top() + 36.0 {
