@@ -1,7 +1,9 @@
 name: release
 
-# Publish a release: push a tag such as v0.1.0 (the number must be the one in Cargo.toml).
-#   git tag v0.1.0 && git push origin v0.1.0
+# Publish a release, either way (the number is the one in Cargo.toml):
+#   - push a tag such as v0.1.0:  git tag v0.1.0 && git push origin v0.1.0
+#   - or run this workflow by hand ("Run workflow" in the Actions tab, or the API) on the branch to
+#     release: it builds that commit and creates the tag and the release itself.
 # The release carries what the in-app Update button reads (UI-UPDATE): sheaf.exe, the whole program in
 # one file, and sheaf.exe.sha256 beside it; and sheaf-windows.zip for people who download it in a browser,
 # where a bare .exe is often blocked or silently dropped.
@@ -9,6 +11,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -28,7 +31,9 @@ jobs:
       - name: The tag is the version in Cargo.toml
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+          echo "TAG=v$version" >> "$GITHUB_ENV"
+          # Pushed by tag: the tag must say the same. Run by hand: the tag is made from the version.
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1
           fi
       - name: Toolchain
@@ -61,5 +66,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/sheaf.exe dist/sheaf.exe.sha256 dist/sheaf-windows.zip \
-            --title "Sheaf ${GITHUB_REF_NAME#v}" --generate-notes
+          # --target makes the tag at this very commit when it does not exist yet (a by-hand run).
+          gh release create "$TAG" dist/sheaf.exe dist/sheaf.exe.sha256 dist/sheaf-windows.zip \
+            --target "$GITHUB_SHA" --title "Sheaf ${TAG#v}" --generate-notes
