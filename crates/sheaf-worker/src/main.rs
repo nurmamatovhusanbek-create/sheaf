@@ -9,6 +9,7 @@
 //! `export_images`, `extract_images`.
 
 mod handlers;
+mod harden;
 
 use handlers::{Bundled, Worker};
 use sheaf_core::proto::{Request, Response};
@@ -52,6 +53,8 @@ fn main() -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
+    // Before any document is opened (SEC-ISOLATE).
+    harden::apply();
     let mut worker = match Worker::new(
         &session,
         pdfium,

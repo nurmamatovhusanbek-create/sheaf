@@ -388,3 +388,28 @@ fn bundled_files_are_checked_against_their_pinned_hashes() {
     fs::remove_file(root.join("SHA256SUMS")).expect("remove");
     assert!(verify_bundle(root, &[]).is_err(), "no hash list, no trust");
 }
+
+/// Windows only: while the guard lives, the verified files cannot be changed,
+/// so the check cannot be undone before the files are loaded.
+#[cfg(windows)]
+#[test]
+fn verified_files_cannot_be_modified_while_guarded() {
+    let dir = Scratch::new("bundle-lock");
+    let root = dir.path();
+    fs::write(root.join("lib.dll"), b"engine").expect("write");
+    fs::write(
+        root.join("SHA256SUMS"),
+        format!("{}  lib.dll\n", hex(&hash_bytes(&[b"engine"]))),
+    )
+    .expect("sums");
+    let guard = verify_bundle(root, &["lib.dll"]).expect("verify");
+    assert!(fs::write(root.join("lib.dll"), b"evil").is_err(), "write while guarded");
+    assert!(fs::remove_file(root.join("lib.dll")).is_err(), "delete while guarded");
+    assert!(
+        fs::rename(root.join("lib.dll"), root.join("x.dll")).is_err(),
+        "rename while guarded"
+    );
+    assert_eq!(fs::read(root.join("lib.dll")).expect("still readable"), b"engine");
+    drop(guard);
+    fs::write(root.join("lib.dll"), b"ok again").expect("free after the guard is dropped");
+}

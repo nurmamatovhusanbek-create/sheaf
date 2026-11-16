@@ -1088,6 +1088,7 @@ dependencies = [
  "sheaf-ocr",
  "sheaf-pdf",
  "sheaf-store",
+ "windows-sys",
 ]
 
 [[package]]

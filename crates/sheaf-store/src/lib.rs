@@ -55,6 +55,11 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 /// SHA-256 of a file, streamed.
 pub fn hash_file(path: &Path) -> Result<[u8; 32]> {
     let mut f = File::open(path).map_err(|e| AppError::io("open for hashing", &e))?;
+    hash_open_file(&mut f)
+}
+
+/// SHA-256 of an already open file, from its current position.
+fn hash_open_file(f: &mut File) -> Result<[u8; 32]> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 1 << 16];
     loop {
@@ -82,14 +87,18 @@ pub fn hash_bytes(parts: &[&[u8]]) -> [u8; 32] {
 /// `dl/`, which holds build inputs; every path in `required` must be present,
 /// listed and intact. A mismatch is an `EngineMissing` error naming the file.
 ///
-/// This narrows the window, it does not close it: a file replaced after the
-/// check is not noticed. The install folder must not be writable by other
-/// software for the check to mean anything (SEC-TB4).
-pub fn verify_bundle(root: &Path, required: &[&str]) -> Result<()> {
+/// On Windows every verified file is opened so that nobody else can write to,
+/// rename or delete it, hashed through that same handle, and kept open for as
+/// long as the returned [`BundleGuard`] lives: what was checked is what gets
+/// loaded, with no gap in between. Elsewhere the guard holds the files open
+/// but cannot stop a replacement, so the install folder must not be writable
+/// by other software there (SEC-TB4).
+pub fn verify_bundle(root: &Path, required: &[&str]) -> Result<BundleGuard> {
     let failed =
         |what: &str, path: &str| AppError::new(ErrorCode::EngineMissing, format!("bundled component {what}: {path}"));
     let list = fs::read_to_string(root.join("SHA256SUMS")).map_err(|_| failed("has no hash list", "SHA256SUMS"))?;
     let mut checked: Vec<&str> = Vec::new();
+    let mut held = Vec::new();
     for line in list.lines() {
         let Some((want, path)) = line.split_once(char::is_whitespace) else {
             continue;
@@ -109,16 +118,33 @@ pub fn verify_bundle(root: &Path, required: &[&str]) -> Result<()> {
         if !file.is_file() {
             continue;
         }
-        let got = hex(&hash_file(&file)?);
+        let mut open = std::fs::OpenOptions::new();
+        open.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            open.share_mode(1); // FILE_SHARE_READ: no writers, no rename or delete
+        }
+        let mut handle = open
+            .open(&file)
+            .map_err(|_| failed("cannot be opened for checking", path))?;
+        let got = hex(&hash_open_file(&mut handle)?);
         if !got.eq_ignore_ascii_case(want.trim()) {
             return Err(failed("does not match its pinned hash", path));
         }
+        held.push(handle);
         checked.push(path);
     }
     match required.iter().find(|r| !checked.contains(r)) {
         Some(missing) => Err(failed("is missing or not pinned", missing)),
-        None => Ok(()),
+        None => Ok(BundleGuard { _files: held }),
     }
+}
+
+/// The verified files, held open (see [`verify_bundle`]). Keep it for the life of the process.
+#[derive(Debug)]
+pub struct BundleGuard {
+    _files: Vec<File>,
 }
 
 pub fn hex(bytes: &[u8]) -> String {

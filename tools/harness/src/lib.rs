@@ -92,10 +92,14 @@ fn required_files() -> Vec<&'static str> {
 /// SEC-SUPPLY: verify the bundled engines against their pinned hashes, once
 /// per process (FLOW-LIFECYCLE startup).
 fn verified(vendor: &Path) -> Result<()> {
-    static RESULT: std::sync::OnceLock<Result<()>> = std::sync::OnceLock::new();
+    // The guard stays in the static: on Windows the files remain locked against
+    // modification until the process ends.
+    static RESULT: std::sync::OnceLock<Result<sheaf_store::BundleGuard>> = std::sync::OnceLock::new();
     RESULT
         .get_or_init(|| sheaf_store::verify_bundle(vendor, &required_files()))
-        .clone()
+        .as_ref()
+        .map(|_| ())
+        .map_err(Clone::clone)
 }
 
 impl Engines {
