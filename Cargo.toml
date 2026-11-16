@@ -26,3 +26,7 @@ regex = { version = "1", default-features = false, features = ["std", "perf", "u
 zeroize = "1"
 tiff = "0.11"
 getrandom = "0.4"
+
+# Build scripts compress the embedded engines; unoptimized that takes minutes.
+[profile.dev.build-override]
+opt-level = 3

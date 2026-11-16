@@ -148,7 +148,7 @@ sheaf/
   ui/               MOD-UI       index.html, js/*.mjs, css/, i18n/{en,uz,ru}.json
   vendor/           pdfium.dll, tesseract/, tessdata/, fonts/, SHA256SUMS (CI-fetched)
   fixtures/         test documents (TEST-FIXTURES)
-  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench)
+  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench), portable (the harness and worker as one executable with the engines embedded)
   .github/workflows/ build + test + package (DOC-BUILD)
 ```
 

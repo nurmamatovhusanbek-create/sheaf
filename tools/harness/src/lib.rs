@@ -23,6 +23,8 @@ use sheaf_ocr::{CacheEntry, Hit, SearchIndex};
 use sheaf_store::Session;
 use std::path::{Path, PathBuf};
 
+pub mod cli;
+
 /// Where the bundled engines live.
 #[derive(Debug, Clone)]
 pub struct Engines {
@@ -69,7 +71,7 @@ pub struct Exported {
 }
 
 /// What a worker cannot run without, relative to the bundle's `vendor/` dir.
-fn required_files() -> Vec<&'static str> {
+pub fn required_files() -> Vec<&'static str> {
     let mut files = vec![
         "tessdata/eng.traineddata",
         "tessdata/osd.traineddata",
@@ -103,6 +105,26 @@ fn verified(vendor: &Path) -> Result<()> {
 }
 
 impl Engines {
+    /// Engines laid out like the checkout's `vendor/` in `vendor`, run by
+    /// `worker`. Nothing is checked here; callers verify the files first.
+    pub fn from_vendor(worker: PathBuf, vendor: &Path) -> Engines {
+        let (platform, tesseract) = if cfg!(windows) {
+            (
+                "win-x64",
+                vendor.join("tesseract").join("win-x64").join("tesseract.exe"),
+            )
+        } else {
+            // Linux uses the distribution's Tesseract.
+            ("linux-x64", PathBuf::from("tesseract"))
+        };
+        Engines {
+            worker,
+            pdfium_dir: vendor.join("pdfium").join(platform),
+            tesseract: Some((tesseract, vendor.join("tessdata"))),
+            font: Some(vendor.join("fonts").join("NotoSans-Regular.ttf")),
+        }
+    }
+
     /// The vendored engines of a development checkout, with the worker
     /// binary that sits beside the running executable.
     pub fn vendored() -> Result<Engines> {
@@ -112,20 +134,7 @@ impl Engines {
         // the checkout, whose location is only known on the build machine.
         if let Some(vendor) = worker.parent().map(|d| d.join("vendor")).filter(|d| d.is_dir()) {
             verified(&vendor)?;
-            let (platform, tesseract) = if cfg!(windows) {
-                (
-                    "win-x64",
-                    vendor.join("tesseract").join("win-x64").join("tesseract.exe"),
-                )
-            } else {
-                ("linux-x64", PathBuf::from("tesseract"))
-            };
-            return Ok(Engines {
-                worker,
-                pdfium_dir: vendor.join("pdfium").join(platform),
-                tesseract: Some((tesseract, vendor.join("tessdata"))),
-                font: Some(vendor.join("fonts").join("NotoSans-Regular.ttf")),
-            });
+            return Ok(Engines::from_vendor(worker, &vendor));
         }
         verified(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor"))?;
         Ok(Engines {

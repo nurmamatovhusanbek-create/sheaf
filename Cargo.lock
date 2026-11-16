@@ -1058,6 +1058,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheaf-portable"
+version = "0.0.0"
+dependencies = [
+ "fixture-gen",
+ "flate2",
+ "harness",
+ "sha2 0.10.9",
+ "sheaf-core",
+ "sheaf-store",
+ "sheaf-worker",
+]
+
+[[package]]
 name = "sheaf-scan"
 version = "0.0.0"
 dependencies = [

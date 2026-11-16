@@ -1,0 +1,29 @@
+[package]
+name = "sheaf-portable"
+description = "The whole program in one executable: engines embedded, unpacked and verified on first run"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "sheaf"
+path = "src/main.rs"
+
+[dependencies]
+harness = { path = "../harness" }
+sheaf-core = { path = "../../crates/sheaf-core" }
+sheaf-store = { path = "../../crates/sheaf-store" }
+sheaf-worker = { path = "../../crates/sheaf-worker" }
+# Inflating the embedded engines; already in the tree through the PDF and image crates.
+flate2 = "1"
+
+[build-dependencies]
+flate2 = "1"
+sha2.workspace = true
+
+[dev-dependencies]
+fixture-gen = { path = "../fixture-gen" }

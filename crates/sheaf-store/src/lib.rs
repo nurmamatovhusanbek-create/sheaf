@@ -94,9 +94,21 @@ pub fn hash_bytes(parts: &[&[u8]]) -> [u8; 32] {
 /// but cannot stop a replacement, so the install folder must not be writable
 /// by other software there (SEC-TB4).
 pub fn verify_bundle(root: &Path, required: &[&str]) -> Result<BundleGuard> {
+    let list = fs::read_to_string(root.join("SHA256SUMS")).map_err(|_| {
+        AppError::new(
+            ErrorCode::EngineMissing,
+            "bundled component has no hash list: SHA256SUMS",
+        )
+    })?;
+    verify_bundle_with(root, &list, required)
+}
+
+/// [`verify_bundle`] against a hash list the caller already trusts, for
+/// instance one compiled into the executable. A list stored next to the files
+/// proves nothing: whoever can change a file can change the list.
+pub fn verify_bundle_with(root: &Path, list: &str, required: &[&str]) -> Result<BundleGuard> {
     let failed =
         |what: &str, path: &str| AppError::new(ErrorCode::EngineMissing, format!("bundled component {what}: {path}"));
-    let list = fs::read_to_string(root.join("SHA256SUMS")).map_err(|_| failed("has no hash list", "SHA256SUMS"))?;
     let mut checked: Vec<&str> = Vec::new();
     let mut held = Vec::new();
     for line in list.lines() {

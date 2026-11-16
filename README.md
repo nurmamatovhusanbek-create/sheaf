@@ -32,6 +32,18 @@ cargo run -p link-check                 # spec cross-links and generated appendi
 cargo run -p link-check -- --write      # regenerate the appendices after editing the spec
 ```
 
+## One-file build
+
+```bash
+cargo build --release -p sheaf-portable        # target/release/sheaf (sheaf.exe on Windows)
+```
+
+`sheaf` is the harness, the worker and the engines (PDFium, Tesseract on Windows, language data, font)
+in one executable. The worker is the same file started with `--session` first. On first run it unpacks
+the engines into the per-user data folder and checks them against hashes compiled into the executable
+on every run; changed, missing or extra files are replaced. It needs `vendor/` filled in at build time
+(`bash tools/fetch-vendor`, and the Tesseract files unpacked for a Windows target).
+
 ## Trying it
 
 ```bash
