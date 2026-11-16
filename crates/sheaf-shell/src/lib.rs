@@ -96,6 +96,13 @@ fn dispatch(command: Command) -> ExitCode {
             if let Some(mark) = mark {
                 mark.finish();
             }
+            // Closing the window means closing the program: the action-wheel helper the window may have
+            // started goes too, unless "Start with Windows" says it should stay (and not when this was
+            // only a failed start that is about to be retried with another renderer).
+            #[cfg(windows)]
+            if !sheaf_ui::opengl_unusable(&result) {
+                tray::stop_helper_unless_resident();
+            }
             finish_or_retry(result, &again)
         }
         Command::Run(request) => headless::run(&request),

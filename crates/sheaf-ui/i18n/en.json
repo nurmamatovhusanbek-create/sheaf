@@ -516,7 +516,7 @@
  "welcome.title": "Welcome to Sheaf",
  "welcome.wheel_body": "Select files in Explorer and press {keys}: compress, merge, split, recognize text and more, without opening a window.",
  "welcome.wheel_start": "Start the action wheel now",
- "welcome.wheel_started": "The action wheel is running. Look for the Sheaf icon near the clock.",
+ "welcome.wheel_started": "The action wheel is running. Look for the Sheaf icon near the clock. It stops when you close Sheaf, unless you tick \"Start with Windows\" in its menu.",
  "welcome.wheel_title": "Action wheel",
  "wheel.close": "Close",
  "wheel.done": "Done",

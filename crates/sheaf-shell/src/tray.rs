@@ -19,13 +19,19 @@ use std::process::{Child, Command};
 use std::str::FromStr;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use windows::core::PWSTR;
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, LPARAM, POINT, WPARAM};
+use windows::Win32::Foundation::{
+    CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, LPARAM, POINT, WAIT_OBJECT_0, WPARAM,
+};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
     KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
-use windows::Win32::System::Threading::{CreateMutexW, GetCurrentThreadId};
+use windows::Win32::System::Threading::{
+    CreateMutexW, GetCurrentThreadId, OpenProcess, QueryFullProcessImageNameW, TerminateProcess, WaitForSingleObject,
+    PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+};
 use windows::Win32::UI::HiDpi::GetDpiForSystem;
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, DispatchMessageW, GetCursorPos, GetMessageW, PostThreadMessageW, TranslateMessage,
@@ -34,6 +40,88 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const RUN_VALUE: PCWSTR = w!("Sheaf");
+
+/// Sent to the helper's message loop by [`stop_helper`]: leave, taking the tray icon with you.
+const WM_STOP: u32 = WM_APP + 1;
+
+/// Where the running helper says who it is: its process and message-loop thread, so the window that
+/// started it can ask it to quit when the window closes.
+fn id_file() -> Option<PathBuf> {
+    sheaf_store::default_base_dir().ok().map(|dir| dir.join("tray.id"))
+}
+
+/// Removes the identity file when the helper ends, however it ends.
+struct IdFile(Option<PathBuf>);
+
+impl Drop for IdFile {
+    fn drop(&mut self) {
+        if let Some(file) = self.0.take() {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
+/// A path as Windows reports it for a process, comparable with `current_exe` (which may carry a `\\?\` prefix).
+fn plain(path: &str) -> String {
+    path.strip_prefix(r"\\?\").unwrap_or(path).to_lowercase()
+}
+
+/// Closing the window closes the helper too (a window that leaves a program running in the
+/// background keeps its own file locked and is not what closing means), unless the person turned on
+/// "Start with Windows": that is a request for the helper to stay.
+pub fn stop_helper_unless_resident() {
+    if !autostart_enabled() {
+        stop_helper();
+    }
+}
+
+/// Ask the running helper (if there is one, and it really is this program) to quit, and end it if it
+/// has not after two seconds.
+pub fn stop_helper() {
+    let Some(file) = id_file() else { return };
+    let Ok(text) = std::fs::read_to_string(&file) else {
+        return;
+    };
+    let mut numbers = text.split_whitespace().map(str::parse::<u32>);
+    let (Some(Ok(pid)), Some(Ok(thread))) = (numbers.next(), numbers.next()) else {
+        let _ = std::fs::remove_file(&file);
+        return;
+    };
+    if pid == std::process::id() {
+        return;
+    }
+    let Ok(me) = std::env::current_exe() else { return };
+    // SAFETY: the process handle is opened and closed here; the buffer is large enough for the
+    // length it is told and the length is read back; no pointer outlives the calls.
+    unsafe {
+        let Ok(process) = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+            false,
+            pid,
+        ) else {
+            // Not running any more: a stale file.
+            let _ = std::fs::remove_file(&file);
+            return;
+        };
+        let mut buffer = [0u16; 1024];
+        let mut length = buffer.len() as u32;
+        let named =
+            QueryFullProcessImageNameW(process, PROCESS_NAME_FORMAT(0), PWSTR(buffer.as_mut_ptr()), &mut length)
+                .is_ok();
+        // Only a copy of this very program: a recycled process number must never be ended by mistake.
+        let is_helper =
+            named && plain(&String::from_utf16_lossy(&buffer[..length as usize])) == plain(&me.display().to_string());
+        if is_helper {
+            let _ = PostThreadMessageW(thread, WM_STOP, WPARAM(0), LPARAM(0));
+            if WaitForSingleObject(process, 2000) != WAIT_OBJECT_0 {
+                let _ = TerminateProcess(process, 0);
+                let _ = WaitForSingleObject(process, 1000);
+            }
+        }
+        let _ = CloseHandle(process);
+    }
+    let _ = std::fs::remove_file(file);
+}
 
 /// `"C:\...\sheaf.exe" tray`, as written to the Run key.
 fn run_command() -> Option<String> {
@@ -269,6 +357,13 @@ pub fn run() -> Result<(), String> {
     // SAFETY: no arguments, no pointers.
     let loop_thread = unsafe { GetCurrentThreadId() };
     watch_settings(loop_thread);
+    // Say who this is, so the window that started it can end it when that window closes.
+    let _identity = IdFile(id_file().inspect(|file| {
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(file, format!("{} {loop_thread}", std::process::id()));
+    }));
 
     let mut child: Option<Child> = None;
     let mut msg = MSG::default();
@@ -282,6 +377,9 @@ pub fn run() -> Result<(), String> {
         unsafe {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
+        }
+        if msg.message == WM_STOP {
+            return Ok(()); // dropping `tray` takes the icon off the screen
         }
         if msg.message == WM_APP {
             let settings = sheaf_store::config_dir()

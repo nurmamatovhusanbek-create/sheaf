@@ -516,7 +516,7 @@
  "welcome.title": "Sheaf'ga xush kelibsiz",
  "welcome.wheel_body": "Explorer'da fayllarni belgilab {keys} bosing: siqish, birlashtirish, boʻlish, matnni tanish va boshqalar, oyna ochmasdan.",
  "welcome.wheel_start": "Amallar doirasini hozir ishga tushirish",
- "welcome.wheel_started": "Amallar doirasi ishlayapti. Soat yonidan Sheaf belgisini qidiring.",
+ "welcome.wheel_started": "Amallar doirasi ishlayapti. Soat yonidan Sheaf belgisini qidiring. Sheaf yopilganda u ham yopiladi, agar menyusida «Windows bilan ishga tushirish» yoqilmagan boʻlsa.",
  "welcome.wheel_title": "Amallar doirasi",
  "wheel.close": "Yopish",
  "wheel.done": "Tayyor",

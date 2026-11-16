@@ -586,7 +586,7 @@ Verb → `sheaf.exe <cmd> --card --collect "%1"` (one process per selected file)
 
 ### <a id="flow-lifecycle"></a>FLOW-LIFECYCLE
 
-Startup: verify bundled binary hashes ([`SEC-SUPPLY`](#sec-supply)), sweep stale session dirs, start worker pool lazily, show window before anything is imported. Shutdown: cancel jobs, kill workers and tesseract, delete the session dir. Crash recovery: next start sweeps leftovers; no document data is kept elsewhere.
+Startup: verify bundled binary hashes ([`SEC-SUPPLY`](#sec-supply)), sweep stale session dirs, start worker pool lazily, show window before anything is imported. Shutdown: cancel jobs, kill workers and tesseract, delete the session dir. Closing the window also closes the action-wheel helper (`sheaf tray`) that the window or its Welcome screen started: the helper writes its process and thread to `tray.id` in the per-user data folder, the closing window checks that process really is this program, asks it to quit and ends it after two seconds; it is left running only when "Start with Windows" is on, which is a request for it to stay. A program that stays behind keeps its own file locked, so closing must mean closing. Crash recovery: next start sweeps leftovers; no document data is kept elsewhere.
 
 ### <a id="flow-error"></a>FLOW-ERROR
 
