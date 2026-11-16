@@ -30,6 +30,9 @@ pub enum ErrorCode {
     DeviceError,
     /// The scanner is in use by something else (SCAN-FAILURES).
     DeviceBusy,
+    /// The scanner's driver crashed, hung or broke the protocol; the helper process that
+    /// hosts it was shut down and the app is unaffected (SCAN-ISOLATE).
+    DeviceCrashed,
     /// The feeder is empty (at the start, or, mid-batch, simply the end).
     NoPaper,
     Internal,
@@ -53,6 +56,7 @@ impl ErrorCode {
             ErrorCode::EngineMissing => "error.engine_missing",
             ErrorCode::DeviceError => "error.device",
             ErrorCode::DeviceBusy => "error.device_busy",
+            ErrorCode::DeviceCrashed => "error.device_crashed",
             ErrorCode::NoPaper => "error.no_paper",
             ErrorCode::Internal => "error.internal",
         }

@@ -20,7 +20,7 @@ pub mod preset;
 pub mod quick;
 pub mod repair;
 
-pub use api::Backend;
+pub use api::{run_scan_helper, Backend, SCAN_HELPER_FLAG};
 pub use engines::Engines;
 pub use plan::{
     CancelFlag, ExportPlan, ExportSpec, Exported, ExtractPlan, ImagesPlan, JobCtl, NoCtl, Shared, TextPlan,

@@ -155,7 +155,7 @@ pub fn help_topic(code: ErrorCode) -> &'static str {
             "files"
         }
         ErrorCode::Unsupported => "tools",
-        ErrorCode::DeviceError | ErrorCode::DeviceBusy | ErrorCode::NoPaper => "scan",
+        ErrorCode::DeviceError | ErrorCode::DeviceBusy | ErrorCode::DeviceCrashed | ErrorCode::NoPaper => "scan",
         ErrorCode::Cancelled => "start",
         ErrorCode::InvalidArg
         | ErrorCode::NotFound
@@ -394,6 +394,12 @@ impl SheafApp {
         let suffix = note.code.map_or("internal", |c| suffix(c.i18n_key()));
         let hint_key = format!("errorhint.{suffix}");
         let (mut close, mut copy, mut report, mut help) = (false, false, false, None);
+        // A scan that failed can be started again from here, with the same settings.
+        let scan_failed = matches!(
+            note.code,
+            Some(ErrorCode::DeviceError | ErrorCode::DeviceBusy | ErrorCode::DeviceCrashed | ErrorCode::NoPaper)
+        );
+        let mut scan_again = false;
         egui::Modal::new(egui::Id::unique("error-details")).show(ctx, |ui| {
             ui.set_width(460.0);
             ui.horizontal(|ui| {
@@ -417,6 +423,9 @@ impl SheafApp {
                 });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
+                if scan_failed && ui.button(self.t.t("notify.scan_again")).clicked() {
+                    scan_again = true;
+                }
                 if ui.button(self.t.t("notify.copy")).clicked() {
                     copy = true;
                 }
@@ -435,6 +444,10 @@ impl SheafApp {
                 });
             });
         });
+        if scan_again {
+            self.open_scan();
+            return None;
+        }
         if copy {
             ctx.copy_text(details_text(&note));
             self.success(self.t.t("notify.copied"), "");
@@ -570,6 +583,7 @@ mod tests {
             ErrorCode::EngineMissing,
             ErrorCode::DeviceError,
             ErrorCode::DeviceBusy,
+            ErrorCode::DeviceCrashed,
             ErrorCode::NoPaper,
             ErrorCode::Internal,
         ];

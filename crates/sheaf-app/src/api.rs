@@ -31,7 +31,7 @@ mod metadata;
 mod presets;
 mod repair;
 mod scan;
-pub use scan::{ScanDeviceDto, ScanProfileDto, MAX_SCAN_PAGES, SCAN_DPIS};
+pub use scan::{run_scan_helper, ScanDeviceDto, ScanProfileDto, MAX_SCAN_PAGES, SCAN_DPIS, SCAN_HELPER_FLAG};
 
 /// Most pages one `pages` call returns.
 pub const MAX_PAGE_RANGE: usize = 2_000;

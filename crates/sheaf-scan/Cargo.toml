@@ -13,6 +13,14 @@ workspace = true
 sheaf-core = { path = "../sheaf-core" }
 sheaf-image = { path = "../sheaf-image" }
 image.workspace = true
+serde_json.workspace = true
+
+# Protocol test double for TEST-SCAN (crash, hang, abort mid-page). Never bundled.
+[[bin]]
+name = "sheaf-fake-scan-helper"
+path = "src/bin/fake_helper.rs"
+test = false
+doc = false
 
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62"

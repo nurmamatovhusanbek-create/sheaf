@@ -26,6 +26,8 @@ pub struct UiConfig {
     pub config_dir: Option<PathBuf>,
     /// Files to import at start (`sheaf open …`).
     pub files: Vec<PathBuf>,
+    /// The last run of the program never reached its clean end (a crash, a forced close).
+    pub previous_run_ended_badly: bool,
 }
 
 /// Results coming back from helper threads and from the backend.
@@ -234,6 +236,16 @@ impl SheafApp {
         crate::theme::apply(&ctx, &app.settings.theme);
         if app.backend.is_some() && crate::about::welcome_due(app.config_dir.as_deref(), !config.files.is_empty()) {
             app.modal = Some(Modal::Welcome);
+        }
+        if config.previous_run_ended_badly {
+            // Stays on screen until closed, with Details and "Report a problem" behind it.
+            let (title, detail) = (app.t.t("notice.unclean"), app.t.t("notice.unclean_detail"));
+            app.notify(
+                crate::notify::Kind::Error,
+                title,
+                detail,
+                Some(sheaf_core::ErrorCode::Internal),
+            );
         }
         if app.backend.is_some() {
             app.refresh();

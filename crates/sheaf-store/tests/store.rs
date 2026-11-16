@@ -102,7 +102,14 @@ fn sweep_removes_dead_sessions_but_not_live_ones() {
     let other = base.path().join("settings-backup");
     fs::create_dir_all(&other).expect("mkdir");
 
-    assert_eq!(sweep_stale(base.path()), 2);
+    // A brand-new directory may be another instance still setting up: left alone.
+    assert_eq!(
+        sweep_stale(base.path()),
+        0,
+        "fresh directories survive the default sweep"
+    );
+    assert!(dead.exists() && half.exists());
+    assert_eq!(sweep_stale_after(base.path(), std::time::Duration::ZERO), 2);
     assert!(!dead.exists() && !half.exists());
     assert!(other.exists());
     assert!(live.dir().exists(), "a live session survives the sweep");
@@ -228,6 +235,14 @@ fn file_names_are_sanitized() {
     assert_eq!(sanitize_file_name("a<b>c:d\"e|f?g*.pdf"), "a_b_c_d_e_f_g_.pdf");
     assert_eq!(sanitize_file_name("NUL.pdf"), "_NUL.pdf");
     assert_eq!(sanitize_file_name("com1"), "_com1");
+    // Superscript digits name the same devices as plain ones.
+    assert_eq!(sanitize_file_name("COM¹.pdf"), "_COM¹.pdf");
+    assert_eq!(sanitize_file_name("lpt³"), "_lpt³");
+    assert!(check_windows_path_rules(r"C:\dir\COM².txt").is_err());
+    assert_eq!(sanitize_file_name("COM10.pdf"), "COM10.pdf", "not a device");
+    // A right-to-left override would make `fdp.exe` read as `exe.pdf`.
+    assert_eq!(sanitize_file_name("invoice\u{202E}fdp.exe"), "invoice_fdp.exe");
+    assert_eq!(sanitize_file_name("a\u{200B}b\u{2066}c.pdf"), "a_b_c.pdf");
     assert_eq!(sanitize_file_name("name. "), "name");
     assert_eq!(sanitize_file_name(""), "_");
     assert_eq!(sanitize_file_name("..."), "_");
@@ -331,4 +346,32 @@ fn settings_round_trip_and_tolerate_garbage() {
     fs::write(dir.path().join("settings.json"), b"not json").expect("write");
     assert_eq!(Settings::load(dir.path()), Settings::default());
     assert!(Settings::default().worker_count() >= 1);
+}
+
+#[test]
+fn a_run_that_never_finished_is_noticed_at_the_next_start() {
+    let dir = Scratch::new("runmark");
+    let first = RunMark::begin(dir.path());
+    assert!(!first.previous_run_ended_badly(), "nothing before the first run");
+
+    // A second copy running at the same time owns nothing and is told nothing.
+    let second = RunMark::begin(dir.path());
+    assert!(!second.previous_run_ended_badly());
+    drop(second);
+    first.finish();
+
+    // A clean end leaves nothing to report.
+    let clean = RunMark::begin(dir.path());
+    assert!(!clean.previous_run_ended_badly());
+    drop(clean); // dies without finishing: a crash, a kill, a power cut
+
+    let after_crash = RunMark::begin(dir.path());
+    assert!(after_crash.previous_run_ended_badly(), "the crash is reported once");
+    after_crash.finish();
+    assert!(!RunMark::begin(dir.path()).previous_run_ended_badly(), "and not again");
+
+    // No folder to write in: quiet, not an error.
+    let blocked = dir.path().join("a-file");
+    fs::write(&blocked, b"x").expect("file");
+    assert!(!RunMark::begin(&blocked.join("inside")).previous_run_ended_badly());
 }

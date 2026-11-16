@@ -23,28 +23,63 @@ pub fn note_text(version: &str, thread: &str, location: Option<(&str, u32)>) -> 
     format!("Sheaf {version}\nthread: {thread}\nat: {at}\n")
 }
 
+/// The note for a crash the system reports (an access violation, a blocked call and the like):
+/// the code Windows gives it, nothing else.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn native_note_text(version: &str, thread: &str, code: u32) -> String {
+    format!("Sheaf {version}\nthread: {thread}\nnative exception: {code:#010x}\n")
+}
+
+/// Write the note and tell the person, in their language.
+fn report(text: String) {
+    let path = note_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, text);
+    let lang = sheaf_store::config_dir()
+        .map(|d| sheaf_store::Settings::load(&d).language)
+        .unwrap_or_else(|_| "en".into());
+    let t = I18n::new(&lang);
+    tell(
+        &t.t("crash.title"),
+        &t.tv("crash.body", &[("path", &path.display().to_string())]),
+    );
+}
+
 pub fn install() {
     std::panic::set_hook(Box::new(|info| {
         let thread = std::thread::current();
-        let text = note_text(
+        report(note_text(
             env!("CARGO_PKG_VERSION"),
             thread.name().unwrap_or("unnamed"),
             info.location().map(|l| (l.file(), l.line())),
-        );
-        let path = note_path();
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        let _ = std::fs::write(&path, text);
-        let lang = sheaf_store::config_dir()
-            .map(|d| sheaf_store::Settings::load(&d).language)
-            .unwrap_or_else(|_| "en".into());
-        let t = I18n::new(&lang);
-        tell(
-            &t.t("crash.title"),
-            &t.tv("crash.body", &[("path", &path.display().to_string())]),
-        );
+        ));
     }));
+    // Not every way to die is a panic: a crash inside a library or driver is an exception the
+    // system reports, and without this the window would simply vanish. Best effort: a corrupted
+    // heap or a full stack gives the program no chance to say anything.
+    #[cfg(windows)]
+    // SAFETY: registers a function with the signature the system expects; it lives for the whole run.
+    unsafe {
+        use windows::Win32::System::Diagnostics::Debug::SetUnhandledExceptionFilter;
+        let _ = SetUnhandledExceptionFilter(Some(on_native_crash));
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn on_native_crash(
+    info: *const windows::Win32::System::Diagnostics::Debug::EXCEPTION_POINTERS,
+) -> i32 {
+    // SAFETY: the system passes a pointer that is valid for this call (or null, which `as_ref` handles).
+    let code = unsafe { info.as_ref().and_then(|i| i.ExceptionRecord.as_ref()) }
+        .map_or(0, |record| record.ExceptionCode.0 as u32);
+    report(native_note_text(
+        env!("CARGO_PKG_VERSION"),
+        std::thread::current().name().unwrap_or("unnamed"),
+        code,
+    ));
+    1 // EXCEPTION_EXECUTE_HANDLER: end the process now that the person has been told
 }
 
 #[cfg(windows)]
@@ -67,6 +102,12 @@ fn tell(title: &str, body: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_native_crash_note_has_the_code_and_nothing_else() {
+        let t = native_note_text("0.0.0", "main", 0xC000_0005);
+        assert_eq!(t, "Sheaf 0.0.0\nthread: main\nnative exception: 0xc0000005\n");
+    }
 
     #[test]
     fn the_note_has_a_place_and_no_message() {

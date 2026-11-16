@@ -97,13 +97,35 @@ impl ScanProfileDto {
 pub(super) fn default_scanner() -> Option<Arc<dyn ScanBackend>> {
     #[cfg(windows)]
     {
-        Some(Arc::new(sheaf_scan::WiaBackend))
+        // SCAN-ISOLATE: never talk to a scanner driver inside this process. The program starts
+        // itself in helper mode, so a driver that crashes or hangs costs one scan, not the app.
+        let exe = std::env::current_exe().ok()?;
+        Some(Arc::new(sheaf_scan::ProcessBackend::new(
+            exe,
+            vec![sheaf_scan::HELPER_FLAG.into()],
+        )))
     }
     #[cfg(not(windows))]
     {
         std::env::var_os("SHEAF_FAKE_SCANNER")
             .filter(|v| !v.is_empty())
             .map(|_| Arc::new(sheaf_scan::FakeBackend::new()) as Arc<dyn ScanBackend>)
+    }
+}
+
+/// The argument that puts a program in scanner-helper mode (SCAN-ISOLATE).
+pub const SCAN_HELPER_FLAG: &str = sheaf_scan::HELPER_FLAG;
+
+/// The helper's main: drive the system's scanner and speak the helper protocol on standard
+/// output. Returns the process exit code. Development machines have only the fake scanner.
+pub fn run_scan_helper(args: &[std::ffi::OsString]) -> i32 {
+    #[cfg(windows)]
+    {
+        sheaf_scan::run_helper(args, &sheaf_scan::WiaBackend)
+    }
+    #[cfg(not(windows))]
+    {
+        sheaf_scan::run_helper(args, &sheaf_scan::FakeBackend::new())
     }
 }
 

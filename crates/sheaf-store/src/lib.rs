@@ -5,6 +5,7 @@
 pub mod harden;
 pub mod paths;
 pub mod presets;
+pub mod runmark;
 pub mod session;
 pub mod settings;
 
@@ -12,7 +13,8 @@ pub use harden::{harden_process, harden_worker, integrity_level_of, lower_worker
 pub use paths::{
     allow_input, allow_output, check_output_dir, create_output_dir, publish, sanitize_file_name, AllowedInput,
 };
-pub use session::{default_base_dir, sweep_stale, Session};
+pub use runmark::RunMark;
+pub use session::{default_base_dir, sweep_stale, sweep_stale_after, Session};
 pub use settings::{config_dir, Settings};
 
 use sha2::{Digest, Sha256};

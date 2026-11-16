@@ -28,8 +28,9 @@ fn base_dir() -> PathBuf {
     sheaf_store::default_base_dir().unwrap_or_else(|_| std::env::temp_dir().join("Sheaf"))
 }
 
-fn ui_config(files: Vec<PathBuf>) -> UiConfig {
+fn ui_config(files: Vec<PathBuf>, previous_run_ended_badly: bool) -> UiConfig {
     UiConfig {
+        previous_run_ended_badly,
         engines: Engines::discover(&[]),
         base_dir: base_dir(),
         config_dir: sheaf_store::config_dir().ok(),
@@ -39,9 +40,15 @@ fn ui_config(files: Vec<PathBuf>) -> UiConfig {
 
 /// Run the mode the arguments ask for.
 pub fn run() -> ExitCode {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    // The scanner helper (SCAN-ISOLATE) comes first and bare: no DLL-search or image-load
+    // restrictions, because scanner drivers load their own parts from their own folders, and no
+    // crash dialog, because the app that started it reports what happened.
+    if args.first().is_some_and(|a| a == sheaf_app::SCAN_HELPER_FLAG) {
+        return ExitCode::from(sheaf_app::run_scan_helper(&args[1..]) as u8);
+    }
     sheaf_store::harden_process();
     crash::install();
-    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
     let command = match sheaf_cli::parse(&args) {
         Ok(c) => c,
         Err(e) => {
@@ -76,7 +83,20 @@ fn dispatch(command: Command) -> ExitCode {
         }
         Command::Window { files } => {
             let again = Command::Window { files: files.clone() };
-            finish_or_retry(sheaf_ui::run_window(ui_config(files)), &again)
+            // A mark that says "running" until the window closes properly; if it is still there at the
+            // next start, that run ended some other way and the person is told (see RunMark). It is
+            // cleared before a relaunch with the fallback renderer, which makes its own.
+            let mark = sheaf_store::config_dir()
+                .ok()
+                .map(|dir| sheaf_store::RunMark::begin(&dir));
+            let ended_badly = mark
+                .as_ref()
+                .is_some_and(sheaf_store::RunMark::previous_run_ended_badly);
+            let result = sheaf_ui::run_window(ui_config(files, ended_badly));
+            if let Some(mark) = mark {
+                mark.finish();
+            }
+            finish_or_retry(result, &again)
         }
         Command::Run(request) => headless::run(&request),
         Command::Preset(run) => headless::preset(&run),

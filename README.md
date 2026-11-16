@@ -20,6 +20,10 @@ lints for Windows, but no page has come from a real scanner yet (`RISK-WIA`). **
 the Presets dialog or `sheaf preset NAME FILES...`. The Explorer right-click menu (`sheaf install-verbs`) gathers a multi-file selection into one action and shows
 its progress and result in a small card at the pointer.
 
+The scanner runs in a helper process of its own (`SCAN-ISOLATE`): a driver that crashes or hangs fails one scan with
+an error and a "Scan again" button, never the app. If the program itself ever ends without closing properly, the next
+start says so, with Details and "Report a problem".
+
 ## Working on it
 
 ```bash

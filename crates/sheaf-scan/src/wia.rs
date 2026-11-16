@@ -17,13 +17,13 @@ use std::cell::{Cell, RefCell};
 use std::sync::mpsc::Sender;
 use windows::core::{implement, AsImpl, Interface, BSTR, GUID};
 use windows::Win32::Devices::ImageAcquisition::*;
-use windows::Win32::Foundation::{E_ABORT, HGLOBAL};
+use windows::Win32::Foundation::{E_ABORT, E_OUTOFMEMORY, HGLOBAL};
 use windows::Win32::System::Com::StructuredStorage::{
     CreateStreamOnHGlobal, PropVariantClear, PROPSPEC, PROPSPEC_0, PROPVARIANT, PRSPEC_PROPID,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, IStream, CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED,
-    STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
+    CoCreateInstance, CoInitializeEx, CoTaskMemAlloc, CoUninitialize, IStream, CLSCTX_LOCAL_SERVER,
+    COINIT_APARTMENTTHREADED, STATFLAG_NONAME, STATSTG, STREAM_SEEK_SET,
 };
 use windows::Win32::System::Variant::{VT_BSTR, VT_CLSID, VT_I4};
 
@@ -129,12 +129,26 @@ unsafe fn write_i32(store: &IWiaPropertyStorage, id: u32, value: i32) -> windows
     store.WriteMultiple(1, specs.as_ptr(), &var, WIA_IPA_FIRST)
 }
 
-unsafe fn write_guid(store: &IWiaPropertyStorage, id: u32, mut value: GUID) -> windows::core::Result<()> {
-    let specs = [spec(id)];
+/// A `VT_CLSID` value that owns its GUID. `PropVariantClear`, which `PROPVARIANT`'s
+/// `Drop` calls, frees the GUID with `CoTaskMemFree`: a pointer to a local variable
+/// there (what this code used to do, on every scan) is freeing the stack, which
+/// Windows answers by ending the process on the spot, with no panic and no message.
+unsafe fn guid_variant(value: GUID) -> windows::core::Result<PROPVARIANT> {
+    let memory = CoTaskMemAlloc(std::mem::size_of::<GUID>()).cast::<GUID>();
+    if memory.is_null() {
+        return Err(E_OUTOFMEMORY.into());
+    }
+    memory.write(value);
     let mut var = PROPVARIANT::default();
     let inner = &mut *var.Anonymous.Anonymous;
     inner.vt = VT_CLSID;
-    inner.Anonymous.puuid = &mut value;
+    inner.Anonymous.puuid = memory;
+    Ok(var)
+}
+
+unsafe fn write_guid(store: &IWiaPropertyStorage, id: u32, value: GUID) -> windows::core::Result<()> {
+    let specs = [spec(id)];
+    let var = guid_variant(value)?;
     store.WriteMultiple(1, specs.as_ptr(), &var, WIA_IPA_FIRST)
 }
 
@@ -398,6 +412,19 @@ mod tests {
             Ok(list) => assert!(list.len() <= MAX_DEVICES),
             // A runner without the WIA service says so in our own words, not with a crash.
             Err(e) => assert_eq!(e.code, ErrorCode::DeviceError, "{e}"),
+        }
+    }
+
+    #[test]
+    fn a_guid_property_owns_its_memory_so_dropping_it_is_safe() {
+        // The variant is cleared (and the GUID freed) when it goes out of scope.
+        // Before the fix the GUID lived on the stack and this was a crash.
+        for format in [FMT_PNG, FMT_JPEG, FMT_BMP] {
+            let var = unsafe { guid_variant(format) }.expect("variant");
+            // SAFETY: the variant was just built as VT_CLSID with a valid pointer.
+            let stored = unsafe { *var.Anonymous.Anonymous.Anonymous.puuid };
+            assert_eq!(stored, format);
+            drop(var);
         }
     }
 

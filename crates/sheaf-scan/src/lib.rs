@@ -9,10 +9,12 @@
 //! a hostile image file would (SEC-LIMITS). See `ARCHITECTURE.md`, anchor `mod-scan`.
 
 mod fake;
+mod proc;
 #[cfg(windows)]
 mod wia;
 
 pub use fake::FakeBackend;
+pub use proc::{run_helper, ProcessBackend, HELPER_FLAG};
 #[cfg(windows)]
 pub use wia::WiaBackend;
 

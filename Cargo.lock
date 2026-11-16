@@ -3133,6 +3133,7 @@ name = "sheaf-scan"
 version = "0.0.0"
 dependencies = [
  "image",
+ "serde_json",
  "sheaf-core",
  "sheaf-image",
  "windows",

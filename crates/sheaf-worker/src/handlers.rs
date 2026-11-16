@@ -1,6 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use sheaf_core::consts::{MAX_PAGE_SIDE, RASTER_DPI};
+use sheaf_core::consts::{MAX_PAGE_PIXELS, MAX_PAGE_SIDE, RASTER_DPI};
 use sheaf_core::proto::{
     ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, ImageFormat,
     MetadataArgs, MetadataResult, OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs,
@@ -150,10 +150,16 @@ fn displayed(engine: Option<&Engine>, page: &PageSpec, box_px: (u32, u32)) -> Re
         Some(source) => pixels(engine, source, page, pre)?.0,
         None => {
             let (w_pt, h_pt) = blank_size(page)?;
+            // Same pixel budget as a rendered PDF page (SEC-LIMITS): a blank page's size comes
+            // from the UI, so it is bounded here too.
+            let budget = (MAX_PAGE_PIXELS as f32 / (w_pt * h_pt)).sqrt();
             let scale = (pre.0 as f32 / w_pt)
                 .min(pre.1 as f32 / h_pt)
-                .min(RASTER_DPI as f32 / 72.0);
-            sheaf_image::white((w_pt * scale) as u32, (h_pt * scale) as u32)
+                .min(RASTER_DPI as f32 / 72.0)
+                .min(budget);
+            let (w, h) = ((w_pt * scale) as u32, (h_pt * scale) as u32);
+            sheaf_image::check_dimensions(w.max(1), h.max(1))?;
+            sheaf_image::white(w, h)
         }
     };
     Ok(sheaf_image::rotate_quarter(img, page.rot))

@@ -6,8 +6,12 @@ use crate::token;
 use sheaf_core::{AppError, ErrorCode, Result, APP_NAME};
 use std::fs::{self, File};
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 const LOCK_FILE: &str = ".lock";
+/// A session dir younger than this is never swept: another instance may be in the middle of
+/// creating it (directory made, lock file not yet locked).
+const SWEEP_GRACE: Duration = Duration::from_secs(30);
 const PREFIX: &str = "session-";
 
 /// Where session dirs live: `%LOCALAPPDATA%\Sheaf` on Windows, the XDG cache
@@ -122,6 +126,11 @@ fn create_private_dir(dir: &Path) -> Result<()> {
 /// session keeps its lock file locked, so it is never touched. Returns how
 /// many were removed.
 pub fn sweep_stale(base: &Path) -> usize {
+    sweep_stale_after(base, SWEEP_GRACE)
+}
+
+/// [`sweep_stale`] with an explicit grace period for fresh directories.
+pub fn sweep_stale_after(base: &Path, grace: Duration) -> usize {
     let Ok(entries) = fs::read_dir(base) else {
         return 0;
     };
@@ -133,11 +142,17 @@ pub fn sweep_stale(base: &Path) -> usize {
         if !named || !real_dir {
             continue;
         }
-        let stale = match File::open(dir.join(LOCK_FILE)) {
+        // A directory is created before its lock file exists and before the lock is held, so
+        // "nobody holds it" only means "dead" once it is not brand new.
+        let settled = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| SystemTime::now().duration_since(t).unwrap_or_default() >= grace);
+        let unowned = match File::open(dir.join(LOCK_FILE)) {
             Ok(lock) => lock.try_lock().is_ok(),
             Err(e) => e.kind() == std::io::ErrorKind::NotFound,
         };
-        if stale && fs::remove_dir_all(&dir).is_ok() {
+        if settled && unowned && fs::remove_dir_all(&dir).is_ok() {
             removed += 1;
         }
     }

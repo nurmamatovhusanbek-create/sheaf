@@ -225,6 +225,28 @@ fn thumbnails_land_in_the_session_and_nowhere_else() {
 }
 
 #[test]
+fn a_blank_page_cannot_exceed_the_pixel_budget() {
+    // SEC-LIMITS: the largest blank page, asked for at the largest box, used to come out at
+    // 30 000 x 30 000 pixels (3.4 GB in the worker).
+    let dir = Scratch::new("worker-blank");
+    let mut w = Worker::start(&dir);
+    let blank = json!({"source": null, "blank_pt": [14400.0, 14400.0]});
+    let r = w.ok(
+        "render",
+        json!({"page": blank, "max_px": [4_000_000_000u32, 4_000_000_000u32], "out": "thumbs/blank.png"}),
+    );
+    let (width, height) = (
+        r["width"].as_u64().expect("width"),
+        r["height"].as_u64().expect("height"),
+    );
+    assert!(width * height <= 150_000_000, "{width}x{height}");
+    assert!(
+        width > 10_000 && width == height,
+        "{width}x{height}: still as large as the budget allows"
+    );
+}
+
+#[test]
 fn build_assembles_a_mixed_document() {
     let dir = Scratch::new("worker-build");
     let mut w = Worker::start(&dir);
