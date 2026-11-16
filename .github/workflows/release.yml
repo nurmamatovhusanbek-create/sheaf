@@ -2,8 +2,10 @@ name: release
 
 # Publish a release, either way (the number is the one in Cargo.toml):
 #   - push a tag such as v0.1.0:  git tag v0.1.0 && git push origin v0.1.0
-#   - or run this workflow by hand ("Run workflow" in the Actions tab, or the API) on the branch to
-#     release: it builds that commit and creates the tag and the release itself.
+#   - or commit the file .github/release-request containing that number (0.1.0) on the branch to
+#     release: the workflow builds that commit and creates the tag and the release itself. (A manual
+#     "Run workflow" button only exists for workflows on the default branch, and not every
+#     environment can push tags; a plain branch push works everywhere.)
 # The release carries what the in-app Update button reads (UI-UPDATE): sheaf.exe, the whole program in
 # one file, and sheaf.exe.sha256 beside it; and sheaf-windows.zip for people who download it in a browser,
 # where a bare .exe is often blocked or silently dropped.
@@ -11,6 +13,11 @@ on:
   push:
     tags:
       - "v*"
+    # For a branch the path filter applies: only a commit that touches the request file releases.
+    branches:
+      - "**"
+    paths:
+      - ".github/release-request"
   workflow_dispatch:
 
 permissions:
@@ -32,9 +39,16 @@ jobs:
         run: |
           version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           echo "TAG=v$version" >> "$GITHUB_ENV"
-          # Pushed by tag: the tag must say the same. Run by hand: the tag is made from the version.
+          # Pushed by tag: the tag must say the same.
           if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1
+          fi
+          # Pushed by request file: the file must name this version, so a stale file cannot release another.
+          if [ "$GITHUB_REF_TYPE" = "branch" ]; then
+            asked="$(tr -d ' \r\n' < .github/release-request 2>/dev/null || true)"
+            if [ "$asked" != "$version" ]; then
+              echo "release-request says '$asked' but Cargo.toml says $version"; exit 1
+            fi
           fi
       - name: Toolchain
         run: rustup show active-toolchain || rustup toolchain install
