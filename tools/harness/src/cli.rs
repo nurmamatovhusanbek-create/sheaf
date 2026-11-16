@@ -31,8 +31,8 @@ struct Args {
     text_only: bool,
 }
 
-fn parse() -> std::result::Result<Args, String> {
-    let mut it = std::env::args().skip(1);
+fn parse(args: Vec<String>) -> std::result::Result<Args, String> {
+    let mut it = args.into_iter();
     let cmd = it.next().ok_or("missing command")?;
     let auto = std::thread::available_parallelism()
         .map_or(1, |n| n.get().saturating_sub(1))
@@ -266,8 +266,13 @@ fn bench(a: &Args) -> Result<()> {
 /// Parse the process arguments and run the command. `engines` says where the
 /// bundled engines are for this executable.
 pub fn run(engines: fn() -> Result<Engines>) -> ExitCode {
+    run_args(std::env::args().skip(1).collect(), engines)
+}
+
+/// [`run`] with the arguments given explicitly (after the program name).
+pub fn run_args(args: Vec<String>, engines: fn() -> Result<Engines>) -> ExitCode {
     let _ = ENGINES.set(engines);
-    let args = match parse() {
+    let args = match parse(args) {
         Ok(a) => a,
         Err(e) => {
             eprintln!("sheaf-harness: {e}\nusage: sheaf-harness probe|export|ocr|bench [flags] [FILE...]");

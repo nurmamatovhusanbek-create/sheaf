@@ -145,6 +145,7 @@ pub fn install(base: &Path) -> Result<(PathBuf, BundleGuard)> {
     }
     builder.create(&engines).map_err(|e| io("create engines folder", &e))?;
 
+    eprintln!("sheaf: unpacking the engines (first run only, a few seconds)...");
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
