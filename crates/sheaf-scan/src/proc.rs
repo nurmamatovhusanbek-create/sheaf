@@ -61,6 +61,8 @@ enum Frame {
         data: Vec<u8>,
     },
     Failed(AppError),
+    /// A timed note from the helper (SCAN-TIMING).
+    Note(String),
     Done,
     /// The helper broke the protocol; the text says how (no content from the helper).
     Bad(&'static str),
@@ -112,6 +114,7 @@ fn read_frames(mut input: impl Read, tx: Sender<Frame>) {
                 Ok(e) => Frame::Failed(e),
                 Err(_) => Frame::Bad("an error report was malformed"),
             },
+            b'T' => Frame::Note(String::from_utf8_lossy(&payload).into_owned()),
             b'Z' => Frame::Done,
             _ => Frame::Bad("an unknown frame arrived"),
         };
@@ -132,6 +135,8 @@ pub struct ProcessBackend {
     prefix: Vec<OsString>,
     /// Extra environment for the helper (tests pick the fake's behaviour with it).
     env: Vec<(OsString, OsString)>,
+    /// Timed notes about the last scan: the helper's, and ours about what reached the app (SCAN-TIMING).
+    notes: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 impl ProcessBackend {
@@ -140,12 +145,20 @@ impl ProcessBackend {
             program: program.into(),
             prefix,
             env: Vec::new(),
+            notes: Default::default(),
         }
     }
 
     pub fn with_env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> ProcessBackend {
         self.env.push((key.into(), value.into()));
         self
+    }
+
+    fn note(&self, line: String) {
+        self.notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(line);
     }
 
     fn spawn(&self, args: &[OsString]) -> Result<Child> {
@@ -199,6 +212,7 @@ impl ProcessBackend {
             }
             match rx.recv_timeout(Duration::from_millis(50)) {
                 Ok(Frame::Done) => finished = true,
+                Ok(Frame::Note(line)) => self.note(line),
                 Ok(Frame::Failed(e)) => failure = Some(e),
                 Ok(Frame::Bad(why)) => {
                     failure = Some(crashed(format!("the scanner helper broke the protocol: {why}")));
@@ -332,13 +346,39 @@ impl ScanBackend for ProcessBackend {
 
     fn scan(&self, profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: CancelToken) -> Result<()> {
         profile.validate()?;
+        self.notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        let began = Instant::now();
+        self.note("app: scanner helper starting".to_string());
         let mut number = 0usize;
-        self.drive(&profile_args(profile), &cancel, SCAN_IDLE, |frame| {
+        let result = self.drive(&profile_args(profile), &cancel, SCAN_IDLE, |frame| {
             let Frame::Page { ext, data } = frame else { return true };
             number += 1;
+            self.note(format!(
+                "app: page {number} reached the app after {} ms ({} bytes, {ext})",
+                began.elapsed().as_millis(),
+                data.len()
+            ));
             // A receiver that has gone away counts as a cancel.
             pages.send(ScannedPage { number, data, ext }).is_ok()
-        })
+        });
+        self.note(format!(
+            "app: scan ended after {} ms with {number} page(s): {}",
+            began.elapsed().as_millis(),
+            result
+                .as_ref()
+                .map_or_else(|e| format!("{:?}", e.code), |()| "ok".to_string())
+        ));
+        result
+    }
+
+    fn diagnostics(&self) -> Vec<String> {
+        self.notes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -404,6 +444,12 @@ pub fn run_helper(args: &[OsString], backend: &dyn ScanBackend) -> i32 {
                     .join()
                     .unwrap_or_else(|_| Err(AppError::internal("the scanner backend panicked")))
             });
+            // The timing log goes first, so it arrives even when the scan did not go well.
+            for line in crate::diag::take() {
+                if write_frame(&mut out, b'T', line.as_bytes()).is_err() {
+                    break;
+                }
+            }
             verdict(&mut out, result)
         }
         _ => 2,

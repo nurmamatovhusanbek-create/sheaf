@@ -14,6 +14,28 @@ use std::time::Duration;
 /// Most pages one scan job keeps (SEC-LIMITS); the scan stops with a limit error after that.
 pub const MAX_SCAN_PAGES: usize = 500;
 
+/// Where the timing of the last scan is kept, in the settings folder (SCAN-TIMING).
+pub const TIMING_FILE: &str = "scan-timing.txt";
+
+/// Write what the last scan did and when. Sizes and times only; best effort.
+fn write_timing(path: &Path, summary: &str, total: Duration, pages: usize, notes: &[String]) {
+    let mut text = format!(
+        "Sheaf scan timing (no document content, only sizes and times)\nversion {}\n{summary}\n{} pages kept in {:.1} s ({:.2} s per page)\n\n",
+        env!("CARGO_PKG_VERSION"),
+        pages,
+        total.as_secs_f32(),
+        total.as_secs_f32() / pages.max(1) as f32
+    );
+    for line in notes {
+        text.push_str(line);
+        text.push('\n');
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, text);
+}
+
 /// The resolutions the Scan dialog offers.
 pub const SCAN_DPIS: [u32; 4] = sheaf_scan::DPIS;
 
@@ -168,7 +190,19 @@ impl Backend {
         let dir = self.session_dir().join("scans");
         std::fs::create_dir_all(&dir).map_err(|e| AppError::io("create the scan folder", &e))?;
         let me = Arc::clone(self);
+        let timing = self.config_dir.as_ref().map(|d| d.join(TIMING_FILE));
+        let watcher = Arc::clone(&scanner);
+        let summary = format!(
+            "{:?}, {} dpi, {:?}, {:?}{}, recognition {}",
+            profile.source,
+            profile.dpi,
+            profile.color,
+            profile.paper,
+            if profile.duplex { ", both sides" } else { "" },
+            if recognize { "on" } else { "off" }
+        );
         Ok(self.spawn_job("scan", move |ctx| {
+            let began = std::time::Instant::now();
             let cancel = CancelToken::new();
             let (tx, rx) = mpsc::channel::<ScannedPage>();
             let scanning = {
@@ -212,6 +246,9 @@ impl Backend {
             let scanned = scanning
                 .join()
                 .unwrap_or_else(|_| Err(AppError::internal("the scanner stopped unexpectedly")));
+            if let Some(path) = &timing {
+                write_timing(path, &summary, began.elapsed(), kept, &watcher.diagnostics());
+            }
             if let Some(e) = stopped {
                 return Err(e);
             }

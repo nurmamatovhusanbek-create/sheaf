@@ -29,6 +29,12 @@ fn devices_and_a_full_feeder_come_through() {
 
     let (tx, rx) = channel();
     b.scan(&feeder(), tx, CancelToken::new()).expect("scan");
+    // The timing notes say when each page reached the app and how the scan ended.
+    let notes = b.diagnostics().join("\n");
+    assert!(
+        notes.contains("page 1 reached the app") && notes.contains("scan ended"),
+        "{notes}"
+    );
     let pages: Vec<_> = rx.try_iter().collect();
     assert_eq!(pages.iter().map(|p| p.number).collect::<Vec<_>>(), [1, 2, 3, 4, 5]);
     assert!(pages.iter().all(|p| p.data.starts_with(b"\x89PNG") && p.ext == "png"));

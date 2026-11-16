@@ -256,3 +256,45 @@ fn a_bad_request_is_refused_before_anything_starts() {
     );
     assert!(!rig.backend.scan_supported());
 }
+
+/// Not a pass/fail test: how long the app takes per page when the scanner delivers full-size A4
+/// pages at 300 dpi as fast as it can. `cargo test --release -p sheaf-app --test scan -- --ignored --nocapture`
+#[test]
+#[ignore = "timing, run by hand"]
+fn how_fast_does_the_app_take_full_size_pages() {
+    for ocr in [false, true] {
+        let rig = rig(FakeBackend::new()
+            .with_sheets(10)
+            .with_delay(Duration::ZERO)
+            .with_max_side(3508));
+        let started = Instant::now();
+        let id = rig
+            .backend
+            .scan_start(ScanProfileDto {
+                dpi: 300,
+                ..feeder(ocr)
+            })
+            .expect("start");
+        let mut seen = 0;
+        let mut first = None;
+        while seen < 10 && started.elapsed() < Duration::from_secs(300) {
+            let pages = rig.job(id).and_then(|j| j["detail"]["pages"].as_u64()).unwrap_or(0);
+            if pages > seen {
+                seen = pages;
+                first.get_or_insert(started.elapsed());
+                println!(
+                    "  ocr={ocr}: {pages} pages in the tray after {:.1}s",
+                    started.elapsed().as_secs_f32()
+                );
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let done = rig.wait(id);
+        println!(
+            "ocr={ocr}: 10 pages, job finished after {:.1}s ({:.2}s per page), state {}",
+            started.elapsed().as_secs_f32(),
+            started.elapsed().as_secs_f32() / 10.0,
+            done["state"]
+        );
+    }
+}

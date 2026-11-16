@@ -8,6 +8,7 @@
 //! imports them like any other file, so a hostile driver gets no further than
 //! a hostile image file would (SEC-LIMITS). See `ARCHITECTURE.md`, anchor `mod-scan`.
 
+mod diag;
 mod fake;
 #[cfg_attr(not(windows), allow(dead_code))]
 mod pipeline;
@@ -161,6 +162,66 @@ pub trait ScanBackend: Send + Sync {
     /// `Err(Cancelled)` when `cancel` was set. Pages already sent stay sent.
     /// A receiver that has gone away counts as a cancel.
     fn scan(&self, profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: CancelToken) -> Result<()>;
+
+    /// Timed notes about the last scan (SCAN-TIMING): sizes and times only, never content.
+    fn diagnostics(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+/// Cut off what follows the image in a buffer that was made larger than the image (the transfer
+/// buffer is sized ahead of time, see `wia.rs`): after a JPEG's end marker, a PNG's `IEND` chunk or a
+/// bitmap's declared size. Anything else is returned as it is.
+pub fn trim_to_image(mut data: Vec<u8>) -> Vec<u8> {
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        if let Some(last) = data.iter().rposition(|&b| b != 0) {
+            if last >= 1 && data[last - 1] == 0xFF && data[last] == 0xD9 {
+                data.truncate(last + 1);
+            }
+        }
+    } else if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        if let Some(at) = data.windows(4).rposition(|w| w == b"IEND") {
+            data.truncate((at + 8).min(data.len())); // the chunk's name and its 4-byte checksum
+        }
+    } else if data.starts_with(b"BM") && data.len() >= 6 {
+        let declared = u32::from_le_bytes([data[2], data[3], data[4], data[5]]) as usize;
+        if declared >= 14 && declared < data.len() {
+            data.truncate(declared);
+        }
+    }
+    data
+}
+
+/// [`normalize`] for pages from a live scan, where speed counts: a bitmap (or TIFF) is written as
+/// JPEG for colour and grey, which takes a fraction of a second, and as a grey PNG for black and
+/// white, which loses nothing. PNG and JPEG pass through untouched.
+pub fn normalize_for(data: Vec<u8>, color: ScanColor) -> Result<(Vec<u8>, &'static str)> {
+    let data = trim_to_image(data);
+    if data.is_empty() || data.len() > MAX_PAGE_BYTES {
+        return Err(AppError::new(
+            ErrorCode::DeviceError,
+            "the scanner sent a page of a bad size",
+        ));
+    }
+    if data.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Ok((data, "png"));
+    }
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Ok((data, "jpg"));
+    }
+    let img = sheaf_image::decode_bytes(&data)
+        .map_err(|_| AppError::new(ErrorCode::DeviceError, "the scanner sent a page that is not an image"))?;
+    match color {
+        ScanColor::Bw => {
+            let gray = image::DynamicImage::ImageRgba8(img).into_luma8();
+            let mut png = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::ImageLuma8(gray)
+                .write_to(&mut png, image::ImageFormat::Png)
+                .map_err(|_| AppError::new(ErrorCode::DeviceError, "could not store the scanned page"))?;
+            Ok((png.into_inner(), "png"))
+        }
+        ScanColor::Color | ScanColor::Gray => Ok((sheaf_image::encode_jpeg(&img, 90)?, "jpg")),
+    }
 }
 
 /// Turn what a driver delivered into PNG or JPEG bytes, or refuse it. BMP and
@@ -213,6 +274,49 @@ mod tests {
         assert_eq!(p.pixels(), Some((1240, 1754)));
         p.paper = ScanPaper::Auto;
         assert_eq!(p.pixels(), None);
+    }
+
+    #[test]
+    fn a_buffer_made_too_large_is_cut_back_to_the_image() {
+        let img = sheaf_image::RgbaImage::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]));
+        let pad = |mut v: Vec<u8>| {
+            let exact = v.len();
+            v.extend(vec![0u8; 5000]);
+            (v, exact)
+        };
+        let (png, exact) = pad(sheaf_image::encode_png(&img).expect("png"));
+        assert_eq!(trim_to_image(png).len(), exact);
+        let (jpg, exact) = pad(sheaf_image::encode_jpeg(&img, 80).expect("jpg"));
+        assert_eq!(trim_to_image(jpg).len(), exact);
+        let mut bmp = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut bmp), image::ImageFormat::Bmp)
+            .expect("bmp");
+        let (bmp, exact) = pad(bmp);
+        assert_eq!(trim_to_image(bmp).len(), exact);
+        assert_eq!(
+            trim_to_image(b"hello".to_vec()),
+            b"hello",
+            "anything else is left alone"
+        );
+    }
+
+    #[test]
+    fn live_pages_become_jpeg_for_colour_and_grey_png_for_black_and_white() {
+        let img = sheaf_image::RgbaImage::from_pixel(8, 8, image::Rgba([10, 20, 30, 255]));
+        let mut bmp = Vec::new();
+        image::DynamicImage::ImageRgba8(img.clone())
+            .write_to(&mut std::io::Cursor::new(&mut bmp), image::ImageFormat::Bmp)
+            .expect("bmp");
+        assert_eq!(normalize_for(bmp.clone(), ScanColor::Color).expect("colour").1, "jpg");
+        assert_eq!(normalize_for(bmp.clone(), ScanColor::Gray).expect("grey").1, "jpg");
+        assert_eq!(normalize_for(bmp, ScanColor::Bw).expect("bw").1, "png");
+        let png = sheaf_image::encode_png(&img).expect("png");
+        assert_eq!(
+            normalize_for(png, ScanColor::Color).expect("png").1,
+            "png",
+            "PNG is passed on"
+        );
     }
 
     #[test]

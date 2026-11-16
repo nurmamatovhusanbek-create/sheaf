@@ -55,6 +55,12 @@ impl FakeBackend {
         self.jam_after = Some(pages);
         self
     }
+    /// Largest side of a generated page in pixels (the default keeps tests light; a real A4 page
+    /// at 300 dpi is 3508).
+    pub fn with_max_side(mut self, px: u32) -> FakeBackend {
+        self.max_side = px;
+        self
+    }
     pub fn with_busy(mut self, busy: bool) -> FakeBackend {
         self.busy = busy;
         self

@@ -215,7 +215,7 @@ fn page_size_code(paper: ScanPaper) -> u32 {
 
 /// Set what the profile asks for. A driver that refuses a property it does not
 /// need is not an error; one that cannot do what was asked (a feeder) is.
-unsafe fn configure(root: &IWiaItem2, item: &IWiaItem2, profile: &ScanProfile) -> Result<()> {
+unsafe fn configure(root: &IWiaItem2, item: &IWiaItem2, profile: &ScanProfile) -> Result<&'static str> {
     let root_props = root.cast::<IWiaPropertyStorage>().ok();
     let item_props = item
         .cast::<IWiaPropertyStorage>()
@@ -272,13 +272,33 @@ unsafe fn configure(root: &IWiaItem2, item: &IWiaItem2, profile: &ScanProfile) -
         ScanColor::Bw => [FMT_BMP, FMT_PNG, FMT_JPEG],
         ScanColor::Color | ScanColor::Gray => [FMT_JPEG, FMT_BMP, FMT_PNG],
     };
-    let picked = order
+    let name = |f: GUID| {
+        if f == FMT_JPEG {
+            "JPEG"
+        } else if f == FMT_BMP {
+            "BMP"
+        } else {
+            "PNG"
+        }
+    };
+    let Some(picked) = order
         .into_iter()
-        .any(|f| write_guid(&item_props, WIA_IPA_FORMAT, f).is_ok());
-    if !picked {
+        .find(|f| write_guid(&item_props, WIA_IPA_FORMAT, *f).is_ok())
+    else {
         return Err(device_error("the scanner offers no image format Sheaf can read"));
-    }
-    Ok(())
+    };
+    Ok(name(picked))
+}
+
+/// Bytes a raw page of this profile takes (the larger of the formats), used to size the transfer buffer.
+fn page_buffer_estimate(profile: &ScanProfile) -> u64 {
+    let (w, h) = profile.pixels().unwrap_or((2480, 3508));
+    let per_pixel_x8 = match profile.color {
+        ScanColor::Color => 24,
+        ScanColor::Gray => 8,
+        ScanColor::Bw => 1,
+    };
+    (u64::from(w) * u64::from(h) * per_pixel_x8 / 8 + 4096).min(MAX_PAGE_BYTES as u64)
 }
 
 /// Receives the transfer: a stream for each page, then the page's bytes when it ends.
@@ -290,6 +310,8 @@ struct Collector {
     current: RefCell<Option<IStream>>,
     /// Pages received so far (converted or not).
     sent: Cell<usize>,
+    /// How big to make each page's transfer buffer ahead of time (see `GetNextStream`).
+    buffer: u64,
     /// What went wrong inside the callback, which cannot return our error type.
     failure: RefCell<Option<AppError>>,
 }
@@ -304,7 +326,14 @@ impl Collector {
         let Some(stream) = self.current.borrow_mut().take() else {
             return Ok(());
         };
+        let began = std::time::Instant::now();
         let data = unsafe { drain(&stream)? };
+        crate::diag::note(format!(
+            "page {} handed over by the driver: {} bytes (copied out in {} ms)",
+            self.sent.get() + 1,
+            data.len(),
+            began.elapsed().as_millis()
+        ));
         // Only copying happens here: converting a page takes as long as the scanner needs for the next.
         self.raw
             .send(data)
@@ -361,6 +390,14 @@ impl IWiaTransferCallback_Impl for Collector_Impl {
             return Err(windows::core::Error::from(E_ABORT));
         }
         let stream = unsafe { CreateStreamOnHGlobal(HGLOBAL::default(), true) }?;
+        // A memory stream made this way grows by exactly what each write needs, copying everything
+        // it already holds every time. The driver writes a page in many small pieces, so a large
+        // page takes quadratically longer to arrive. Making the buffer big enough first avoids
+        // that; what is left over after the image is cut off by `trim_to_image`. If the guess is
+        // too small the stream simply grows again, as it always did.
+        // SAFETY: `stream` is a live stream we just made.
+        let _ = unsafe { stream.SetSize(self.buffer) };
+        crate::diag::note(format!("page {} starts", self.sent.get() + 1));
         *self.current.borrow_mut() = Some(stream.clone());
         Ok(stream)
     }
@@ -370,18 +407,29 @@ unsafe fn scan_pages(profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: 
     if cancel.is_cancelled() {
         return Err(AppError::new(ErrorCode::Cancelled, "cancelled"));
     }
+    crate::diag::begin(format!(
+        "scan: {:?}, {} dpi, {:?}, {:?}{}",
+        profile.source,
+        profile.dpi,
+        profile.color,
+        profile.paper,
+        if profile.duplex { ", both sides" } else { "" }
+    ));
     let mgr = dev_mgr()?;
     let root = mgr
         .CreateDevice(0, &BSTR::from(profile.device_id.as_str()))
         .map_err(|e| map_hresult(e.code(), false).unwrap_or_else(|| device_error("the scanner is not connected")))?;
+    crate::diag::note("scanner opened");
     let item = scan_item(&root, profile.source)?;
-    configure(&root, &item, profile)?;
+    let format = configure(&root, &item, profile)?;
+    crate::diag::note(format!("settings applied; the driver takes {format} for the transfer"));
     let transfer = item
         .cast::<IWiaTransfer>()
         .map_err(|_| device_error("the scanner cannot transfer pages"))?;
 
-    let (raw, converter) = crate::pipeline::start(pages, cancel.clone());
+    let (raw, converter) = crate::pipeline::start(pages, cancel.clone(), profile.color);
     let collector = Collector {
+        buffer: page_buffer_estimate(profile),
         raw,
         cancel: cancel.clone(),
         current: RefCell::new(None),
@@ -389,7 +437,12 @@ unsafe fn scan_pages(profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: 
         failure: RefCell::new(None),
     };
     let callback: IWiaTransferCallback = collector.into();
+    crate::diag::note("transfer starts");
     let result = transfer.Download(0, &callback);
+    crate::diag::note(format!(
+        "transfer returned ({})",
+        if result.is_ok() { "ok" } else { "stopped" }
+    ));
     // Take the facts back out of the callback object, then let go of it: that closes the queue, and
     // the converter finishes the pages still waiting in it.
     let (sent, failure) = {
