@@ -68,7 +68,7 @@ impl SheafApp {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        egui::Modal::new(egui::Id::unique("info")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "info").show(ctx, |ui| {
             ui.set_width(460.0);
             ui.heading(self.t.t("meta.title"));
             ui.label(RichText::new(&name).weak());

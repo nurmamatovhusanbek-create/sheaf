@@ -369,6 +369,7 @@
  "scan.source": "Source",
  "scan.source_feeder": "Document feeder",
  "scan.source_flatbed": "Flatbed glass",
+ "scan.speed_hint": "A lower resolution scans faster: 200 dpi is enough for most documents, 300 for small print.",
  "scan.start": "Start scanning",
  "scan.title": "Scan",
  "scan.unavailable": "Scanning is not available on this computer.",

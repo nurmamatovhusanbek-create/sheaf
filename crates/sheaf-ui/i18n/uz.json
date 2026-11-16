@@ -369,6 +369,7 @@
  "scan.source": "Manba",
  "scan.source_feeder": "Hujjat taglik",
  "scan.source_flatbed": "Yassi oyna",
+ "scan.speed_hint": "Ruxsat past boʻlsa, skanerlash tezroq: koʻpchilik hujjatlar uchun 200 dpi yetarli, mayda yozuv uchun 300.",
  "scan.start": "Skanerlashni boshlash",
  "scan.title": "Skanerlash",
  "scan.unavailable": "Bu kompyuterda skanerlash mavjud emas.",

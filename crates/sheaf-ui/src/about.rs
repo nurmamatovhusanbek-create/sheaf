@@ -95,7 +95,7 @@ impl SheafApp {
             ),
             (self.t.t("about.scratch"), Some(self.base_dir.display().to_string())),
         ];
-        egui::Modal::new(egui::Id::unique("about")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "about").show(ctx, |ui| {
             ui.set_width(560.0);
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), egui::Sense::hover());
@@ -177,7 +177,7 @@ impl SheafApp {
         let (mut done, mut wheel, mut menu, mut help) = (false, false, false, false);
         let keys = pretty_keys(&self.settings.wheel_hotkey);
         let has_wheel = !keys.is_empty();
-        egui::Modal::new(egui::Id::unique("welcome")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "welcome").show(ctx, |ui| {
             ui.set_width(520.0);
             ui.heading(self.t.t("welcome.title"));
             ui.add_space(4.0);
@@ -204,7 +204,7 @@ impl SheafApp {
             }
             if card(
                 ui,
-                Icon::Folder,
+                Icon::Presets,
                 &self.t.t("welcome.menu_title"),
                 &self.t.t("welcome.menu_body"),
                 Some(&self.t.t("welcome.menu_add")),

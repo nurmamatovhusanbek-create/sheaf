@@ -157,7 +157,7 @@ impl SheafApp {
     fn password_dialog(&mut self, ctx: &egui::Context, mut f: PasswordForm) -> Option<PasswordForm> {
         let mut keep = true;
         let mut submit = false;
-        egui::Modal::new(egui::Id::unique("password")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "password").show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(self.t.t("password.title"));
             ui.label(self.t.tv("password.prompt", &[("name", &f.source.name)]));
@@ -217,7 +217,7 @@ impl SheafApp {
         let mut close = false;
         let mut save = false;
         let mut about = false;
-        egui::Modal::new(egui::Id::unique("settings")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "settings").show(ctx, |ui| {
             ui.set_width(420.0);
             ui.heading(self.t.t("settings.title"));
             egui::Grid::new("settings-grid")
@@ -364,7 +364,7 @@ impl SheafApp {
     fn export_dialog(&mut self, ctx: &egui::Context, mut f: ExportForm) -> Option<ExportForm> {
         let mut close = false;
         let mut start = false;
-        egui::Modal::new(egui::Id::unique("export")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "export").show(ctx, |ui| {
             ui.set_width(480.0);
             ui.heading(self.t.t("export.title"));
             egui::ScrollArea::vertical()
@@ -647,7 +647,7 @@ impl SheafApp {
         let mut close = false;
         let mut start = false;
         let mut refresh = false;
-        egui::Modal::new(egui::Id::unique("scan")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "scan").show(ctx, |ui| {
             ui.set_width(440.0);
             ui.heading(self.t.t("scan.title"));
             ui.add_space(4.0);
@@ -759,6 +759,8 @@ impl SheafApp {
                         egui::Checkbox::new(&mut f.ocr, self.t.t("scan.ocr")),
                     );
                     ui.label(RichText::new(self.t.t("scan.hint")).weak().small());
+                    // Resolution decides most of a scan's speed: say so where it is chosen.
+                    ui.label(RichText::new(self.t.t("scan.speed_hint")).weak().small());
                 }
             }
             ui.add_space(6.0);

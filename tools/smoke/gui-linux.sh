@@ -50,13 +50,13 @@ kill -0 "$scan" || { echo "FAIL the window exited early"; exit 1; }
 xdotool mousemove 146 25 click 1            # toolbar: Scan
 sleep 3
 import -window root "$out/scan-dialog.png"
-xdotool mousemove 565 309 click 1; sleep 1   # Source
-xdotool mousemove 578 385 click 1; sleep 1   # Document feeder
-xdotool mousemove 479 587 click 1            # Start scanning
+xdotool mousemove 565 290 click 1; sleep 1   # Source
+xdotool mousemove 578 366 click 1; sleep 1   # Document feeder
+xdotool mousemove 479 608 click 1            # Start scanning
 sleep 8
 import -window root "$out/scan-done.png"
 # Read the job bar back: three sheets from the feeder are "3 pages".
-convert "$out/scan-done.png" -crop 420x30+0+790 +repage -resize 300% -colorspace Gray -negate "$work/bar.png"
+convert "$out/scan-done.png" -crop 420x30+0+755 +repage -resize 300% -colorspace Gray -negate "$work/bar.png"
 bar="$(tesseract "$work/bar.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
 echo "job bar reads: $bar"
 case "$bar" in *"3 pages"*) ;; *) echo "FAIL expected the job bar to say 3 pages"; exit 1;; esac

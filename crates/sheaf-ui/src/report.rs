@@ -248,7 +248,7 @@ impl SheafApp {
     pub(crate) fn report_dialog(&mut self, ctx: &egui::Context, mut f: ReportForm) -> Option<ReportForm> {
         let text = build(&self.report_input(&f));
         let (mut close, mut copy, mut save) = (false, false, false);
-        egui::Modal::new(egui::Id::unique("report")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "report").show(ctx, |ui| {
             ui.set_width(560.0);
             ui.heading(self.t.t("report.title"));
             ui.add_space(4.0);

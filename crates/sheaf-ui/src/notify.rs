@@ -400,7 +400,7 @@ impl SheafApp {
             Some(ErrorCode::DeviceError | ErrorCode::DeviceBusy | ErrorCode::DeviceCrashed | ErrorCode::NoPaper)
         );
         let mut scan_again = false;
-        egui::Modal::new(egui::Id::unique("error-details")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "error-details").show(ctx, |ui| {
             ui.set_width(460.0);
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(24.0, 24.0), egui::Sense::hover());

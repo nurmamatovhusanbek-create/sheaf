@@ -113,7 +113,7 @@ impl SheafApp {
         let mut delete = false;
         let mut run = false;
         let mut pick_folder = false;
-        egui::Modal::new(egui::Id::unique("presets")).show(ctx, |ui| {
+        crate::theme::modal(ctx, "presets").show(ctx, |ui| {
             ui.set_width(680.0);
             ui.heading(self.t.t("presets.title"));
             ui.add_space(4.0);

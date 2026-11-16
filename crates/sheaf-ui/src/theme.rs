@@ -20,6 +20,14 @@ pub fn install_fonts(ctx: &egui::Context, noto: Option<&Path>) {
     ctx.set_fonts(fonts);
 }
 
+/// A dialog with room around its contents. egui's default leaves six points between a dialog's edge
+/// and its title; every dialog of the app comes from here so they all breathe the same. The
+/// content stays where it was (a dialog is centred, so growing the margin only grows the frame).
+pub fn modal(ctx: &egui::Context, name: &'static str) -> egui::Modal {
+    let frame = egui::Frame::popup(&ctx.global_style()).inner_margin(egui::Margin::same(18));
+    egui::Modal::new(egui::Id::unique(name)).frame(frame)
+}
+
 /// `system`, `light` or `dark`.
 pub fn apply(ctx: &egui::Context, theme: &str) {
     ctx.set_theme(match theme {
