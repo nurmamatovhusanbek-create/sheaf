@@ -444,7 +444,7 @@ struct Decoded {
 fn eight_bit(raw: Vec<u8>, bpc: i64, samples: usize) -> Option<Vec<u8>> {
     match bpc {
         8 => (raw.len() == samples).then_some(raw),
-        16 => (raw.len() == samples * 2).then(|| raw.chunks_exact(2).map(|c| c[0]).collect()),
+        16 => (raw.len() == samples * 2).then(|| raw.as_chunks::<2>().0.iter().map(|c| c[0]).collect()),
         _ => None,
     }
 }
@@ -453,7 +453,7 @@ fn eight_bit(raw: Vec<u8>, bpc: i64, samples: usize) -> Option<Vec<u8>> {
 /// to be stored as a smaller JPEG.
 fn cmyk_to_rgb(cmyk: &[u8], inverted: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(cmyk.len() / 4 * 3);
-    for px in cmyk.chunks_exact(4) {
+    for px in cmyk.as_chunks::<4>().0 {
         let v = |i: usize| u32::from(if inverted { 255 - px[i] } else { px[i] });
         let k = 255 - v(3);
         for c in 0..3 {
