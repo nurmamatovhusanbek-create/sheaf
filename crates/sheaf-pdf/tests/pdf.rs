@@ -707,3 +707,201 @@ fn compress_believes_the_jpeg_header_not_the_dictionary() {
     let report = lo::compress(&liar, &dir.path().join("liar-out.pdf"), CompressLevel::Recommended).expect("compress");
     assert_eq!(report.images_recompressed, 0, "a mislabelled image is left as it is");
 }
+
+/// A one-page PDF with one image of `w`×`h` pixels: `entries` go in its dictionary (colour space,
+/// bits per component, filter ...), `data` is its stream, `extra` are further objects (numbered
+/// from 7), and with `in_form` the page draws it through a form XObject, as many programs do.
+fn raw_image_pdf(w: u32, h: u32, entries: &str, data: &[u8], extra: &[Vec<u8>], in_form: bool) -> Vec<u8> {
+    let content: &[u8] = b"q 595 0 0 842 0 0 cm /I1 Do Q";
+    let page_res = if in_form { "/F1 6 0 R" } else { "/I1 5 0 R" };
+    let page_content: &[u8] = if in_form { b"/F1 Do" } else { content };
+    let form = format!(
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 595 842] /Resources << /XObject << /I1 5 0 R >> >> /Length {} >>\nstream\n{}\nendstream",
+        content.len(),
+        String::from_utf8_lossy(content)
+    );
+    let mut objects: Vec<Vec<u8>> = vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Count 1 /Kids [3 0 R] >>".to_vec(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << {page_res} >> >> /Contents 4 0 R >>")
+            .into_bytes(),
+        [format!("<< /Length {} >>\nstream\n", page_content.len()).as_bytes(), page_content, b"\nendstream"].concat(),
+    ];
+    let head = format!(
+        "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} {entries} /Length {} >>\nstream\n",
+        data.len()
+    );
+    objects.push([head.as_bytes(), data, b"\nendstream"].concat());
+    objects.push(form.into_bytes());
+    objects.extend(extra.iter().cloned());
+    let mut out = b"%PDF-1.5\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n", i + 1).as_bytes());
+        out.extend(body);
+        out.extend(b"\nendobj\n");
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).as_bytes());
+    for o in offsets {
+        out.extend(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    out
+}
+
+#[test]
+fn compress_reads_the_image_forms_real_files_use() {
+    // TEST-COMPRESS: a large scan in a form scanner software, Windows and other tools write must
+    // shrink the way a plain one does. These used to be left at full size without a word.
+    let dir = Scratch::new("pdf-compress-forms");
+    let (w, h) = (1000u32, 1300u32);
+    let rgb = image::DynamicImage::ImageRgba8(photo(w, h)).into_rgb8();
+    let rgb = rgb.as_raw();
+    let gray: Vec<u8> = rgb.chunks_exact(3).map(|p| p[1]).collect();
+    // A fake ICC profile: compress only reads its component count.
+    let icc = |n: u32| -> Vec<u8> { format!("<< /N {n} /Length 4 >>\nstream\nfake\nendstream").into_bytes() };
+    let wide: Vec<u8> = rgb.iter().flat_map(|b| [*b, 0]).collect();
+    let palette: Vec<u8> = (0..=255u8).flat_map(|i| [i, 255 - i, i / 2]).collect();
+    let indices: Vec<u8> = rgb.chunks_exact(3).map(|p| p[0]).collect();
+    let hex = palette.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let cmyk: Vec<u8> = rgb
+        .chunks_exact(3)
+        .flat_map(|p| [255 - p[0], 255 - p[1], 255 - p[2], 0])
+        .collect();
+
+    // (label, dictionary entries, samples, extra objects, wrapped in a form, colour space written back)
+    #[allow(clippy::type_complexity)]
+    let cases: Vec<(&str, String, &[u8], Vec<Vec<u8>>, bool, &str)> = vec![
+        (
+            "plain RGB",
+            "/ColorSpace /DeviceRGB /BitsPerComponent 8".into(),
+            rgb,
+            vec![],
+            false,
+            "DeviceRGB",
+        ),
+        (
+            "RGB in a form",
+            "/ColorSpace /DeviceRGB /BitsPerComponent 8".into(),
+            rgb,
+            vec![],
+            true,
+            "DeviceRGB",
+        ),
+        (
+            "gray in a form",
+            "/ColorSpace /DeviceGray /BitsPerComponent 8".into(),
+            &gray,
+            vec![],
+            true,
+            "DeviceGray",
+        ),
+        (
+            "ICC profile",
+            "/ColorSpace [/ICCBased 7 0 R] /BitsPerComponent 8".into(),
+            rgb,
+            vec![icc(3)],
+            false,
+            "ICCBased",
+        ),
+        (
+            "calibrated RGB",
+            "/ColorSpace [/CalRGB << /WhitePoint [0.95 1 1.09] >>] /BitsPerComponent 8".into(),
+            rgb,
+            vec![],
+            false,
+            "CalRGB",
+        ),
+        (
+            "palette",
+            format!("/ColorSpace [/Indexed /DeviceRGB 255 <{hex}>] /BitsPerComponent 8"),
+            &indices,
+            vec![],
+            false,
+            "DeviceRGB",
+        ),
+        (
+            "16 bits per sample",
+            "/ColorSpace /DeviceRGB /BitsPerComponent 16".into(),
+            &wide,
+            vec![],
+            false,
+            "DeviceRGB",
+        ),
+        (
+            "CMYK samples",
+            "/ColorSpace /DeviceCMYK /BitsPerComponent 8".into(),
+            &cmyk,
+            vec![],
+            false,
+            "DeviceRGB",
+        ),
+    ];
+    for (label, entries, data, extra, in_form, written_back) in cases {
+        let name = label.replace(' ', "-");
+        let input = dir.file(
+            &format!("{name}.pdf"),
+            &raw_image_pdf(w, h, &entries, data, &extra, in_form),
+        );
+        let out = dir.path().join(format!("{name}-out.pdf"));
+        let report = lo::compress(&input, &out, CompressLevel::Recommended).expect(label);
+        assert_eq!(report.images_recompressed, 1, "{label}: the image was recompressed");
+        assert!(
+            report.bytes_after * 4 < report.bytes_before,
+            "{label}: {} -> {} bytes",
+            report.bytes_before,
+            report.bytes_after
+        );
+        // What is written back: the profile or calibrated space stays, others become device colour.
+        let doc = lopdf::Document::load(&out).expect("output opens");
+        let space = doc
+            .objects
+            .values()
+            .filter_map(|o| o.as_stream().ok())
+            .find(|st| {
+                st.dict
+                    .get(b"Subtype")
+                    .and_then(lopdf::Object::as_name)
+                    .is_ok_and(|n| n == b"Image")
+            })
+            .and_then(|st| st.dict.get(b"ColorSpace").ok())
+            .map(|cs| match cs {
+                lopdf::Object::Name(n) => String::from_utf8_lossy(n).into_owned(),
+                lopdf::Object::Array(a) => a
+                    .first()
+                    .and_then(|f| f.as_name().ok())
+                    .map_or(String::new(), |n| String::from_utf8_lossy(n).into_owned()),
+                _ => String::new(),
+            })
+            .unwrap_or_default();
+        assert_eq!(space, written_back, "{label}: colour space");
+    }
+
+    // What cannot be read back faithfully is left alone, and counted.
+    let stencil = dir.file(
+        "stencil.pdf",
+        &raw_image_pdf(
+            w,
+            h,
+            "/ImageMask true /BitsPerComponent 1",
+            &vec![0u8; (w as usize / 8 + 1) * h as usize],
+            &[],
+            false,
+        ),
+    );
+    let report = lo::compress(
+        &stencil,
+        &dir.path().join("stencil-out.pdf"),
+        CompressLevel::Recommended,
+    )
+    .expect("stencil");
+    assert_eq!((report.images_recompressed, report.images_skipped), (0, 1));
+}

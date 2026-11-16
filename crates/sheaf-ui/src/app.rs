@@ -199,7 +199,7 @@ impl SheafApp {
                 default_preset: None,
                 workers: None,
                 ocr_quality: "Fast".into(),
-                ocr_mode: "Manual".into(),
+                ocr_mode: "Auto".into(),
                 theme: "system".into(),
                 wheel_hotkey: sheaf_store::settings::DEFAULT_WHEEL_HOTKEY.into(),
                 allow_network_paths: true,
@@ -598,7 +598,8 @@ impl SheafApp {
 
     /// UI-SCANDLG: open the dialog and ask the system for scanners (it can take seconds).
     pub(crate) fn open_scan(&mut self) {
-        let ocr_default = self.settings.ocr_mode == "Auto";
+        // Recognizing pages as they are scanned is the normal way to scan; only "Never" turns it off.
+        let ocr_default = self.settings.ocr_mode != "Off";
         self.modal = Some(Modal::Scan(crate::dialogs::ScanForm::new(
             self.scan_prefs.clone(),
             ocr_default,

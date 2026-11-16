@@ -12,7 +12,7 @@ use lopdf::{
 use sheaf_core::consts::{MAX_PAGE_PIXELS, MAX_PAGE_SIDE};
 use sheaf_core::proto::{MetaEdit, MetaFields, MetadataInfo};
 use sheaf_core::{AppError, CompressLevel, ErrorCode, Protect, Result};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use zeroize::Zeroize;
@@ -308,6 +308,8 @@ pub struct CompressReport {
     /// The result was not smaller, so `out` is a copy of the input.
     pub kept_original: bool,
     pub images_recompressed: u32,
+    /// Images that were not touched because they are in a form that cannot be read back faithfully.
+    pub images_skipped: u32,
 }
 
 /// An image XObject that can be decoded and written back as JPEG.
@@ -338,25 +340,175 @@ fn page_width_pt(doc: &Document, page_id: ObjectId) -> f32 {
     612.0
 }
 
-/// Decode an image stream to 8-bit gray or RGB, if it is one of the plain
-/// kinds: JPEG, or flate/raw with 8 bits per component. Masks, indexed and
-/// CMYK images, CCITT and JBIG2 are left alone.
-fn decode(doc: &Document, id: ObjectId) -> Option<image::DynamicImage> {
+/// How an image's samples are to be read, from its `/ColorSpace`.
+#[derive(Debug, Clone)]
+enum Space {
+    Gray,
+    Rgb,
+    Cmyk,
+    /// A palette: each sample is an index into `palette`, which holds `base` bytes per entry.
+    Indexed {
+        base: usize,
+        palette: Vec<u8>,
+    },
+}
+
+impl Space {
+    fn channels(&self) -> usize {
+        match self {
+            Space::Gray | Space::Indexed { .. } => 1,
+            Space::Rgb => 3,
+            Space::Cmyk => 4,
+        }
+    }
+}
+
+/// Resolve a reference (to any depth that is sane) to the object it names.
+fn deref<'a>(doc: &'a Document, mut obj: &'a Object) -> Option<&'a Object> {
+    for _ in 0..8 {
+        match obj {
+            Object::Reference(id) => obj = doc.get_object(*id).ok()?,
+            other => return Some(other),
+        }
+    }
+    None
+}
+
+/// Read a `/ColorSpace` entry. Returns how to read the samples and, when the colour space can be kept
+/// as written for the recompressed image (the plain device and calibrated spaces and ICC profiles of
+/// 1 or 3 components), that entry, so colours do not shift.
+fn read_space(doc: &Document, entry: &Object, depth: u32) -> Option<(Space, Option<Object>)> {
+    if depth > 3 {
+        return None;
+    }
+    let obj = deref(doc, entry)?;
+    match obj {
+        Object::Name(n) => match n.as_slice() {
+            b"DeviceGray" | b"G" | b"CalGray" => Some((Space::Gray, Some(Object::Name(b"DeviceGray".to_vec())))),
+            b"DeviceRGB" | b"RGB" | b"CalRGB" => Some((Space::Rgb, Some(Object::Name(b"DeviceRGB".to_vec())))),
+            b"DeviceCMYK" | b"CMYK" => Some((Space::Cmyk, None)),
+            _ => None,
+        },
+        Object::Array(items) => {
+            let family = deref(doc, items.first()?)?.as_name().ok()?;
+            match family {
+                b"CalGray" => Some((Space::Gray, Some(obj.clone()))),
+                b"CalRGB" => Some((Space::Rgb, Some(obj.clone()))),
+                b"ICCBased" => {
+                    let profile = deref(doc, items.get(1)?)?.as_stream().ok()?;
+                    match profile.dict.get(b"N").ok()?.as_i64().ok()? {
+                        1 => Some((Space::Gray, Some(obj.clone()))),
+                        3 => Some((Space::Rgb, Some(obj.clone()))),
+                        4 => Some((Space::Cmyk, None)),
+                        _ => None,
+                    }
+                }
+                b"Indexed" | b"I" => {
+                    let (base, _) = read_space(doc, items.get(1)?, depth + 1)?;
+                    let base_channels = match base {
+                        Space::Gray => 1,
+                        Space::Rgb => 3,
+                        _ => return None,
+                    };
+                    let hival = usize::try_from(deref(doc, items.get(2)?)?.as_i64().ok()?).ok()?;
+                    let palette = match deref(doc, items.get(3)?)? {
+                        Object::String(bytes, _) => bytes.clone(),
+                        Object::Stream(st) => st.decompressed_content().ok()?,
+                        _ => return None,
+                    };
+                    if hival > 255 || palette.len() < (hival + 1) * base_channels {
+                        return None;
+                    }
+                    Some((
+                        Space::Indexed {
+                            base: base_channels,
+                            palette,
+                        },
+                        None,
+                    ))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// An image read back as 8-bit gray or RGB, and the colour space to write it with when that can stay as it was.
+struct Decoded {
+    img: image::DynamicImage,
+    keep_space: Option<Object>,
+}
+
+/// Samples to 8 bits: 8-bit ones as they are, 16-bit ones by their high byte.
+fn eight_bit(raw: Vec<u8>, bpc: i64, samples: usize) -> Option<Vec<u8>> {
+    match bpc {
+        8 => (raw.len() == samples).then_some(raw),
+        16 => (raw.len() == samples * 2).then(|| raw.chunks_exact(2).map(|c| c[0]).collect()),
+        _ => None,
+    }
+}
+
+/// CMYK to RGB with the plain device formula (no profile): good enough for a copy that is about
+/// to be stored as a smaller JPEG.
+fn cmyk_to_rgb(cmyk: &[u8], inverted: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(cmyk.len() / 4 * 3);
+    for px in cmyk.chunks_exact(4) {
+        let v = |i: usize| u32::from(if inverted { 255 - px[i] } else { px[i] });
+        let k = 255 - v(3);
+        for c in 0..3 {
+            out.push((((255 - v(c)) * k) / 255) as u8);
+        }
+    }
+    out
+}
+
+/// Decode an image stream to 8-bit gray or RGB. Understood: JPEG (RGB, gray, CMYK), and flate or
+/// raw samples of 8 or 16 bits in the device, calibrated, ICC-profiled, CMYK and palette colour
+/// spaces. Left alone, because they are already small or cannot be read faithfully: stencil masks,
+/// colour-key masks, odd `/Decode` arrays, CCITT, JBIG2, JPEG 2000, LZW and the rest.
+fn decode(doc: &Document, id: ObjectId) -> Option<Decoded> {
     let stream = doc.get_object(id).ok()?.as_stream().ok()?;
     let dict = &stream.dict;
     let has = |key: &[u8]| dict.get(key).is_ok();
-    if has(b"Mask") || has(b"Decode") || dict.get(b"ImageMask").and_then(Object::as_bool).unwrap_or(false) {
+    if has(b"Mask") || dict.get(b"ImageMask").and_then(Object::as_bool).unwrap_or(false) {
         return None;
     }
     let (w, h) = (
-        dict.get(b"Width").ok()?.as_i64().ok()?,
-        dict.get(b"Height").ok()?.as_i64().ok()?,
+        dict.get(b"Width").ok().and_then(|o| deref(doc, o))?.as_i64().ok()?,
+        dict.get(b"Height").ok().and_then(|o| deref(doc, o))?.as_i64().ok()?,
     );
     if w <= 0 || h <= 0 || (w as u128) * (h as u128) * 3 > MAX_IMAGE_BYTES as u128 {
         return None;
     }
+    let (space, keep) = dict.get(b"ColorSpace").ok().and_then(|cs| read_space(doc, cs, 0))?;
+    // A `/Decode` array that flips samples is only understood for CMYK, where it is how Photoshop
+    // writes inverted JPEGs.
+    let inverted = match dict.get(b"Decode").ok().and_then(|d| deref(doc, d)) {
+        None => false,
+        Some(Object::Array(a)) => {
+            let nums: Vec<f32> = a.iter().filter_map(|o| o.as_float().ok()).collect();
+            let flips = nums.chunks(2).all(|p| p == [1.0, 0.0]);
+            let identity = nums.chunks(2).all(|p| p == [0.0, 1.0]);
+            if flips && space.channels() == 4 && nums.len() == 8 {
+                true
+            } else if identity {
+                false
+            } else {
+                return None;
+            }
+        }
+        Some(_) => return None,
+    };
+    let bpc = dict
+        .get(b"BitsPerComponent")
+        .ok()
+        .and_then(|o| deref(doc, o))
+        .and_then(|o| o.as_i64().ok())
+        .unwrap_or(8);
     let filters = stream.filters().unwrap_or_default();
-    match filters.as_slice() {
+    let (width, height) = (w as u32, h as u32);
+    let img = match filters.as_slice() {
         [b"DCTDecode"] => {
             // The dictionary's Width and Height are the file's claim; the JPEG header says what a
             // decoder will actually allocate. Check the header first, against the same pixel budget
@@ -374,37 +526,111 @@ fn decode(doc: &Document, id: ObjectId) -> Option<image::DynamicImage> {
             if i64::from(jw) != w || i64::from(jh) != h || u64::from(jw) * u64::from(jh) > MAX_PAGE_PIXELS {
                 return None;
             }
-            let img = image::DynamicImage::from_decoder(decoder).ok()?;
-            // CMYK and other exotic JPEGs come back in forms we do not rewrite.
-            matches!(
-                img,
-                image::DynamicImage::ImageRgb8(_) | image::DynamicImage::ImageLuma8(_)
-            )
-            .then_some(img)
-        }
-        [] | [b"FlateDecode"] => {
-            if dict.get(b"BitsPerComponent").and_then(Object::as_i64).ok()? != 8 {
+            // CMYK JPEGs are left alone: the decoder hands back RGB made with its own idea of how
+            // such files are inverted, which does not always match the file's (an inverted picture
+            // is worse than a large one).
+            if space.channels() == 4 {
                 return None;
             }
-            let channels = match dict.get(b"ColorSpace").and_then(Object::as_name).ok()? {
-                b"DeviceRGB" => 3usize,
-                b"DeviceGray" => 1,
+            match image::DynamicImage::from_decoder(decoder).ok()? {
+                rgb @ image::DynamicImage::ImageRgb8(_) => rgb,
+                gray @ image::DynamicImage::ImageLuma8(_) => gray,
                 _ => return None,
-            };
+            }
+        }
+        [] | [b"FlateDecode"] => {
             let raw = match filters.is_empty() {
                 true => stream.content.clone(),
                 false => stream.decompressed_content_with_limit(MAX_IMAGE_BYTES).ok()?,
             };
-            if raw.len() != w as usize * h as usize * channels {
-                return None;
-            }
-            match channels {
-                3 => image::RgbImage::from_raw(w as u32, h as u32, raw).map(image::DynamicImage::ImageRgb8),
-                _ => image::GrayImage::from_raw(w as u32, h as u32, raw).map(image::DynamicImage::ImageLuma8),
+            let pixels = width as usize * height as usize;
+            match &space {
+                Space::Gray => {
+                    let data = eight_bit(raw, bpc, pixels)?;
+                    image::GrayImage::from_raw(width, height, data).map(image::DynamicImage::ImageLuma8)?
+                }
+                Space::Rgb => {
+                    let data = eight_bit(raw, bpc, pixels * 3)?;
+                    image::RgbImage::from_raw(width, height, data).map(image::DynamicImage::ImageRgb8)?
+                }
+                Space::Cmyk => {
+                    let data = eight_bit(raw, bpc, pixels * 4)?;
+                    image::RgbImage::from_raw(width, height, cmyk_to_rgb(&data, inverted))
+                        .map(image::DynamicImage::ImageRgb8)?
+                }
+                Space::Indexed { base, palette } => {
+                    let indices = eight_bit(raw, bpc.min(8), pixels)?;
+                    let mut data = Vec::with_capacity(pixels * base);
+                    for &i in &indices {
+                        let at = usize::from(i) * base;
+                        data.extend_from_slice(palette.get(at..at + base)?);
+                    }
+                    if *base == 3 {
+                        image::RgbImage::from_raw(width, height, data).map(image::DynamicImage::ImageRgb8)?
+                    } else {
+                        image::GrayImage::from_raw(width, height, data).map(image::DynamicImage::ImageLuma8)?
+                    }
+                }
             }
         }
-        _ => None,
+        _ => return None,
+    };
+    // Only keep the original colour space when what we write has the channels it describes.
+    let keep_space = keep.filter(|_| {
+        matches!(
+            (&space, &img),
+            (Space::Gray, image::DynamicImage::ImageLuma8(_)) | (Space::Rgb, image::DynamicImage::ImageRgb8(_))
+        )
+    });
+    Some(Decoded { img, keep_space })
+}
+
+/// Every image XObject a page draws, directly or through form XObjects (a form is how many programs
+/// wrap a scan), each once.
+fn page_image_ids(doc: &Document, page_id: ObjectId) -> Vec<ObjectId> {
+    fn walk(
+        doc: &Document,
+        resources: &Dictionary,
+        depth: u32,
+        forms: &mut BTreeSet<ObjectId>,
+        out: &mut Vec<ObjectId>,
+    ) {
+        let Some(Object::Dictionary(xobjects)) = resources.get(b"XObject").ok().and_then(|o| deref(doc, o)) else {
+            return;
+        };
+        for entry in xobjects.iter().map(|(_, v)| v) {
+            let Ok(id) = entry.as_reference() else { continue };
+            let Some(stream) = doc.get_object(id).ok().and_then(|o| o.as_stream().ok()) else {
+                continue;
+            };
+            match stream.dict.get(b"Subtype").and_then(Object::as_name) {
+                Ok(b"Image") => {
+                    if !out.contains(&id) {
+                        out.push(id);
+                    }
+                }
+                Ok(b"Form") if depth < 8 && forms.insert(id) => {
+                    if let Some(Object::Dictionary(inner)) =
+                        stream.dict.get(b"Resources").ok().and_then(|o| deref(doc, o))
+                    {
+                        walk(doc, inner, depth + 1, forms, out);
+                    }
+                }
+                _ => {}
+            }
+        }
     }
+    let mut out = Vec::new();
+    let Ok((inline, ids)) = doc.get_page_resources(page_id) else {
+        return out;
+    };
+    let resources = inline
+        .cloned()
+        .or_else(|| ids.iter().find_map(|id| doc.get_dictionary(*id).ok().cloned()));
+    if let Some(resources) = resources {
+        walk(doc, &resources, 0, &mut BTreeSet::new(), &mut out);
+    }
+    out
 }
 
 fn encode_jpeg(img: &image::DynamicImage, quality: u8) -> Option<Vec<u8>> {
@@ -425,20 +651,32 @@ pub fn compress(input: &Path, out: &Path, level: CompressLevel) -> Result<Compre
         .len();
     let mut doc = load(input, None)?;
     let mut recompressed = 0u32;
+    let mut skipped = 0u32;
 
     if let Some((target_dpi, quality)) = level.image_target() {
         // An image may sit on several pages: size it for the page where it is sharpest.
         let mut candidates: BTreeMap<ObjectId, Candidate> = BTreeMap::new();
         for page_id in doc.page_iter().collect::<Vec<_>>() {
             let width_in = page_width_pt(&doc, page_id) / 72.0;
-            for img in doc.get_page_images(page_id).unwrap_or_default() {
-                let dpi = img.width as f32 / width_in;
-                let entry = candidates.entry(img.id).or_insert(Candidate { id: img.id, dpi });
+            for id in page_image_ids(&doc, page_id) {
+                let Some(width) = doc
+                    .get_object(id)
+                    .ok()
+                    .and_then(|o| o.as_stream().ok())
+                    .and_then(|st| st.dict.get(b"Width").ok())
+                    .and_then(|o| deref(&doc, o))
+                    .and_then(|o| o.as_i64().ok())
+                else {
+                    continue;
+                };
+                let dpi = width as f32 / width_in;
+                let entry = candidates.entry(id).or_insert(Candidate { id, dpi });
                 entry.dpi = entry.dpi.min(dpi);
             }
         }
         for cand in candidates.into_values() {
-            let Some(img) = decode(&doc, cand.id) else {
+            let Some(Decoded { img, keep_space }) = decode(&doc, cand.id) else {
+                skipped += 1;
                 continue;
             };
             let scale = (target_dpi as f32 / cand.dpi).min(1.0);
@@ -464,10 +702,12 @@ pub fn compress(input: &Path, out: &Path, level: CompressLevel) -> Result<Compre
             stream.dict.set("Height", i64::from(resized.height()));
             stream.dict.set(
                 "ColorSpace",
-                Object::Name(if gray {
-                    b"DeviceGray".to_vec()
-                } else {
-                    b"DeviceRGB".to_vec()
+                keep_space.unwrap_or_else(|| {
+                    Object::Name(if gray {
+                        b"DeviceGray".to_vec()
+                    } else {
+                        b"DeviceRGB".to_vec()
+                    })
                 }),
             );
             stream.dict.set("BitsPerComponent", 8i64);
@@ -498,6 +738,7 @@ pub fn compress(input: &Path, out: &Path, level: CompressLevel) -> Result<Compre
         },
         kept_original,
         images_recompressed: if kept_original { 0 } else { recompressed },
+        images_skipped: skipped,
     })
 }
 
@@ -605,12 +846,7 @@ pub fn extract_images(
         .page_iter()
         .nth(page_index as usize)
         .ok_or_else(|| AppError::invalid("page index out of range"))?;
-    let ids: Vec<ObjectId> = doc
-        .get_page_images(page_id)
-        .map_err(map_err)?
-        .iter()
-        .map(|i| i.id)
-        .collect();
+    let ids: Vec<ObjectId> = page_image_ids(&doc, page_id);
     let (mut files, mut skipped) = (Vec::new(), 0u32);
     for id in ids {
         if files.len() >= MAX_EXTRACTED_IMAGES {
@@ -626,7 +862,7 @@ pub fn extract_images(
         let (path, bytes) = if is_jpeg {
             (out_dir.join(format!("{stem}-{k}.jpg")), stream.content.clone())
         } else {
-            let Some(img) = decode(&doc, id) else {
+            let Some(Decoded { img, .. }) = decode(&doc, id) else {
                 skipped += 1;
                 continue;
             };

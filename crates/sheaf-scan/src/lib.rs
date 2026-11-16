@@ -9,6 +9,8 @@
 //! a hostile image file would (SEC-LIMITS). See `ARCHITECTURE.md`, anchor `mod-scan`.
 
 mod fake;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod pipeline;
 mod proc;
 #[cfg(windows)]
 mod wia;

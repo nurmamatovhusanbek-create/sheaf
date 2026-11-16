@@ -163,7 +163,7 @@ impl Backend {
         let scanner = self.scanner()?;
         let recognize = match dto.ocr {
             Some(on) => on,
-            None => lock(&self.settings).ocr_mode == "Auto",
+            None => lock(&self.settings).ocr_mode != "Off",
         } && self.tesseract;
         let dir = self.session_dir().join("scans");
         std::fs::create_dir_all(&dir).map_err(|e| AppError::io("create the scan folder", &e))?;

@@ -36,11 +36,15 @@ impl WorkerProc {
     pub(crate) fn spawn(cfg: &PoolConfig) -> Result<WorkerProc> {
         // Argument array, never a shell string. Only the three stdio handles
         // are inherited by the child.
-        let mut child = Command::new(&cfg.program)
+        let mut command = Command::new(&cfg.program);
+        command
             .args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        // No console window for a worker that is a console program (the app has none of its own).
+        sheaf_store::hide_console(&mut command);
+        let mut child = command
             .spawn()
             .map_err(|_| AppError::new(ErrorCode::EngineMissing, "worker process could not be started"))?;
         // SEC-ISOLATE: contain the worker (and tesseract below it) before it reads a byte of a document.

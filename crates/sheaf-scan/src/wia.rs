@@ -9,12 +9,12 @@
 #![allow(unsafe_code)]
 
 use crate::{
-    normalize, CancelToken, Device, ScanBackend, ScanColor, ScanPaper, ScanProfile, ScanSource, ScannedPage,
-    MAX_DEVICES, MAX_PAGE_BYTES,
+    CancelToken, Device, ScanBackend, ScanColor, ScanPaper, ScanProfile, ScanSource, ScannedPage, MAX_DEVICES,
+    MAX_PAGE_BYTES,
 };
 use sheaf_core::{AppError, ErrorCode, Result};
 use std::cell::{Cell, RefCell};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Sender, SyncSender};
 use windows::core::{implement, AsImpl, Interface, BSTR, GUID};
 use windows::Win32::Devices::ImageAcquisition::*;
 use windows::Win32::Foundation::{E_ABORT, E_OUTOFMEMORY, HGLOBAL};
@@ -263,9 +263,16 @@ unsafe fn configure(root: &IWiaItem2, item: &IWiaItem2, profile: &ScanProfile) -
         let _ = write_i32(&item_props, WIA_IPS_XEXTENT, w as i32);
         let _ = write_i32(&item_props, WIA_IPS_YEXTENT, h as i32);
     }
-    // PNG, then JPEG, then BMP: the first one this driver accepts. TIFF is left
-    // out on purpose (a multi-page TIFF would lose pages in `normalize`).
-    let picked = [FMT_PNG, FMT_JPEG, FMT_BMP]
+    // The first format this driver accepts, fastest first. PNG is last: Windows makes it by
+    // compressing every page after the scan, which for a colour A4 page at 300 dpi takes seconds
+    // the scanner spends waiting. Colour and grey go as JPEG (small and quick, and what scan-to-PDF
+    // programs store anyway); black and white as a bitmap, which is tiny at one bit a pixel and
+    // loses nothing. TIFF is left out on purpose (a multi-page TIFF would lose pages in `normalize`).
+    let order = match profile.color {
+        ScanColor::Bw => [FMT_BMP, FMT_PNG, FMT_JPEG],
+        ScanColor::Color | ScanColor::Gray => [FMT_JPEG, FMT_BMP, FMT_PNG],
+    };
+    let picked = order
         .into_iter()
         .any(|f| write_guid(&item_props, WIA_IPA_FORMAT, f).is_ok());
     if !picked {
@@ -277,9 +284,11 @@ unsafe fn configure(root: &IWiaItem2, item: &IWiaItem2, profile: &ScanProfile) -
 /// Receives the transfer: a stream for each page, then the page's bytes when it ends.
 #[implement(IWiaTransferCallback)]
 struct Collector {
-    pages: Sender<ScannedPage>,
+    /// Raw pages go to the converter thread (SCAN-SPEED); nothing slow happens in the callback.
+    raw: SyncSender<Vec<u8>>,
     cancel: CancelToken,
     current: RefCell<Option<IStream>>,
+    /// Pages received so far (converted or not).
     sent: Cell<usize>,
     /// What went wrong inside the callback, which cannot return our error type.
     failure: RefCell<Option<AppError>>,
@@ -296,12 +305,11 @@ impl Collector {
             return Ok(());
         };
         let data = unsafe { drain(&stream)? };
-        let (data, ext) = normalize(data)?;
-        let number = self.sent.get() + 1;
-        self.pages
-            .send(ScannedPage { number, data, ext })
-            .map_err(|_| AppError::new(ErrorCode::Cancelled, "nobody is listening"))?;
-        self.sent.set(number);
+        // Only copying happens here: converting a page takes as long as the scanner needs for the next.
+        self.raw
+            .send(data)
+            .map_err(|_| AppError::new(ErrorCode::Cancelled, "the page converter stopped"))?;
+        self.sent.set(self.sent.get() + 1);
         Ok(())
     }
 }
@@ -372,8 +380,9 @@ unsafe fn scan_pages(profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: 
         .cast::<IWiaTransfer>()
         .map_err(|_| device_error("the scanner cannot transfer pages"))?;
 
+    let (raw, converter) = crate::pipeline::start(pages, cancel.clone());
     let collector = Collector {
-        pages,
+        raw,
         cancel: cancel.clone(),
         current: RefCell::new(None),
         sent: Cell::new(0),
@@ -381,11 +390,22 @@ unsafe fn scan_pages(profile: &ScanProfile, pages: Sender<ScannedPage>, cancel: 
     };
     let callback: IWiaTransferCallback = collector.into();
     let result = transfer.Download(0, &callback);
-    // Take the facts back out of the callback object.
+    // Take the facts back out of the callback object, then let go of it: that closes the queue, and
+    // the converter finishes the pages still waiting in it.
     let (sent, failure) = {
         let c: &Collector = callback.as_impl();
         (c.sent.get(), c.failure.borrow_mut().take())
     };
+    drop(callback);
+    let converted = converter
+        .join()
+        .unwrap_or_else(|_| Err(AppError::internal("the page converter stopped unexpectedly")));
+    // A page that could not be converted is the answer, whatever else the driver said about it.
+    if let Err(e) = converted {
+        if e.code != ErrorCode::Cancelled || !cancel.is_cancelled() {
+            return Err(e);
+        }
+    }
     if cancel.is_cancelled() {
         return Err(AppError::new(ErrorCode::Cancelled, "cancelled"));
     }

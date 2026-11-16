@@ -9,6 +9,18 @@ pub mod runmark;
 pub mod session;
 pub mod settings;
 
+/// Start a console program (a worker, Tesseract) without opening a console window for it. On
+/// Windows a program with a window of its own that starts a console program otherwise gets a black
+/// `cmd`-style window on screen for as long as that program runs; its pipes work as before. A no-op elsewhere.
+pub fn hide_console(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 pub use harden::{harden_process, harden_worker, integrity_level_of, lower_worker};
 pub use paths::{
     allow_input, allow_output, check_output_dir, create_output_dir, publish, sanitize_file_name, AllowedInput,

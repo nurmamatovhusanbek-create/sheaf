@@ -375,3 +375,14 @@ fn a_run_that_never_finished_is_noticed_at_the_next_start() {
     fs::write(&blocked, b"x").expect("file");
     assert!(!RunMark::begin(&blocked.join("inside")).previous_run_ended_badly());
 }
+
+#[test]
+fn recognition_is_automatic_unless_the_person_turns_it_off() {
+    // Scans and pages without text are recognized as they arrive; only "Off" stops it.
+    assert_eq!(Settings::default().ocr_mode, "Auto");
+    let off = Settings {
+        ocr_mode: "Off".into(),
+        ..Settings::default()
+    };
+    assert_eq!(off.sanitized().ocr_mode, "Off");
+}

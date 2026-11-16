@@ -42,7 +42,9 @@ impl Default for Settings {
             default_preset: None,
             workers: None,
             ocr_quality: "Fast".into(),
-            ocr_mode: "Manual".into(),
+            // Recognition is automatic unless the person turns it off: scans and pages without text
+            // are recognized as they arrive.
+            ocr_mode: "Auto".into(),
             theme: "system".into(),
             wheel_hotkey: DEFAULT_WHEEL_HOTKEY.into(),
             allow_network_paths: true,

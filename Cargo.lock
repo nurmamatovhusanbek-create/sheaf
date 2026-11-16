@@ -3100,6 +3100,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sheaf-core",
+ "sheaf-store",
  "windows",
 ]
 

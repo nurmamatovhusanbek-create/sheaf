@@ -43,7 +43,8 @@ impl Tesseract {
     /// session dir as working directory and one thread: parallelism comes
     /// from MOD-JOBS, not from inside Tesseract.
     fn run(&self, args: Vec<OsString>) -> Result<(bool, String)> {
-        let mut child = Command::new(&self.exe)
+        let mut command = Command::new(&self.exe);
+        command
             .args(args)
             .current_dir(&self.cwd)
             .env("OMP_THREAD_LIMIT", "1")
@@ -56,7 +57,10 @@ impl Tesseract {
             .env("NO_PROXY", "")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        // Tesseract is a console program: without this a black window opens for every page.
+        sheaf_store::hide_console(&mut command);
+        let mut child = command
             .spawn()
             .map_err(|_| AppError::new(ErrorCode::EngineMissing, "tesseract could not be started"))?;
         let stdout = child.stdout.take();
