@@ -700,23 +700,64 @@ impl SheafApp {
         for job in rows {
             let running = matches!(job.state, "running" | "queued");
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    [150.0, 18.0],
-                    egui::Label::new(egui::RichText::new(crate::jobs::kind_label(&self.t, &job.kind)).strong())
-                        .truncate(),
+                ui.allocate_ui_with_layout(
+                    egui::vec2(130.0, 18.0),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(130.0);
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(crate::jobs::kind_label(&self.t, &job.kind)).strong())
+                                .truncate(),
+                        );
+                    },
                 );
+                let done_color = egui::Color32::from_rgb(0x2e, 0x9e, 0x5b);
+                match job.state {
+                    "done" => {
+                        // A finished job shows a full bar, like every other program does.
+                        ui.add(
+                            egui::ProgressBar::new(1.0)
+                                .desired_width(150.0)
+                                .fill(done_color)
+                                .text(egui::RichText::new("100%").color(egui::Color32::WHITE)),
+                        );
+                    }
+                    "failed" => {
+                        // A red, full bar: it ended, and not well. No percentage that could read as success.
+                        ui.add(
+                            egui::ProgressBar::new(1.0)
+                                .desired_width(150.0)
+                                .fill(ui.visuals().error_fg_color.gamma_multiply(0.55))
+                                .text(""),
+                        );
+                    }
+                    "cancelled" => {
+                        ui.add(
+                            egui::ProgressBar::new(job.progress)
+                                .desired_width(150.0)
+                                .fill(ui.visuals().weak_text_color())
+                                .text(format!("{}%", (job.progress * 100.0).floor() as u32)),
+                        );
+                    }
+                    _ if crate::jobs::knows_progress(&job) => {
+                        ui.add(
+                            egui::ProgressBar::new(job.progress)
+                                .desired_width(150.0)
+                                .show_percentage(),
+                        );
+                    }
+                    _ => {
+                        // Nobody knows how many pages a feeder holds: keep moving instead of sitting at 0 %.
+                        ui.add(egui::ProgressBar::new(0.0).desired_width(150.0).animate(true));
+                    }
+                }
+                let text = crate::jobs::summary(&self.t, &job);
                 if running {
-                    ui.add(
-                        egui::ProgressBar::new(job.progress)
-                            .desired_width(160.0)
-                            .show_percentage(),
-                    );
-                    ui.label(crate::jobs::summary(&self.t, &job));
+                    ui.label(text);
                 } else {
-                    let text = crate::jobs::summary(&self.t, &job);
                     let color = match job.state {
                         "failed" => ui.visuals().error_fg_color,
-                        "done" => egui::Color32::from_rgb(0x2e, 0x9e, 0x5b),
+                        "done" => done_color,
                         _ => ui.visuals().weak_text_color(),
                     };
                     ui.label(egui::RichText::new(text).color(color));
@@ -818,7 +859,7 @@ impl eframe::App for SheafApp {
             .frame(
                 egui::Frame::new()
                     .fill(ui.visuals().window_fill)
-                    .inner_margin(egui::Margin::symmetric(6, 8))
+                    .inner_margin(egui::Margin::symmetric(6, 5))
                     .stroke(egui::Stroke::new(
                         1.0,
                         ui.visuals().widgets.noninteractive.bg_stroke.color,
@@ -834,11 +875,11 @@ impl eframe::App for SheafApp {
                 .show(ui, |ui| self.job_bar(ui));
         });
         egui::Panel::left("tray")
-            .default_size(210.0)
-            .size_range(150.0..=420.0)
+            .default_size(176.0)
+            .size_range(130.0..=420.0)
             .show(ui, |ui| self.tray_ui(ui));
         egui::Panel::right("side")
-            .default_size(340.0)
+            .default_size(300.0)
             .size_range(260.0..=520.0)
             .show(ui, |ui| self.side_ui(ui));
         egui::CentralPanel::default().show(ui, |ui| self.preview_ui(ui));

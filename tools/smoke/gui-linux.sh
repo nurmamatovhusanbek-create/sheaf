@@ -47,16 +47,16 @@ SHEAF_FAKE_SCANNER=1 "$sheaf" &
 scan=$!
 sleep 9
 kill -0 "$scan" || { echo "FAIL the window exited early"; exit 1; }
-xdotool mousemove 146 25 click 1            # toolbar: Scan
+xdotool mousemove 146 22 click 1            # toolbar: Scan
 sleep 3
 import -window root "$out/scan-dialog.png"
-xdotool mousemove 565 290 click 1; sleep 1   # Source
-xdotool mousemove 578 366 click 1; sleep 1   # Document feeder
-xdotool mousemove 479 608 click 1            # Start scanning
+xdotool mousemove 558 302 click 1; sleep 1   # Source
+xdotool mousemove 570 366 click 1; sleep 1   # Document feeder
+xdotool mousemove 475 584 click 1            # Start scanning
 sleep 8
 import -window root "$out/scan-done.png"
 # Read the job bar back: three sheets from the feeder are "3 pages".
-convert "$out/scan-done.png" -crop 420x30+0+755 +repage -resize 300% -colorspace Gray -negate "$work/bar.png"
+convert "$out/scan-done.png" -crop 200x30+292+752 +repage -colorspace Gray -threshold 25% -negate -resize 300% "$work/bar.png"
 bar="$(tesseract "$work/bar.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
 echo "job bar reads: $bar"
 case "$bar" in *"3 pages"*) ;; *) echo "FAIL expected the job bar to say 3 pages"; exit 1;; esac
@@ -72,7 +72,7 @@ case "$(cat "$out/preset.txt")" in *"b.demo.pdf") ;; *) echo "FAIL unexpected pr
 "$sheaf" &
 pre=$!
 sleep 9
-xdotool mousemove 446 25 click 1            # toolbar: Presets
+xdotool mousemove 446 22 click 1            # toolbar: Presets
 sleep 3
 import -window root "$out/presets-dialog.png"
 convert "$out/presets-dialog.png" -crop 190x80+296+190 +repage -resize 300% -colorspace Gray -negate "$work/list.png"
@@ -177,11 +177,11 @@ XDG_CONFIG_HOME="$fresh" "$sheaf" &
 wel=$!
 sleep 9
 import -window root "$out/welcome.png"
-convert "$out/welcome.png" -crop 400x40+373+195 +repage -resize 300% -colorspace Gray -negate "$work/w.png"
+convert "$out/welcome.png" -crop 400x40+373+215 +repage -resize 300% -colorspace Gray -negate "$work/w.png"
 read_w="$(tesseract "$work/w.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
 echo "welcome reads: $read_w"
 case "$read_w" in *Welcome*) ;; *) echo "FAIL the welcome window did not appear on a first start"; exit 1;; esac
-xdotool mousemove 850 607 click 1; sleep 2   # Get started
+xdotool mousemove 854 586 click 1; sleep 2   # Get started
 [ -f "$fresh/Sheaf/welcome-seen" ] || { echo "FAIL the welcome window does not remember it was seen"; exit 1; }
 kill "$wel"; wait "$wel" 2>/dev/null || true
 
@@ -218,8 +218,8 @@ read_r="$(tesseract "$work/r.png" stdout --psm 6 2>/dev/null | tr '\n' ' ')"
 echo "report reads: $read_r"
 case "$read_r" in *"Report a problem"*) ;; *) echo "FAIL the report window did not open"; exit 1;; esac
 case "$read_r" in *Unsupported*) ;; *) echo "FAIL the report does not list the error"; exit 1;; esac
-xdotool mousemove 889 666 click 1; sleep 1   # Close
-xdotool mousemove 1214 25 click 1; sleep 3   # Help
+xdotool mousemove 893 651 click 1; sleep 1   # Close
+xdotool mousemove 1214 22 click 1; sleep 3   # Help
 import -window root "$out/help.png"
 convert "$out/help.png" -crop 740x540+20+20 +repage -resize 200% -colorspace Gray -negate "$work/h.png"
 read_h="$(tesseract "$work/h.png" stdout --psm 6 2>/dev/null | tr '\n' ' ')"

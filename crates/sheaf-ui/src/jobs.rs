@@ -33,6 +33,12 @@ fn scan_summary(t: &I18n, job: &JobView, pages: i64) -> String {
     }
 }
 
+/// Does this job report how far it is? A scan does not (nobody knows how many pages a feeder holds),
+/// so it gets a moving bar and a page count rather than a percentage stuck at 0.
+pub fn knows_progress(job: &JobView) -> bool {
+    job.kind != "scan" && (job.progress > 0.0 || job.state == "queued")
+}
+
 /// The one-line state or result of a job.
 pub fn summary(t: &I18n, job: &JobView) -> String {
     let d = &job.detail;

@@ -442,6 +442,42 @@ fn import_refuses_what_the_path_policy_refuses() {
 }
 
 #[test]
+fn a_long_export_reports_how_far_it_is_and_never_steps_back() {
+    let rig = rig();
+    let (_src, _ids) = rig.import_pdf("long.pdf", 6000);
+    let started = Instant::now();
+    let job = rig
+        .backend
+        .export(ExportSpecDto {
+            name: "{source}-copy".into(),
+            ..Default::default()
+        })
+        .expect("export starts");
+    let done = rig.wait(job);
+    let took = started.elapsed();
+    assert_eq!(done["state"], "done", "{done}");
+    let seen: Vec<f64> = rig
+        .events
+        .all()
+        .iter()
+        .filter_map(|e| match e {
+            Event::Job(v) if v.id == job => Some(f64::from(v.progress)),
+            _ => None,
+        })
+        .collect();
+    assert!(seen.windows(2).all(|w| w[0] <= w[1] + 1e-6), "went backwards: {seen:?}");
+    assert_eq!(seen.last().copied(), Some(1.0));
+    // The worker's own progress reaches the job while it runs (only checkable when the export is slow
+    // enough for the relay, which looks about every 80 ms, to see it).
+    if took > Duration::from_millis(400) {
+        assert!(
+            seen.iter().any(|p| *p > 0.0 && *p < 1.0),
+            "no step between 0 and 100 %: {seen:?} after {took:?}"
+        );
+    }
+}
+
+#[test]
 fn export_runs_as_a_job_and_never_overwrites() {
     let rig = rig();
     let (src, ids) = rig.import_pdf("report.pdf", 3);

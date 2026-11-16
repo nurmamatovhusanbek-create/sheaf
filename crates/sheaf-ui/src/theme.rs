@@ -94,7 +94,7 @@ fn style_one(style: &mut egui::Style) {
         w.weak_bg_fill = fill;
         w.bg_fill = fill;
         w.bg_stroke = Stroke::NONE;
-        w.corner_radius = CornerRadius::same(7);
+        w.corner_radius = CornerRadius::same(6);
         w.fg_stroke = Stroke::new(1.0, text);
     }
     // A clear outline on resting controls: without it an unchecked box or a flat button disappears
@@ -105,17 +105,17 @@ fn style_one(style: &mut egui::Style) {
     v.striped = false;
     v.indent_has_left_vline = false;
 
-    style.spacing.item_spacing = egui::vec2(8.0, 7.0);
-    style.spacing.button_padding = egui::vec2(12.0, 6.0);
-    style.spacing.interact_size.y = 30.0;
+    style.spacing.item_spacing = egui::vec2(6.0, 5.0);
+    style.spacing.button_padding = egui::vec2(10.0, 4.0);
+    style.spacing.interact_size.y = 26.0;
     style.spacing.scroll.bar_width = 8.0;
     style.spacing.scroll.floating = true;
     style.interaction.tooltip_delay = 0.35;
     style.text_styles = [
-        (TextStyle::Heading, FontId::new(19.0, FontFamily::Proportional)),
-        (TextStyle::Body, FontId::new(14.0, FontFamily::Proportional)),
-        (TextStyle::Button, FontId::new(14.0, FontFamily::Proportional)),
-        (TextStyle::Small, FontId::new(12.0, FontFamily::Proportional)),
+        (TextStyle::Heading, FontId::new(17.0, FontFamily::Proportional)),
+        (TextStyle::Body, FontId::new(13.5, FontFamily::Proportional)),
+        (TextStyle::Button, FontId::new(13.5, FontFamily::Proportional)),
+        (TextStyle::Small, FontId::new(11.5, FontFamily::Proportional)),
         (TextStyle::Monospace, FontId::new(13.0, FontFamily::Monospace)),
     ]
     .into();

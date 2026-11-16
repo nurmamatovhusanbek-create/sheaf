@@ -195,9 +195,20 @@ impl App {
             args,
             workers,
         };
+        // The pool tells us how far each worker job is; `Shared::run_scaled` passes it on to the app job.
+        let cells: plan::ProgressCells = Default::default();
+        let relay = Arc::clone(&cells);
+        let pool = Pool::new(cfg, move |event| {
+            if let JobEvent::Progress { id, progress } = &event {
+                if let Some(cell) = relay.lock().unwrap_or_else(|p| p.into_inner()).get(&id.0) {
+                    cell.store(progress.to_bits(), std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            on_event(event);
+        });
         Ok(App {
             ws: Workspace::new(),
-            shared: Arc::new(Shared::new(Pool::new(cfg, on_event), session, workers)),
+            shared: Arc::new(Shared::new(pool, session, workers, cells)),
             index: SearchIndex::new(),
             passwords: Default::default(),
         })

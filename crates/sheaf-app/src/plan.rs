@@ -17,9 +17,14 @@ use sheaf_core::{
 };
 use sheaf_jobs::{JobSpec, Pool};
 use sheaf_store::Session;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+
+/// Where the worker pool leaves the latest progress of each running worker job (as `f32` bits), for
+/// [`Shared::run_scaled`] to pass on. Filled by the pool's event callback (`App::start_with`).
+pub(crate) type ProgressCells = Arc<Mutex<HashMap<u64, Arc<AtomicU32>>>>;
 
 pub(crate) fn decode<T: serde::de::DeserializeOwned>(v: Value) -> Result<T> {
     serde_json::from_value(v).map_err(|_| AppError::internal("worker result has the wrong shape"))
@@ -53,17 +58,68 @@ pub struct Shared {
     workers: usize,
     counter: AtomicU64,
     allow_network: AtomicBool,
+    progress: ProgressCells,
 }
 
 impl Shared {
-    pub(crate) fn new(pool: Pool, session: Session, workers: usize) -> Shared {
+    pub(crate) fn new(pool: Pool, session: Session, workers: usize, progress: ProgressCells) -> Shared {
         Shared {
             pool,
             session,
             workers: workers.max(1),
             counter: AtomicU64::new(0),
             allow_network: AtomicBool::new(true),
+            progress,
         }
+    }
+
+    /// [`Shared::run`] that also reports how far the worker job is, as `base + fraction * span` of
+    /// the app job (`ctl.progress`). The worker says how far it is (a page of an export, say); until
+    /// now nobody passed that on, so the bar of a long export stood at 0 % until it ended.
+    pub fn run_scaled(&self, spec: JobSpec, ctl: &dyn JobCtl, base: f32, span: f32) -> Result<Value> {
+        if ctl.cancelled() {
+            return Err(AppError::new(ErrorCode::Cancelled, "cancelled"));
+        }
+        let cell = Arc::new(AtomicU32::new(0f32.to_bits()));
+        let finished = AtomicBool::new(false);
+        let mut id = None;
+        let result = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mut shown = -1.0f32;
+                while !finished.load(Ordering::SeqCst) {
+                    let now = f32::from_bits(cell.load(Ordering::SeqCst));
+                    if (now - shown).abs() >= 0.005 {
+                        shown = now;
+                        ctl.progress(base + now.clamp(0.0, 1.0) * span);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(80));
+                }
+            });
+            let result = self.pool.run_notify(spec, |job| {
+                ctl.running(job);
+                id = Some(job.0);
+                self.progress
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(job.0, Arc::clone(&cell));
+            });
+            finished.store(true, Ordering::SeqCst);
+            result
+        });
+        if let Some(id) = id {
+            self.progress.lock().unwrap_or_else(|p| p.into_inner()).remove(&id);
+        }
+        result
+    }
+
+    pub fn run_typed_scaled<T: serde::de::DeserializeOwned>(
+        &self,
+        spec: JobSpec,
+        ctl: &dyn JobCtl,
+        base: f32,
+        span: f32,
+    ) -> Result<T> {
+        decode(self.run_scaled(spec, ctl, base, span)?)
     }
 
     /// SEC-PATHS: may files on network shares be opened? Set from the settings.
@@ -307,7 +363,14 @@ impl ExportPlan {
                 compress: spec.compress,
                 protect: spec.protect.clone(),
             })?;
-            let built: BuildResult = shared.run_typed(JobSpec::new(ops::BUILD, args, Priority::Selection), ctl)?;
+            // Each output is one worker job: its own progress fills its share of the bar.
+            let share = 1.0 / groups.len() as f32;
+            let built: BuildResult = shared.run_typed_scaled(
+                JobSpec::new(ops::BUILD, args, Priority::Selection),
+                ctl,
+                n as f32 * share,
+                share,
+            )?;
             let staged_path = shared.session.resolve(&staged)?;
             let published = sheaf_store::publish(&staged_path, out_dir, &name);
             let _ = std::fs::remove_file(&staged_path);
@@ -340,7 +403,12 @@ impl ImagesPlan {
             quality: 85,
             out_dir: staged_dir.clone(),
         })?;
-        let files: FilesResult = shared.run_typed(JobSpec::new(ops::EXPORT_IMAGES, args, Priority::Selection), ctl)?;
+        let files: FilesResult = shared.run_typed_scaled(
+            JobSpec::new(ops::EXPORT_IMAGES, args, Priority::Selection),
+            ctl,
+            0.0,
+            1.0,
+        )?;
         let published = shared.publish_folder(&files, &staged_dir, out_dir, folder);
         ctl.progress(1.0);
         published

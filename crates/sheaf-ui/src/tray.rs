@@ -8,7 +8,7 @@ use eframe::egui::{self, vec2, Align2, Color32, FontId, Rect, Sense, Stroke, Str
 use sheaf_app::api::{PageDto, UiOp};
 use std::collections::HashSet;
 
-pub const ROW_H: f32 = 168.0;
+pub const ROW_H: f32 = 142.0;
 const THUMB_PX: u32 = 256;
 
 #[derive(Default)]

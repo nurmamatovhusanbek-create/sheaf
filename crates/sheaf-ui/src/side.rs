@@ -216,63 +216,55 @@ fn tool_icon(tool: Tool) -> crate::icons::Icon {
     }
 }
 
-/// One tile of the tools grid: icon, name, one line of what it does.
-/// Height a card needs for its words: the picture and name above, the hint wrapped below, so
-/// a long translation grows the card instead of being cut off.
-fn card_height(ui: &egui::Ui, hint: &str, width: f32) -> f32 {
-    let galley = ui.painter().layout(
-        hint.to_string(),
-        egui::FontId::proportional(12.0),
-        egui::Color32::PLACEHOLDER,
-        width - 24.0,
-    );
-    (64.0 + galley.size().y + 14.0).max(112.0)
-}
+/// The tools in the order a person reaches for them, with the heading of each group.
+const GROUPS: [(&str, &[Tool]); 3] = [
+    (
+        "side.group_pages",
+        &[
+            Tool::Merge,
+            Tool::Split,
+            Tool::Extract,
+            Tool::Remove,
+            Tool::Organize,
+            Tool::Rotate,
+            Tool::Crop,
+        ],
+    ),
+    (
+        "side.group_convert",
+        &[Tool::Scan, Tool::Ocr, Tool::Img2Pdf, Tool::Pdf2Img],
+    ),
+    (
+        "side.group_finish",
+        &[Tool::Compress, Tool::Stamp, Tool::Lock, Tool::Repair, Tool::Info],
+    ),
+];
 
-fn tool_card(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str, width: f32, height: f32) -> bool {
-    let enabled = true;
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, height), egui::Sense::click());
+/// One row of the tools list: icon and name; what it does is in the tooltip.
+fn tool_row(ui: &mut egui::Ui, tool: Tool, name: &str, hint: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), egui::Sense::click());
     let v = ui.visuals().clone();
-    let hovered = enabled && resp.hovered();
-    let fill = if hovered {
-        v.widgets.hovered.bg_fill
-    } else {
-        v.faint_bg_color
-    };
-    let stroke = if hovered {
-        egui::Stroke::new(1.0, v.selection.bg_fill)
-    } else {
-        egui::Stroke::new(1.0, v.widgets.noninteractive.bg_stroke.color)
-    };
+    let hovered = resp.hovered();
     let p = ui.painter();
-    p.rect(rect, 10.0, fill, stroke, egui::StrokeKind::Inside);
-    let fg = if enabled {
-        v.text_color()
-    } else {
-        v.weak_text_color().gamma_multiply(0.7)
-    };
-    let accent = if enabled { v.selection.bg_fill } else { fg };
+    if hovered {
+        p.rect_filled(rect, 6.0, v.widgets.hovered.bg_fill);
+    }
     crate::icons::paint(
         p,
-        egui::Rect::from_min_size(rect.min + vec2(12.0, 11.0), vec2(22.0, 22.0)),
+        egui::Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)),
         tool_icon(tool),
-        accent,
+        v.selection.bg_fill,
     );
     p.text(
-        rect.min + vec2(12.0, 44.0),
-        egui::Align2::LEFT_TOP,
+        rect.min + vec2(34.0, 14.0),
+        egui::Align2::LEFT_CENTER,
         name,
-        egui::FontId::proportional(14.5),
-        fg,
+        egui::FontId::proportional(13.5),
+        v.text_color(),
     );
-    let galley = p.layout(
-        hint.to_string(),
-        egui::FontId::proportional(12.0),
-        v.weak_text_color(),
-        width - 24.0,
-    );
-    p.galley(rect.min + vec2(12.0, 64.0), galley, v.weak_text_color());
-    enabled && resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(hint)
+        .clicked()
 }
 
 impl SheafApp {
@@ -293,7 +285,7 @@ impl SheafApp {
                 } else {
                     ui.visuals().faint_bg_color
                 })
-                .min_size(vec2(w, 32.0));
+                .min_size(vec2(w, 26.0));
                 if ui.add(button).clicked() {
                     self.side.tab = tab;
                 }
@@ -339,39 +331,36 @@ impl SheafApp {
                 .hint_text(self.t.t("side.search_tools"))
                 .desired_width(f32::INFINITY),
         );
-        ui.add_space(6.0);
         let q = self.side.query.trim().to_lowercase();
-        let entries: Vec<(Tool, String, String)> = TOOLS
-            .iter()
-            .map(|(tool, id)| {
-                (
-                    *tool,
-                    self.t.t(&format!("tool.{id}.name")),
-                    self.t.t(&format!("tool.{id}.hint")),
-                )
-            })
-            .filter(|(_, name, hint)| q.is_empty() || format!("{name} {hint}").to_lowercase().contains(&q))
-            .collect();
-        if entries.is_empty() {
-            ui.label(RichText::new(self.t.t("side.no_tools")).weak());
-            return;
-        }
-        let gap = ui.spacing().item_spacing.x;
-        let width = ((ui.available_width() - gap) / 2.0).floor();
-        for pair in entries.chunks(2) {
-            // Both cards of a row are as tall as the taller one, so the row stays even.
-            let height = pair
+        let mut any = false;
+        for (heading, tools) in GROUPS {
+            let entries: Vec<(Tool, String, String)> = tools
                 .iter()
-                .map(|(_, _, hint)| card_height(ui, hint, width))
-                .fold(112.0, f32::max);
-            ui.horizontal(|ui| {
-                for (tool, name, hint) in pair {
-                    if tool_card(ui, *tool, name, hint, width, height) {
-                        self.open_tool(*tool);
-                    }
+                .filter_map(|tool| TOOLS.iter().find(|(t, _)| t == tool))
+                .map(|(tool, id)| {
+                    (
+                        *tool,
+                        self.t.t(&format!("tool.{id}.name")),
+                        self.t.t(&format!("tool.{id}.hint")),
+                    )
+                })
+                .filter(|(_, name, hint)| q.is_empty() || format!("{name} {hint}").to_lowercase().contains(&q))
+                .collect();
+            if entries.is_empty() {
+                continue;
+            }
+            any = true;
+            ui.add_space(6.0);
+            ui.label(RichText::new(self.t.t(heading).to_uppercase()).small().weak().strong());
+            for (tool, name, hint) in entries {
+                if tool_row(ui, tool, &name, &hint) {
+                    self.open_tool(tool);
                 }
-            });
-            ui.add_space(2.0);
+            }
+        }
+        if !any {
+            ui.add_space(6.0);
+            ui.label(RichText::new(self.t.t("side.no_tools")).weak());
         }
     }
 
