@@ -19,6 +19,7 @@ pub mod plan;
 pub mod preset;
 pub mod quick;
 pub mod repair;
+pub mod update;
 
 pub use api::{run_scan_helper, Backend, SCAN_HELPER_FLAG};
 pub use engines::Engines;

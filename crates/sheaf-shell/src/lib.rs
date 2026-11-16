@@ -83,6 +83,8 @@ fn dispatch(command: Command) -> ExitCode {
         }
         Command::Window { files } => {
             let again = Command::Window { files: files.clone() };
+            // What an update left beside this program (the old copy, a half-finished download).
+            sheaf_app::update::clean_up_after_update();
             // A mark that says "running" until the window closes properly; if it is still there at the
             // next start, that run ended some other way and the person is told (see RunMark). It is
             // cleared before a relaunch with the fallback renderer, which makes its own.
@@ -102,6 +104,12 @@ fn dispatch(command: Command) -> ExitCode {
             #[cfg(windows)]
             if !sheaf_ui::opengl_unusable(&result) {
                 tray::stop_helper_unless_resident();
+            }
+            // An update was put in place: start the new program now that this one is gone.
+            if result.is_ok() {
+                if let Some(exe) = sheaf_ui::take_restart_request() {
+                    let _ = sheaf_app::update::restart(&exe);
+                }
             }
             finish_or_retry(result, &again)
         }

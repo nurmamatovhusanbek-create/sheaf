@@ -1,0 +1,65 @@
+name: release
+
+# Publish a release: push a tag such as v0.1.0 (the number must be the one in Cargo.toml).
+#   git tag v0.1.0 && git push origin v0.1.0
+# The release carries what the in-app Update button reads (UI-UPDATE): sheaf.exe, the whole program in
+# one file, and sheaf.exe.sha256 beside it; and sheaf-windows.zip for people who download it in a browser,
+# where a bare .exe is often blocked or silently dropped.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: build and publish
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: The tag is the version in Cargo.toml
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match Cargo.toml version $version"; exit 1
+          fi
+      - name: Toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Fetch and verify vendored assets
+        run: bash tools/fetch-vendor
+      - name: Build the app, its worker and the one-file exe
+        run: |
+          cargo build --release --locked -p sheaf-shell -p sheaf-worker
+          cargo build --release --locked -p sheaf-onefile
+          mkdir -p dist
+          cp target/release/sheaf-onefile.exe dist/sheaf.exe
+      - name: The one-file exe works on its own (compress a fixture from an empty folder)
+        shell: pwsh
+        run: |
+          cargo run --release --locked -p fixture-gen --bin write-fixture -- "$env:RUNNER_TEMP\smoke.pdf" 4
+          $work = Join-Path $env:RUNNER_TEMP "release-check"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\smoke.pdf" "$work\in.pdf"
+          $p = Start-Process -FilePath (Resolve-Path dist\sheaf.exe) -ArgumentList "run","compress","$work\in.pdf" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "the one-file exe exited with $($p.ExitCode)" }
+          if (-not (Test-Path "$work\in.compressed.pdf")) { throw "the one-file exe wrote no result" }
+      - name: Checksum and zip
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist\sheaf.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  sheaf.exe" | Out-File -Encoding ascii -NoNewline dist\sheaf.exe.sha256
+          Compress-Archive -Path dist\sheaf.exe -DestinationPath dist\sheaf-windows.zip
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/sheaf.exe dist/sheaf.exe.sha256 dist/sheaf-windows.zip \
+            --title "Sheaf ${GITHUB_REF_NAME#v}" --generate-notes

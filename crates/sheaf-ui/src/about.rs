@@ -81,7 +81,7 @@ impl SheafApp {
     }
 
     pub(crate) fn about_dialog(&mut self, ctx: &egui::Context) -> bool {
-        let (mut close, mut licences, mut help, mut report) = (false, false, false, false);
+        let (mut close, mut licences, mut help, mut report, mut updates) = (false, false, false, false, false);
         let licence_present = licence_file().is_some();
         let verified = match self.engines.verified {
             Some(true) => self.t.t("settings.verified"),
@@ -150,6 +150,9 @@ impl SheafApp {
                 if ui.button(self.t.t("report.open")).clicked() {
                     report = true;
                 }
+                if ui.button(self.t.t("about.updates")).clicked() {
+                    updates = true;
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(self.t.t("common.close")).clicked() {
                         close = true;
@@ -168,6 +171,10 @@ impl SheafApp {
         }
         if report {
             self.open_report(None);
+            return false;
+        }
+        if updates {
+            self.open_update();
             return false;
         }
         !(close || crate::dialogs::ui_escape(ctx))

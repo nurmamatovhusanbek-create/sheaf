@@ -1,6 +1,6 @@
 # Sheaf
 
-Local, offline PDF and scan toolkit for Windows (Rust, native UI). No network at runtime.
+Local, offline PDF and scan toolkit for Windows (Rust, native UI). No network at runtime, except the Update button.
 
 The design and the phase-by-phase build plan are in [ARCHITECTURE.md](ARCHITECTURE.md);
 start with its reading guide and the rules for whoever writes code.
@@ -83,9 +83,26 @@ Settings live in `%APPDATA%\Sheaf` (the hotkey too), the session in `%LOCALAPPDA
 
 Help is built in (F1, or the ? in the top bar; English, Russian and Uzbek, searchable). Messages are kept under the bell;
 an error has a Details window with what to try, and "Report a problem" builds a text report on screen that you copy or
-save and send yourself: the program has no network, and the report holds no documents, file names or folder names.
+save and send yourself: the program sends nothing on its own, and the report holds no documents, file names or folder names.
 The first start shows a Welcome window (start the action wheel, add the right-click menu). The installer is not signed
 yet, so Windows may show "unknown publisher": choose More info, then Run anyway.
+
+## Updates and releases
+
+The up-arrow button in the top bar (or About, then *Check for updates*) asks GitHub for the newest release of this
+project. If it is newer, *Update now* downloads `sheaf.exe`, checks it against the release's SHA-256, replaces the
+running program (the old one is kept as `sheaf.exe.old` until the new one has started) and restarts. This is the only
+network use, only on a click, and it needs the program's folder to be writable (the one-file build in your own folder;
+for a system-wide install the window offers the release page instead).
+
+Publishing one: raise `version` in `Cargo.toml` (and run `cargo update -w --offline`), commit, then
+
+```bash
+git tag v0.1.1 && git push origin v0.1.1
+```
+
+`.github/workflows/release.yml` builds the one-file exe on Windows, checks it runs, and publishes `sheaf.exe`,
+`sheaf.exe.sha256` and `sheaf-windows.zip` (for browsers that block a bare .exe). The tag must equal the version.
 
 ## Trying it
 

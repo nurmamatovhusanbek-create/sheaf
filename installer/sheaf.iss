@@ -6,7 +6,7 @@
 ; Build the staging folder first with tools\package\stage.ps1.
 
 #ifndef Version
-  #define Version "0.0.0"
+  #define Version "0.1.0"
 #endif
 #ifndef Stage
   #define Stage "..\dist\stage"

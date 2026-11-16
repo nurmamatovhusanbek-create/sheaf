@@ -68,6 +68,7 @@ pub enum Msg {
     Report(crate::report::ReportMsg),
     /// A helper thread's result for the welcome window.
     Say(crate::about::Say),
+    Update(crate::update_ui::UpdateMsg),
 }
 
 struct ChannelEmit {
@@ -93,6 +94,7 @@ pub enum Modal {
     Error(u64),
     Report(crate::report::ReportForm),
     About,
+    Update,
     Welcome,
 }
 
@@ -120,6 +122,7 @@ pub struct SheafApp {
     pub(crate) settings: SettingsDto,
     pub(crate) engines: EngineDto,
     pub(crate) version: String,
+    pub(crate) update: crate::update_ui::UpdateState,
     refreshing: bool,
     refresh_again: bool,
 
@@ -211,6 +214,7 @@ impl SheafApp {
                 error: None,
             },
             version: env!("CARGO_PKG_VERSION").to_string(),
+            update: Default::default(),
             refreshing: false,
             refresh_again: false,
             sel: Selection::default(),
@@ -345,6 +349,7 @@ impl SheafApp {
                 Msg::Meta(m) => self.on_meta_msg(m),
                 Msg::Report(m) => self.on_report_msg(m),
                 Msg::Say(m) => self.on_say(m),
+                Msg::Update(m) => self.on_update_msg(m),
                 Msg::RepairFiles(files) => self.start_job(move |b| b.repair_run(files)),
                 Msg::ScanDevices(r) => {
                     if let Some(Modal::Scan(f)) = &mut self.modal {
@@ -514,6 +519,7 @@ impl SheafApp {
         );
         let (scan, presets) = (t.t("toolbar.scan"), t.t("toolbar.presets"));
         let help_tip = format!("{}  F1", t.t("help.tooltip"));
+        let update_tip = t.t("update.tooltip");
         let ocr_off = self.settings.ocr_mode == "Off";
         let (can_undo, can_redo) = (self.can_undo, self.can_redo);
         ui.horizontal(|ui| {
@@ -552,6 +558,9 @@ impl SheafApp {
                 ui.add_space(6.0);
                 if icon_button(ui, Icon::Settings, &settings).clicked() {
                     self.modal = Some(Modal::Settings(crate::dialogs::SettingsForm::new(&self.settings)));
+                }
+                if icon_button(ui, Icon::Update, &update_tip).clicked() {
+                    self.open_update();
                 }
                 if icon_button(ui, Icon::Help, &help_tip).clicked() {
                     self.toggle_help();

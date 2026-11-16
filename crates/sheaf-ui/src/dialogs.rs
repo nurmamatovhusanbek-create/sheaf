@@ -147,6 +147,7 @@ impl SheafApp {
             Modal::Error(id) => self.error_dialog(ctx, id).map(Modal::Error),
             Modal::Report(f) => self.report_dialog(ctx, f).map(Modal::Report),
             Modal::About => self.about_dialog(ctx).then_some(Modal::About),
+            Modal::Update => self.update_dialog(ctx).then_some(Modal::Update),
             Modal::Welcome => self.welcome_dialog(ctx).then_some(Modal::Welcome),
         };
         if self.modal.is_none() {

@@ -20,6 +20,7 @@ mod side;
 mod textures;
 mod theme;
 mod tray;
+mod update_ui;
 mod wheel;
 
 pub mod format;
@@ -29,6 +30,7 @@ pub mod i18n;
 pub use app::{run_window, SheafApp, UiConfig};
 pub use appicon::rgba as app_icon_rgba;
 pub use renderer::{opengl_unusable, RENDERER_ENV};
+pub use update_ui::take_restart_request;
 pub use wheel::{run_wheel, take_file_list, WheelApp, WheelConfig, WheelJob};
 
 /// What the window and wheel entry points return.

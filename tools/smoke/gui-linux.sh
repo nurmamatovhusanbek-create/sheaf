@@ -219,13 +219,25 @@ echo "report reads: $read_r"
 case "$read_r" in *"Report a problem"*) ;; *) echo "FAIL the report window did not open"; exit 1;; esac
 case "$read_r" in *Unsupported*) ;; *) echo "FAIL the report does not list the error"; exit 1;; esac
 xdotool mousemove 893 651 click 1; sleep 1   # Close
-xdotool mousemove 1214 22 click 1; sleep 3   # Help
+xdotool mousemove 1180 22 click 1; sleep 3   # Help
 import -window root "$out/help.png"
 convert "$out/help.png" -crop 740x540+20+20 +repage -resize 200% -colorspace Gray -negate "$work/h.png"
 read_h="$(tesseract "$work/h.png" stdout --psm 6 2>/dev/null | tr '\n' ' ')"
 echo "help reads: $read_h"
 case "$read_h" in *"Getting started"*) ;; *) echo "FAIL the help center did not open"; exit 1;; esac
 kill "$err"; wait "$err" 2>/dev/null || true
+
+echo "== update window: opens from the toolbar and says something about the newest version"
+"$sheaf" open "$work/a.pdf" &
+upd=$!
+sleep 9
+xdotool mousemove 1216 22 click 1; sleep 6   # Update
+import -window root "$out/update.png"
+convert "$out/update.png" -crop 320x30+400+333 +repage -resize 300% -colorspace Gray -negate "$work/up.png"
+read_up="$(tesseract "$work/up.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
+echo "update window reads: $read_up"
+case "$read_up" in *"Update Sheaf"*) ;; *) echo "FAIL the update window did not open"; exit 1;; esac
+kill "$upd"; wait "$upd" 2>/dev/null || true
 
 echo "== headless action"
 "$sheaf" run compress "$work/a.pdf" "$work/b.pdf" > "$out/run.txt"

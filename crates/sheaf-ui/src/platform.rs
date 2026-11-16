@@ -122,3 +122,18 @@ pub fn run_self(args: &[&str], wait: bool) -> bool {
 pub fn run_self(_args: &[&str], _wait: bool) -> bool {
     false
 }
+
+/// Open a page of this project in the browser. Only the project's own pages: the address is checked
+/// here, so a bug elsewhere cannot make this open an arbitrary program or site.
+#[cfg(windows)]
+pub fn open_url(url: &str) -> bool {
+    if !url.starts_with(&format!("https://github.com/{}/", sheaf_app::update::REPO)) || url.contains(['"', ' ']) {
+        return false;
+    }
+    std::process::Command::new("explorer.exe").arg(url).spawn().is_ok()
+}
+
+#[cfg(not(windows))]
+pub fn open_url(_url: &str) -> bool {
+    false
+}

@@ -1198,7 +1198,7 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "fixture-gen"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "flate2"
@@ -1521,7 +1521,7 @@ dependencies = [
 
 [[package]]
 name = "harness"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fixture-gen",
  "image",
@@ -1838,7 +1838,7 @@ dependencies = [
 
 [[package]]
 name = "licenses"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
 ]
@@ -1851,7 +1851,7 @@ checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
 
 [[package]]
 name = "link-check"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "linux-raw-sys"
@@ -3053,7 +3053,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-app"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fixture-gen",
  "image",
@@ -3068,14 +3068,14 @@ dependencies = [
 
 [[package]]
 name = "sheaf-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "sheaf-core",
 ]
 
 [[package]]
 name = "sheaf-core"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "imbl",
  "regex",
@@ -3086,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-image"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "image",
  "sheaf-core",
@@ -3095,7 +3095,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-jobs"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3106,7 +3106,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-ocr"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fixture-gen",
  "serde",
@@ -3117,7 +3117,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-onefile"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fixture-gen",
  "flate2",
@@ -3131,7 +3131,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-pdf"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fixture-gen",
  "getrandom 0.4.3",
@@ -3145,7 +3145,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-scan"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "image",
  "serde_json",
@@ -3157,7 +3157,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-shell"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "global-hotkey",
  "sheaf-app",
@@ -3171,7 +3171,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-store"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3182,7 +3182,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-ui"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "eframe",
  "egui-wgpu",
@@ -3199,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "sheaf-worker"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fixture-gen",
  "image",
