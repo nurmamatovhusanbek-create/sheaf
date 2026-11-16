@@ -15,6 +15,9 @@ use zeroize::Zeroize;
 
 /// Largest decoded image handled while recompressing or extracting.
 const MAX_IMAGE_BYTES: usize = 600 << 20;
+/// Most image files written for one page: a hostile page can reference any
+/// number of them, and each one is a file and a line of the job's result.
+const MAX_EXTRACTED_IMAGES: usize = 2_000;
 
 fn map_err(e: lopdf::Error) -> AppError {
     use lopdf::Error as E;
@@ -334,6 +337,10 @@ pub fn extract_images(
         .collect();
     let (mut files, mut skipped) = (Vec::new(), 0u32);
     for id in ids {
+        if files.len() >= MAX_EXTRACTED_IMAGES {
+            skipped += 1;
+            continue;
+        }
         let Ok(stream) = doc.get_object(id).and_then(Object::as_stream) else {
             skipped += 1;
             continue;

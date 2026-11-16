@@ -7,7 +7,7 @@
 //! to worker processes through MOD-JOBS (SEC-ISOLATE).
 
 use serde_json::Value;
-use sheaf_core::consts::THUMB_PX;
+use sheaf_core::consts::{MAX_SOURCE_PAGES, THUMB_PX};
 use sheaf_core::proto::{
     ops, BuildArgs, BuildResult, ExportImagesArgs, ExtractImagesArgs, FactsArgs, FactsResult, FilesResult, ImageFormat,
     OcrArgs, OcrPageResult, PageSpec, PageTextArgs, PageTextResult, ProbeArgs, ProbeResult, RenderArgs, RenderResult,
@@ -72,8 +72,28 @@ impl Engines {
     /// The vendored engines of a development checkout, with the worker
     /// binary that sits beside the running executable.
     pub fn vendored() -> Result<Engines> {
+        let worker = sibling_worker()?;
+        // A portable bundle carries its engines in `vendor/` beside the
+        // executables, laid out like the checkout's `vendor/`. It wins over
+        // the checkout, whose location is only known on the build machine.
+        if let Some(vendor) = worker.parent().map(|d| d.join("vendor")).filter(|d| d.is_dir()) {
+            let (platform, tesseract) = if cfg!(windows) {
+                (
+                    "win-x64",
+                    vendor.join("tesseract").join("win-x64").join("tesseract.exe"),
+                )
+            } else {
+                ("linux-x64", PathBuf::from("tesseract"))
+            };
+            return Ok(Engines {
+                worker,
+                pdfium_dir: vendor.join("pdfium").join(platform),
+                tesseract: Some((tesseract, vendor.join("tessdata"))),
+                font: Some(vendor.join("fonts").join("NotoSans-Regular.ttf")),
+            });
+        }
         Ok(Engines {
-            worker: sibling_worker()?,
+            worker,
             pdfium_dir: fixture_gen::vendored_pdfium_dir(),
             tesseract: Some((fixture_gen::tesseract_exe(), fixture_gen::tessdata_dir())),
             font: Some(fixture_gen::noto_font()),
@@ -192,10 +212,18 @@ impl App {
             path: path.to_string(),
             password: password.cloned(),
         })?;
-        decode(
+        let probe: ProbeResult = decode(
             self.pool
                 .run(JobSpec::new(ops::IMPORT_PROBE, args, Priority::Visible))?,
-        )
+        )?;
+        // A worker handles hostile files, so its answer is checked like any
+        // other input before pages are allocated for it (SEC-TB2, SEC-LIMITS).
+        let n = probe.page_count as usize;
+        let lists_fit = probe.has_text.len() <= n && probe.sizes_pt.len() <= n;
+        if probe.page_count > MAX_SOURCE_PAGES || !lists_fit {
+            return Err(AppError::limit("worker reported an impossible page count"));
+        }
+        Ok(probe)
     }
 
     fn insert_pages(&mut self, source: SourceId, probe: &ProbeResult) -> Result<Vec<PageId>> {

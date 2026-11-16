@@ -224,6 +224,14 @@ fn file_names_are_sanitized() {
     assert_eq!(sanitize_file_name("a<b>c:d\"e|f?g*.pdf"), "a_b_c_d_e_f_g_.pdf");
     assert_eq!(sanitize_file_name("NUL.pdf"), "_NUL.pdf");
     assert_eq!(sanitize_file_name("com1"), "_com1");
+    // Superscript digits name the same devices as plain ones.
+    assert_eq!(sanitize_file_name("COM¹.pdf"), "_COM¹.pdf");
+    assert_eq!(sanitize_file_name("lpt³"), "_lpt³");
+    assert!(check_windows_path_rules(r"C:\dir\COM².txt").is_err());
+    assert_eq!(sanitize_file_name("COM10.pdf"), "COM10.pdf", "not a device");
+    // A right-to-left override would make `fdp.exe` read as `exe.pdf`.
+    assert_eq!(sanitize_file_name("invoice\u{202E}fdp.exe"), "invoice_fdp.exe");
+    assert_eq!(sanitize_file_name("a\u{200B}b\u{2066}c.pdf"), "a_b_c.pdf");
     assert_eq!(sanitize_file_name("name. "), "name");
     assert_eq!(sanitize_file_name(""), "_");
     assert_eq!(sanitize_file_name("..."), "_");

@@ -35,10 +35,15 @@ fn is_reserved_name(component: &str) -> bool {
         .unwrap_or("")
         .trim_end_matches(' ')
         .to_ascii_uppercase();
-    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
-        || (stem.len() == 4
-            && (stem.starts_with("COM") || stem.starts_with("LPT"))
-            && stem[3..].chars().all(|c| c.is_ascii_digit() || "¹²³".contains(c)))
+    // `COM¹` is as reserved as `COM1`; the superscript digits are two bytes
+    // each, so the suffix is counted in characters.
+    let port = |prefix: &str| {
+        stem.strip_prefix(prefix).is_some_and(|rest| {
+            let mut chars = rest.chars();
+            matches!((chars.next(), chars.next()), (Some(c), None) if c.is_ascii_digit() || "¹²³".contains(c))
+        })
+    };
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$") || port("COM") || port("LPT")
 }
 
 /// Lexical Windows rules, applied before the file system is touched: no
@@ -110,13 +115,20 @@ pub fn allow_input(p: &Path) -> Result<AllowedInput> {
     })
 }
 
+/// Bidirectional overrides, isolates and zero-width characters: invisible,
+/// and able to make a name read differently from what it is. Output names can
+/// be built from document text (`{match:…}`), so they are taken out.
+fn is_invisible_format(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{FEFF}')
+}
+
 /// Make `name` safe as a single file name: no separators or control
 /// characters, no reserved names, no trailing dot or space, bounded length.
 pub fn sanitize_file_name(name: &str) -> String {
     let mut clean: String = name
         .chars()
         .map(|c| {
-            if c.is_control() || "<>:\"/\\|?*".contains(c) {
+            if c.is_control() || "<>:\"/\\|?*".contains(c) || is_invisible_format(c) {
                 '_'
             } else {
                 c
