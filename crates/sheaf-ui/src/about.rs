@@ -38,10 +38,11 @@ pub fn mark_welcome_seen(config_dir: Option<&std::path::Path>) {
     }
 }
 
-/// The licence file the installer puts next to the program.
+/// The licence file the installer puts next to the program (a one-file build unpacks it with its engines).
 pub fn licence_file() -> Option<PathBuf> {
-    let file = std::env::current_exe().ok()?.parent()?.join("THIRD_PARTY_LICENSES");
-    file.is_file().then_some(file)
+    let beside = std::env::current_exe().ok()?.parent()?.join("THIRD_PARTY_LICENSES");
+    let unpacked = sheaf_app::vendor_dir_override().map(|dir| dir.join("THIRD_PARTY_LICENSES"));
+    std::iter::once(beside).chain(unpacked).find(|f| f.is_file())
 }
 
 /// What a helper thread tells the window.

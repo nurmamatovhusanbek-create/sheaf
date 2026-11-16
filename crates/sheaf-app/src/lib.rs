@@ -98,9 +98,36 @@ pub struct OcrJob {
     pub spec: JobSpec,
 }
 
+/// Set once by a one-file build (`tools/onefile`): this executable is also the worker.
+static WORKER_IS_THIS_EXECUTABLE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+/// Set once by a one-file build: where it unpacked the engines.
+static VENDOR_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// The one-file build is its own worker: the pool starts this very executable, with `--session`
+/// as its first argument, instead of looking for a `sheaf-worker` beside it. Process-local, so
+/// nothing in the environment can redirect it.
+pub fn use_this_executable_as_worker() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = WORKER_IS_THIS_EXECUTABLE.set(exe);
+    }
+}
+
+/// The one-file build's unpacked engines. Looked at before any other place (see `Engines::discover`).
+pub fn set_vendor_dir(dir: PathBuf) {
+    let _ = VENDOR_DIR.set(dir);
+}
+
+/// The folder set by [`set_vendor_dir`], if any.
+pub fn vendor_dir_override() -> Option<&'static std::path::Path> {
+    VENDOR_DIR.get().map(PathBuf::as_path)
+}
+
 /// The worker binary that sits beside this executable (or one level up,
 /// where cargo puts binaries relative to test executables; a few levels with newer cargo).
 pub fn sibling_worker() -> Result<PathBuf> {
+    if let Some(exe) = WORKER_IS_THIS_EXECUTABLE.get() {
+        return Ok(exe.clone());
+    }
     let name = if cfg!(windows) {
         "sheaf-worker.exe"
     } else {

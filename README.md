@@ -54,6 +54,18 @@ cargo run -p link-check                 # spec cross-links and generated appendi
 cargo run -p link-check -- --write      # regenerate the appendices after editing the spec
 ```
 
+## One file
+
+```bash
+cargo build --release -p sheaf-onefile      # target/release/sheaf-onefile (.exe on Windows): rename it sheaf.exe
+```
+
+The whole program in one executable: the window, the wheel, the scanner helper, the worker (the same file started
+with `--session` first) and the engines (PDFium, Tesseract on Windows, language data, font, licence texts), which it
+unpacks once into the per-user data folder and checks against hashes compiled into it on every start; a changed,
+missing or extra file is replaced. Needs `vendor/` filled in at build time. CI builds it on the Windows runner and keeps
+it as the `sheaf-onefile` artifact. It has no console: for scripts use `sheafc.exe` from the installer.
+
 ## Running the app (Windows)
 
 ```powershell

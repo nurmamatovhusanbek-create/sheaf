@@ -185,6 +185,21 @@ xdotool mousemove 850 607 click 1; sleep 2   # Get started
 [ -f "$fresh/Sheaf/welcome-seen" ] || { echo "FAIL the welcome window does not remember it was seen"; exit 1; }
 kill "$wel"; wait "$wel" 2>/dev/null || true
 
+# The run above was killed, not closed: its mark is still there, so the next start says so.
+echo "== a run that did not close properly is noticed at the next start"
+"$sheaf" open "$work/a.pdf" &
+unc=$!
+sleep 9
+import -window root "$out/unclean.png"
+convert "$out/unclean.png" -crop 280x30+965+686 +repage -resize 300% -colorspace Gray -negate "$work/u.png"
+read_u="$(tesseract "$work/u.png" stdout --psm 7 2>/dev/null | tr -d '\n')"
+echo "notice reads: $read_u"
+case "$read_u" in *properly*) ;; *) echo "FAIL the notice about the last run did not appear"; exit 1;; esac
+kill "$unc"; wait "$unc" 2>/dev/null || true
+# The steps below click on fixed places, so they start without a notice about earlier killed runs
+# (every step above ended its window with a kill, in this folder and the usual one).
+rm -f "$fresh/Sheaf/running.mark" "$XDG_CONFIG_HOME/Sheaf/running.mark"
+
 echo "not a pdf" > "$work/bad.pdf"
 "$sheaf" open "$work/bad.pdf" &
 err=$!

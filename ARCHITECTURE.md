@@ -158,7 +158,7 @@ sheaf/
   tools/smoke/                   GUI and Windows smoke scripts
   vendor/           pdfium.dll, tesseract/, tessdata/, fonts/, SHA256SUMS (CI-fetched)
   fixtures/         test documents (TEST-FIXTURES)
-  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench)
+  tools/            link-check, fetch-vendor, fixture-gen, harness (headless CLI + bench), onefile (the whole program in one executable, engines embedded)
   .github/workflows/ build + test + package (DOC-BUILD)
 ```
 

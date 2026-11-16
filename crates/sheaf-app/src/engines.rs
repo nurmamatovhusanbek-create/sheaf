@@ -85,6 +85,10 @@ impl Engines {
 
 fn vendor_candidates(roots: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
+    // A one-file build says where it unpacked its engines, and nothing else counts then.
+    if let Some(dir) = crate::vendor_dir_override() {
+        return vec![dir.to_path_buf()];
+    }
     if let Some(dir) = std::env::var_os("SHEAF_VENDOR_DIR").filter(|v| !v.is_empty()) {
         out.push(PathBuf::from(dir));
     }

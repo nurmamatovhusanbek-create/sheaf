@@ -124,6 +124,29 @@ jobs:
         if: success() || failure()
         shell: pwsh
         run: ./tools/package/test-signing.ps1 -Files target\release\sheaf.exe, target\release\sheafc.exe
+      # The same program as one file: the engines are embedded and unpacked on first run. Run it alone,
+      # from an empty folder, on a headless action, and keep it so it can be downloaded.
+      - name: One-file build (the whole program in one exe)
+        if: success() || failure()
+        shell: pwsh
+        run: |
+          cargo build --release --locked -p sheaf-onefile
+          New-Item -ItemType Directory -Force dist\one | Out-Null
+          Copy-Item target\release\sheaf-onefile.exe dist\one\sheaf.exe
+          $work = Join-Path $env:RUNNER_TEMP "onefile-work"
+          New-Item -ItemType Directory -Force $work | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\smoke.pdf" "$work\in.pdf"
+          $p = Start-Process -FilePath (Resolve-Path dist\one\sheaf.exe) -ArgumentList "run","compress","$work\in.pdf" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "the one-file exe exited with $($p.ExitCode)" }
+          if (-not (Test-Path "$work\in.compressed.pdf")) { throw "the one-file exe wrote no result" }
+          "{0:N1} MB, result written" -f ((Get-Item dist\one\sheaf.exe).Length / 1MB)
+      - name: Keep the one-file exe
+        if: success() || failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sheaf-onefile
+          path: dist/one/sheaf.exe
+          if-no-files-found: ignore
       - name: Keep the screenshots
         if: success() || failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

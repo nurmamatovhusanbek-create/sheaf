@@ -3115,6 +3115,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheaf-onefile"
+version = "0.0.0"
+dependencies = [
+ "fixture-gen",
+ "flate2",
+ "sha2 0.10.9",
+ "sheaf-app",
+ "sheaf-core",
+ "sheaf-shell",
+ "sheaf-store",
+ "sheaf-worker",
+]
+
+[[package]]
 name = "sheaf-pdf"
 version = "0.0.0"
 dependencies = [

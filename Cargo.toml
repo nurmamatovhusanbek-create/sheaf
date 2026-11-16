@@ -32,3 +32,7 @@ getrandom = "0.4"
 # DirectComposition needs to be created without a redirection bitmap.
 [patch.crates-io]
 egui-winit = { path = "third_party/egui-winit" }
+
+# Build scripts compress the embedded engines; unoptimized that takes minutes.
+[profile.dev.build-override]
+opt-level = 3
