@@ -328,10 +328,15 @@ impl Collector {
         };
         let began = std::time::Instant::now();
         let data = unsafe { drain(&stream)? };
+        // What the driver wrote and where it starts: the first bytes that are not zero (a file's
+        // signature, not its content), which tells a clean image from padding or a bare bitmap.
+        let first = data.iter().position(|&b| b != 0).unwrap_or(0);
+        let head: Vec<String> = data[first..].iter().take(8).map(|b| format!("{b:02x}")).collect();
         crate::diag::note(format!(
-            "page {} handed over by the driver: {} bytes (copied out in {} ms)",
+            "page {} handed over by the driver: {} bytes, image starts at byte {first}: {} (copied out in {} ms)",
             self.sent.get() + 1,
             data.len(),
+            head.join(" "),
             began.elapsed().as_millis()
         ));
         // Only copying happens here: converting a page takes as long as the scanner needs for the next.

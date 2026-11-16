@@ -192,11 +192,85 @@ pub fn trim_to_image(mut data: Vec<u8>) -> Vec<u8> {
     data
 }
 
+fn known_image(d: &[u8]) -> bool {
+    d.starts_with(&[0xFF, 0xD8, 0xFF])
+        || d.starts_with(b"\x89PNG\r\n\x1a\n")
+        || d.starts_with(b"BM")
+        || d.starts_with(b"II*\0")
+        || d.starts_with(b"MM\0*")
+}
+
+/// Does this look like a bare Windows bitmap: an info header with no file header in front?
+fn bare_dib(d: &[u8]) -> bool {
+    let le32 = |at: usize| d.get(at..at + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let (Some(size), Some(w), Some(h)) = (le32(0), le32(4), le32(8)) else {
+        return false;
+    };
+    let planes = d.get(12..14).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let bits = d.get(14..16).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    [40, 52, 56, 108, 124].contains(&size)
+        && (1..=100_000).contains(&w)
+        && (1..=100_000).contains(&h.abs())
+        && planes == Some(1)
+        && bits.is_some_and(|b| [1, 4, 8, 16, 24, 32].contains(&b))
+}
+
+/// Find the image in what a driver delivered, for the two things drivers really do besides handing
+/// over a clean file: zeros in front of the image (a transfer buffer made larger ahead of time and
+/// written after an offset), and a bare Windows bitmap, which is what WIA's memory transfer is: the
+/// info header and the pixels with no 14-byte file header, which every reader of `.bmp` files wants.
+/// Anything else is returned as it came.
+pub fn locate_image(data: Vec<u8>) -> Vec<u8> {
+    let start = data.iter().position(|&b| b != 0).unwrap_or(0);
+    let data = if start > 0 && (known_image(&data[start..]) || bare_dib(&data[start..])) {
+        data[start..].to_vec()
+    } else {
+        data
+    };
+    if !bare_dib(&data) {
+        return data;
+    }
+    let le32 = |at: usize| u32::from_le_bytes([data[at], data[at + 1], data[at + 2], data[at + 3]]) as usize;
+    let header = le32(0);
+    let bits = u16::from_le_bytes([data[14], data[15]]);
+    let compression = le32(16);
+    let masks = if header == 40 && compression == 3 { 12 } else { 0 };
+    let palette = if bits <= 8 {
+        let used = le32(32);
+        (if used == 0 { 1usize << bits } else { used.min(256) }) * 4
+    } else {
+        0
+    };
+    let offset = 14 + header + masks + palette;
+    let mut out = Vec::with_capacity(14 + data.len());
+    out.extend_from_slice(b"BM");
+    out.extend_from_slice(&((14 + data.len()) as u32).to_le_bytes());
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.extend_from_slice(&(offset as u32).to_le_bytes());
+    out.extend_from_slice(&data);
+    out
+}
+
+/// "the scanner sent a page that is not an image", with what it did send: how long it was and its
+/// first bytes (a file's signature, not its content), so a driver that does something unexpected
+/// can be recognised from the error alone.
+fn not_an_image(data: &[u8]) -> AppError {
+    let head: Vec<String> = data.iter().take(8).map(|b| format!("{b:02x}")).collect();
+    AppError::new(
+        ErrorCode::DeviceError,
+        format!(
+            "the scanner sent a page that is not an image ({} bytes, starting {})",
+            data.len(),
+            head.join(" ")
+        ),
+    )
+}
+
 /// [`normalize`] for pages from a live scan, where speed counts: a bitmap (or TIFF) is written as
 /// JPEG for colour and grey, which takes a fraction of a second, and as a grey PNG for black and
 /// white, which loses nothing. PNG and JPEG pass through untouched.
 pub fn normalize_for(data: Vec<u8>, color: ScanColor) -> Result<(Vec<u8>, &'static str)> {
-    let data = trim_to_image(data);
+    let data = trim_to_image(locate_image(data));
     if data.is_empty() || data.len() > MAX_PAGE_BYTES {
         return Err(AppError::new(
             ErrorCode::DeviceError,
@@ -209,8 +283,7 @@ pub fn normalize_for(data: Vec<u8>, color: ScanColor) -> Result<(Vec<u8>, &'stat
     if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return Ok((data, "jpg"));
     }
-    let img = sheaf_image::decode_bytes(&data)
-        .map_err(|_| AppError::new(ErrorCode::DeviceError, "the scanner sent a page that is not an image"))?;
+    let img = sheaf_image::decode_bytes(&data).map_err(|_| not_an_image(&data))?;
     match color {
         ScanColor::Bw => {
             let gray = image::DynamicImage::ImageRgba8(img).into_luma8();
@@ -228,6 +301,7 @@ pub fn normalize_for(data: Vec<u8>, color: ScanColor) -> Result<(Vec<u8>, &'stat
 /// TIFF (what drivers often give for memory transfers) are decoded and written
 /// as PNG; a file that is none of these is an error, not something to pass on.
 pub fn normalize(data: Vec<u8>) -> Result<(Vec<u8>, &'static str)> {
+    let data = trim_to_image(locate_image(data));
     if data.is_empty() || data.len() > MAX_PAGE_BYTES {
         return Err(AppError::new(
             ErrorCode::DeviceError,
@@ -240,8 +314,7 @@ pub fn normalize(data: Vec<u8>) -> Result<(Vec<u8>, &'static str)> {
     if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return Ok((data, "jpg"));
     }
-    let img = sheaf_image::decode_bytes(&data)
-        .map_err(|_| AppError::new(ErrorCode::DeviceError, "the scanner sent a page that is not an image"))?;
+    let img = sheaf_image::decode_bytes(&data).map_err(|_| not_an_image(&data))?;
     Ok((sheaf_image::encode_png(&img)?, "png"))
 }
 
@@ -274,6 +347,57 @@ mod tests {
         assert_eq!(p.pixels(), Some((1240, 1754)));
         p.paper = ScanPaper::Auto;
         assert_eq!(p.pixels(), None);
+    }
+
+    fn bmp_of(color: image::Rgba<u8>) -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(8, 6, color);
+        let mut bmp = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut bmp), image::ImageFormat::Bmp)
+            .expect("bmp");
+        bmp
+    }
+
+    #[test]
+    fn zeros_in_front_of_the_image_are_skipped() {
+        let png = sheaf_image::encode_png(&sheaf_image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255])))
+            .expect("png");
+        let mut padded = vec![0u8; 100_000];
+        padded.extend_from_slice(&png);
+        padded.extend(vec![0u8; 5000]);
+        let (out, ext) = normalize_for(padded, ScanColor::Color).expect("found the PNG");
+        assert_eq!((ext, out), ("png", png));
+    }
+
+    #[test]
+    fn a_bare_windows_bitmap_is_given_its_file_header() {
+        // What WIA's memory transfer delivers: the info header and the pixels, no 14-byte file header.
+        let bare = bmp_of(image::Rgba([200, 30, 30, 255]))[14..].to_vec();
+        assert!(!bare.starts_with(b"BM"));
+        let (jpeg, ext) = normalize_for(bare.clone(), ScanColor::Color).expect("read as a bitmap");
+        assert_eq!(ext, "jpg");
+        let back = sheaf_image::decode_bytes(&jpeg).expect("the result decodes");
+        assert_eq!(back.dimensions(), (8, 6));
+        assert!(back.get_pixel(3, 3)[0] > 150, "still red");
+        // With padding after it, as from a pre-sized buffer.
+        let mut padded = bare;
+        padded.extend(vec![0u8; 4096]);
+        assert!(normalize_for(padded, ScanColor::Gray).is_ok());
+    }
+
+    #[test]
+    fn what_cannot_be_read_says_what_it_was() {
+        let err = normalize_for(
+            vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 1, 2, 3],
+            ScanColor::Color,
+        )
+        .expect_err("junk");
+        assert_eq!(err.code, ErrorCode::DeviceError);
+        assert!(
+            err.msg.contains("11 bytes") && err.msg.contains("12 34 56 78"),
+            "{}",
+            err.msg
+        );
     }
 
     #[test]
